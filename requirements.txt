@@ -1,0 +1,19 @@
+# Document Knowledge Graph — Dependencies
+# pip install -r requirements.txt
+
+# ── Document parsing ─────────────────────
+docling>=2.5.0
+docling-core>=2.10.0
+
+# ── Embeddings + LLM ────────────────────
+openai>=1.30.0
+
+# ── Semantic analysis ───────────────────
+numpy>=1.26.0,<2.0.0       # Pinned <2 for torch/docling compatibility
+scikit-learn>=1.4.0        # KMeans clustering for SAME_CATEGORY
+
+# ── Neo4j driver (for live import option) ──
+neo4j>=5.20.0
+
+# ── Optional: local embeddings (no API key) ──
+# sentence-transformers>=3.0.0

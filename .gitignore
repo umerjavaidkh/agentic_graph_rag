@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.env
+
+# Output and generated data
+output/
+output_v2/
+output_v3/
+
+# OS files
+.DS_Store
+
+# Editor directories
+.vscode/
+.idea/

@@ -1,0 +1,118 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dkg: <http://documentkg.io/ontology#> .
+
+# ─────────────────────────────────────────
+# ONTOLOGY DECLARATION
+# ─────────────────────────────────────────
+dkg: a owl:Ontology ;
+    rdfs:label "Document Knowledge Graph Ontology" ;
+    rdfs:comment "Two-axis ontology: Structural (vertical) + Semantic (horizontal)" .
+
+# ─────────────────────────────────────────
+# NODE CLASSES  (Axis 1 — Hierarchy)
+# ─────────────────────────────────────────
+dkg:DocumentNode a owl:Class ;
+    rdfs:label "DocumentNode" ;
+    rdfs:comment "Abstract base for all document nodes" .
+
+dkg:Book a owl:Class ;
+    rdfs:subClassOf dkg:DocumentNode ;
+    rdfs:label "Book" .
+
+dkg:Chapter a owl:Class ;
+    rdfs:subClassOf dkg:DocumentNode ;
+    rdfs:label "Chapter" .
+
+dkg:Section a owl:Class ;
+    rdfs:subClassOf dkg:DocumentNode ;
+    rdfs:label "Section" .
+
+dkg:Page a owl:Class ;
+    rdfs:subClassOf dkg:DocumentNode ;
+    rdfs:label "Page" .
+
+dkg:Concept a owl:Class ;
+    rdfs:subClassOf dkg:DocumentNode ;
+    rdfs:label "Concept" ;
+    rdfs:comment "Named entity or key concept extracted from text" .
+
+# ─────────────────────────────────────────
+# AXIS 1 — STRUCTURAL RELATIONSHIPS (Vertical)
+# ─────────────────────────────────────────
+dkg:contains a owl:ObjectProperty ;
+    rdfs:label "contains" ;
+    rdfs:domain dkg:DocumentNode ;
+    rdfs:range dkg:DocumentNode ;
+    rdfs:comment "Parent-child containment. Book→Chapter, Chapter→Section, Section→Page" .
+
+dkg:partOf a owl:ObjectProperty ;
+    owl:inverseOf dkg:contains ;
+    rdfs:label "partOf" ;
+    rdfs:comment "Inverse of contains" .
+
+dkg:precedes a owl:ObjectProperty ;
+    rdfs:label "precedes" ;
+    rdfs:domain dkg:DocumentNode ;
+    rdfs:range dkg:DocumentNode ;
+    rdfs:comment "Sequential order within same level. Chapter1→Chapter2" .
+
+dkg:follows a owl:ObjectProperty ;
+    owl:inverseOf dkg:precedes ;
+    rdfs:label "follows" .
+
+# ─────────────────────────────────────────
+# AXIS 2 — SEMANTIC RELATIONSHIPS (Horizontal / Cross-cutting)
+# ─────────────────────────────────────────
+dkg:semanticallySimilar a owl:ObjectProperty , owl:SymmetricProperty ;
+    rdfs:label "semanticallySimilar" ;
+    rdfs:domain dkg:DocumentNode ;
+    rdfs:range dkg:DocumentNode ;
+    rdfs:comment "Embedding cosine similarity above threshold across any level" .
+
+dkg:references a owl:ObjectProperty ;
+    rdfs:label "references" ;
+    rdfs:domain dkg:DocumentNode ;
+    rdfs:range dkg:DocumentNode ;
+    rdfs:comment "Explicit textual reference: 'see Chapter 7', 'as in Section 3.2'" .
+
+dkg:sharesEntity a owl:ObjectProperty , owl:SymmetricProperty ;
+    rdfs:label "sharesEntity" ;
+    rdfs:domain dkg:DocumentNode ;
+    rdfs:range dkg:DocumentNode ;
+    rdfs:comment "Two nodes mention the same named entity" .
+
+dkg:contradicts a owl:ObjectProperty , owl:SymmetricProperty ;
+    rdfs:label "contradicts" ;
+    rdfs:domain dkg:DocumentNode ;
+    rdfs:range dkg:DocumentNode ;
+    rdfs:comment "LLM-detected conflicting claims between nodes" .
+
+dkg:elaborates a owl:ObjectProperty ;
+    rdfs:label "elaborates" ;
+    rdfs:domain dkg:DocumentNode ;
+    rdfs:range dkg:DocumentNode ;
+    rdfs:comment "Node expands on a concept introduced in another node" .
+
+dkg:prerequisiteOf a owl:ObjectProperty ;
+    rdfs:label "prerequisiteOf" ;
+    rdfs:domain dkg:DocumentNode ;
+    rdfs:range dkg:DocumentNode ;
+    rdfs:comment "Concept A must be understood before Concept B" .
+
+dkg:sameCategory a owl:ObjectProperty , owl:SymmetricProperty ;
+    rdfs:label "sameCategory" ;
+    rdfs:domain dkg:DocumentNode ;
+    rdfs:range dkg:DocumentNode ;
+    rdfs:comment "Thematic cluster membership — same topic group" .
+
+# ─────────────────────────────────────────
+# CONCEPT MENTION  (Node → Concept edge)
+# ─────────────────────────────────────────
+dkg:mentions a owl:ObjectProperty ;
+    rdfs:label "mentions" ;
+    rdfs:domain dkg:DocumentNode ;
+    rdfs:range dkg:Concept ;
+    rdfs:comment "A document node mentions a named concept/entity" .

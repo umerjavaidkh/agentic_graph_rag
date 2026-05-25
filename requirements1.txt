@@ -1,0 +1,7 @@
+# === LangGraph Agent ===
+langgraph>=0.0.50
+langchain>=0.1.0
+langchain-openai>=0.1.0
+fastapi>=0.110.0
+uvicorn>=0.27.0
+pydantic>=2.5.0
