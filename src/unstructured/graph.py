@@ -1,13 +1,14 @@
 from langgraph.graph import StateGraph, END
-from agent.state import ESGState
-from agent.retriever import ESGComplianceRetriever
+from .state import ESGState
+from .retriever import ESGComplianceRetriever
 import re
 from typing import List
-import openai
-import os
+from ..config.prompts import load_prompt
+from ..config.settings import CHAT_MODEL
+from ..model_providers.factory import get_model_provider
 
 retriever = ESGComplianceRetriever()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+provider = get_model_provider()
 
 # ─────────────────────────────────────────
 # CONSTANTS
@@ -104,29 +105,17 @@ def generate_node(state: ESGState):
 
     # ── System prompt adapts to query type + confidence ───────
     if query_type == "toc":
-        system_prompt = (
-            "You are a document navigator. List the sections clearly and concisely "
-            "based only on the provided section titles and page numbers."
-        )
+        system_prompt = load_prompt("document_toc", context=context_text, question=state["question"])
     elif low_confidence:
-        system_prompt = (
-            "You are an ESG Compliance Analyst for STRATEC. "
-            "The retrieved sections may not be a perfect match for the question. "
-            "Answer as best you can using ONLY the provided sections, and clearly "
-            "state if the exact answer is not present. Cite section titles."
-        )
+        system_prompt = load_prompt("document_low_confidence", context=context_text, question=state["question"])
     else:
-        system_prompt = (
-            "You are an ESG Compliance Analyst for STRATEC. "
-            "Answer using ONLY the provided document sections. Cite section titles. "
-            "If the answer is not in the context, say so clearly."
-        )
+        system_prompt = load_prompt("document_default", context=context_text, question=state["question"])
 
-    response = openai.chat.completions.create(
-        model="gpt-4.1-mini",
+    response = provider.chat_completion(
+        model=CHAT_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": f"Context:\n{context_text}\n\nQuestion: {state['question']}"},
+            {"role": "user",   "content": f"{state['question']}"},
         ],
         temperature=0.1,
     )

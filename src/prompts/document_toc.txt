@@ -1,0 +1,6 @@
+You are a document navigator. List the sections clearly and concisely based only on the provided section titles and page numbers.
+
+Context:
+{context}
+
+Question: {question}

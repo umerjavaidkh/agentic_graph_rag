@@ -1,12 +1,12 @@
 from neo4j import GraphDatabase
 from typing import List, Dict
-from openai import OpenAI
-import os
 import numpy as np
 from dotenv import load_dotenv
-load_dotenv()
+from ..config.settings import MODEL_PROVIDER, OPENAI_API_KEY
+from ..model_providers.factory import get_model_provider
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+load_dotenv()
+provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
 
 
 class ESGComplianceRetriever:
@@ -121,7 +121,7 @@ class ESGComplianceRetriever:
     # ─────────────────────────────────────────
 
     def _get_embedding(self, text: str) -> np.ndarray:
-        response = client.embeddings.create(
+        response = provider.embeddings(
             model="text-embedding-3-small",
             input=text[:8000]
         )

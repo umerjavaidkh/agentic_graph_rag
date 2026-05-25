@@ -7,16 +7,17 @@ Handles:
   - Semantic queries     (find products similar to seafood)
   - Schema queries       (what data is available?)
 """
-import os
-import openai
 from langgraph.graph import StateGraph, END
-from structured.state import StructuredState
-from structured.retriever import StructuredRetriever
+from .state import StructuredState
+from .retriever import StructuredRetriever
+from ..config.prompts import load_prompt
+from ..config.settings import CHAT_MODEL
+from ..model_providers.factory import get_model_provider
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
-LLM_MODEL = "gpt-4.1-mini"
-
+provider = get_model_provider()
 retriever = StructuredRetriever()
+LLM_MODEL = CHAT_MODEL
+
 
 # ─────────────────────────────────────────
 # QUERY CLASSIFIER
@@ -95,50 +96,20 @@ def generate_node(state: StructuredState):
 
     # ── IMPROVED SYSTEM PROMPTS ─────────────────────────────
     if has_error:
-        system_prompt = (
-            "You are a Neo4j data analyst. The database query failed. "
-            "Explain the error in plain English, state what you think the user is looking for, "
-            "and suggest exactly how they should rephrase their question. "
-            "Be specific about what entities and relationships likely exist in the graph."
-        )
-
+        system_prompt = load_prompt("structured_synthesis", context=context_text, question=question)
     elif strategy == "schema":
-        system_prompt = (
-            "You are a data analyst describing a Neo4j graph. "
-            "Explain the main entities and relationships in plain, non-technical English. "
-            "Give 2-3 concrete example questions this database can answer. "
-            "Do not list raw schema dumps — summarize."
-        )
-
+        system_prompt = load_prompt("structured_synthesis", context=context_text, question=question)
     elif strategy == "vector":
-        system_prompt = (
-            "You are a business analyst. Answer using ONLY the retrieved data below. "
-            "The results are ranked by semantic relevance — trust the top results most. "
-            "Use product names, company names, and categories naturally. "
-            "Never quote raw IDs unless no human-readable name is available. "
-            "Synthesize into 2-3 concise, flowing sentences. No bullet dumps."
-        )
+        system_prompt = load_prompt("structured_synthesis", context=context_text, question=question)
+    else:
+        system_prompt = load_prompt("structured_synthesis", context=context_text, question=question)
 
-    else:  # text2cypher — THE CRITICAL FIX
-        system_prompt = (
-            "You are a senior business analyst answering from a Neo4j graph database. "
-            "Rules:\n"
-            "1. Use ONLY the provided query results. Do not invent data.\n"
-            "2. Prefer NAMES over IDs. If productName, companyName, or categoryName exists, use it. "
-            "   Fall back to IDs only if no name is present.\n"
-            "3. If symmetric duplicate pairs appear (e.g., 21+61 and 61+21), treat them as ONE pair. Mention it once.\n"
-            "4. Do NOT list raw rows or repeat every field. Synthesize: explain the pattern, ranking, or insight.\n"
-            "5. Embed specific numbers (counts, frequencies, totals) in flowing prose, not bullet lists.\n"
-            "6. If empty results, say exactly: 'No data was found for this query.'\n"
-            "7. No markdown tables, no JSON, no code blocks. Plain conversational English only."
-        )
-
-    response = openai.chat.completions.create(
+    response = provider.chat_completion(
         model=LLM_MODEL,
-        temperature=0.2,  # slightly warmer for natural phrasing
+        temperature=0.2,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": f"Retrieved Data:\n{context_text}\n\nUser Question: {question}\n\nProvide a natural language answer."},
+            {"role": "user",   "content": f"{question}"},
         ],
         max_tokens=2000,
     )

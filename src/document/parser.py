@@ -17,7 +17,7 @@ from docling.datamodel.base_models import InputFormat
 from docling.datamodel.document import DoclingDocument
 from docling_core.types.doc import DoclingDocument, DocItemLabel
 
-from models import DKGNode, DKGEdge, NodeType, RelType
+from ..models import DKGNode, DKGEdge, NodeType, RelType
 
 
 # ─────────────────────────────────────────

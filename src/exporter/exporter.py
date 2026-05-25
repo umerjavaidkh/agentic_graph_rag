@@ -21,7 +21,7 @@ import json
 import os
 from pathlib import Path
 
-from models import DKGNode, DKGEdge, NodeType, RelType
+from ..models import DKGNode, DKGEdge, NodeType, RelType
 
 
 OUTPUT_DIR = Path("output")

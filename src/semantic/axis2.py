@@ -20,9 +20,9 @@ import itertools
 from typing import Optional
 
 import numpy as np
-from openai import OpenAI
-
-from models import DKGNode, DKGEdge, NodeType, RelType
+from ..config.settings import MODEL_PROVIDER, OPENAI_API_KEY, EMBEDDING_MODEL, CHAT_MODEL
+from ..model_providers.factory import get_model_provider
+from ..models import DKGNode, DKGEdge, NodeType, RelType
 
 
 # ─────────────────────────────────────────
@@ -52,8 +52,8 @@ class Axis2Builder:
     """
 
     def __init__(self, api_key: Optional[str] = None):
-        key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self.client = OpenAI(api_key=key) if key else None
+        key = api_key or OPENAI_API_KEY
+        self.client = get_model_provider(MODEL_PROVIDER, key)
 
     def build(
         self,
@@ -99,7 +99,7 @@ class Axis2Builder:
         # Batch in groups of 100 (OpenAI limit)
         for batch_start in range(0, len(texts), 100):
             batch = texts[batch_start:batch_start + 100]
-            response = self.client.embeddings.create(
+            response = self.client.embeddings(
                 model=EMBED_MODEL, input=batch
             )
             for i, emb_obj in enumerate(response.data):
@@ -122,8 +122,8 @@ class Axis2Builder:
 
         for node in targets:
             try:
-                resp = self.client.chat.completions.create(
-                    model=LLM_MODEL,
+                resp = self.client.chat_completion(
+                    model=CHAT_MODEL,
                     temperature=0,
                     messages=[{
                         "role": "system",
@@ -279,8 +279,8 @@ Determine the relationship. Return ONLY valid JSON:
 
             a, b = embedded[i], embedded[j]
             try:
-                resp = self.client.chat.completions.create(
-                    model=LLM_MODEL,
+                resp = self.client.chat_completion(
+                    model=CHAT_MODEL,
                     temperature=0,
                     messages=[{"role": "user", "content": PROMPT.format(
                         id_a=a.id, text_a=a.text[:1500],

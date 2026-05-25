@@ -8,11 +8,11 @@ import json
 import numpy as np
 from typing import Optional
 from neo4j import GraphDatabase
-from openai import OpenAI
+from ..config.settings import MODEL_PROVIDER, OPENAI_API_KEY, CHAT_MODEL, EMBEDDING_MODEL
+from ..model_providers.factory import get_model_provider
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-LLM_MODEL   = "gpt-4.1-mini"
-EMBED_MODEL = "text-embedding-3-small"
+provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+LLM_MODEL = CHAT_MODEL
 
 
 class StructuredRetriever:
@@ -125,7 +125,7 @@ User Question: {query}
 
 Provide a clear, natural language answer. If products or entities have names available, use them. If only IDs are available, refer to them by their relationship patterns (e.g., "Product 21")."""
 
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=LLM_MODEL,
             temperature=0.2,
             messages=[
@@ -218,7 +218,7 @@ QUESTION: {query}
 
 CYPHER:"""
 
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=LLM_MODEL,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
@@ -484,7 +484,7 @@ CYPHER:"""
     # ─────────────────────────────────────────
 
     def _embed(self, text: str) -> np.ndarray:
-        response = client.embeddings.create(model=EMBED_MODEL, input=text[:8000])
+        response = provider.embeddings(model=EMBED_MODEL, input=text[:8000])
         return np.array(response.data[0].embedding, dtype=np.float32)
 
     def _row_title(self, row: dict) -> str:

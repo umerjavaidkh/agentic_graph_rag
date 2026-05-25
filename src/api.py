@@ -1,9 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
-from agent.bridge import ask
-from agent.retriever import ESGComplianceRetriever
-from structured.retriever import StructuredRetriever
+
+from .bridge import ask
+from .unstructured.retriever import ESGComplianceRetriever
+from .structured.retriever import StructuredRetriever
 
 app = FastAPI(title="ESG Compliance Agent API")
 

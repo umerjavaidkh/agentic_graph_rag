@@ -19,9 +19,10 @@ import os
 import sys
 from pathlib import Path
 
-from parser import DoclingParser
-from axis2 import Axis2Builder
-from exporter import Neo4jExporter
+from .config.settings import OPENAI_API_KEY
+from .document.parser import DoclingParser
+from .semantic.axis2 import Axis2Builder
+from .exporter.exporter import Neo4jExporter
 
 
 def run(source: str, output_dir: str, llm_pass: bool) -> None:
@@ -37,7 +38,7 @@ def run(source: str, output_dir: str, llm_pass: bool) -> None:
     print(f"   ✓ {len(nodes)} nodes | {axis1_count} structural edges")
 
     # ── Phase 2: Axis 2 semantic edges ───────────────────────
-    api_key = os.environ.get("OPENAI_API_KEY", "")
+    api_key = OPENAI_API_KEY
     if api_key:
         print(f"\n🔗 Phase 2: Semantic relationship discovery (Axis 2)...")
         if llm_pass:
