@@ -57,14 +57,15 @@ def classify_query(question: str) -> str:
 def retrieve_node(state: ESGState):
     question    = state["question"]
     query_type  = classify_query(question)
+    user_context = state.get("user_context")
 
     if query_type == "toc":
-        context  = retriever.get_all_sections()
+        context  = retriever.get_all_sections(user_context=user_context)
         keywords = ["toc"]
 
     elif query_type == "structural":
         # Pure graph traversal — no embedding needed
-        context  = retriever.get_all_sections()
+        context  = retriever.get_all_sections(user_context=user_context)
         keywords = ["structural"]
 
     else:
@@ -73,6 +74,7 @@ def retrieve_node(state: ESGState):
             query=question,
             limit=5,
             hops=2,
+            user_context=user_context,
         )
         keywords = _extract_keywords(question)
 

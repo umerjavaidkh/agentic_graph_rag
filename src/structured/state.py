@@ -3,9 +3,10 @@ structured/state.py — State for structured graph queries.
 Compatible with ESGState shape so both can flow through same graph.
 """
 from typing import TypedDict, Optional
+from ..auth.roles import UserContext
 
 
-class StructuredState(TypedDict):
+class StructuredState(TypedDict, total=False):
     question:          str
     retrieved_context: dict
     answer:            str
@@ -15,3 +16,4 @@ class StructuredState(TypedDict):
     strategy:          str        # which retrieval strategy was used
     low_confidence:    bool
     cypher_generated:  Optional[str]  # for debugging/logging
+    user_context:      Optional[UserContext]

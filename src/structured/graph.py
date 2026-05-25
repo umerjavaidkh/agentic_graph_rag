@@ -38,12 +38,13 @@ def _is_schema_query(question: str) -> bool:
 # ─────────────────────────────────────────
 def retrieve_node(state: StructuredState):
     question = state["question"]
+    user_context = state.get("user_context")
 
     if _is_schema_query(question):
         context  = retriever.get_schema()
         strategy = "schema"
     else:
-        context  = retriever.retrieve(question, limit=5)
+        context  = retriever.retrieve(question, limit=5, user_context=user_context)
         strategy = context.get("strategy", "text2cypher")
 
     # Extract generated cypher for logging if available

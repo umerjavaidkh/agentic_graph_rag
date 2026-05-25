@@ -1,6 +1,7 @@
 """
 structured/retriever.py — Universal Structured Graph Retriever
 Now with built-in LLM synthesis. Call .ask() for a complete answer.
+WITH role-based access control.
 """
 
 import os
@@ -10,6 +11,8 @@ from typing import Optional
 from neo4j import GraphDatabase
 from ..config.settings import MODEL_PROVIDER, OPENAI_API_KEY, CHAT_MODEL, EMBEDDING_MODEL
 from ..model_providers.factory import get_model_provider
+from ..auth.roles import UserContext, Role, DEFAULT_PUBLIC_CONTEXT
+from ..auth.rbac_setup import GraphRBAC
 
 provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
 LLM_MODEL = CHAT_MODEL
@@ -29,15 +32,18 @@ class StructuredRetriever:
         uri:      str = "bolt://localhost:7687",
         user:     str = "neo4j",
         password: str = "password123",
+        user_context: Optional[UserContext] = None,
     ):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
         self._schema_cache: Optional[str] = None
+        self.user_context = user_context or DEFAULT_PUBLIC_CONTEXT
+        self.rbac = GraphRBAC(uri, user, password)
 
     # ─────────────────────────────────────────
     # PUBLIC API  (end-to-end)
     # ─────────────────────────────────────────
 
-    def ask(self, query: str, limit: int = 5) -> dict:
+    def ask(self, query: str, limit: int = 5, user_context: Optional[UserContext] = None) -> dict:
         """
         ONE call → natural language answer + sources.
         Usage:
@@ -45,8 +51,10 @@ class StructuredRetriever:
             print(result["answer"])   # human-readable insight
             print(result["sources"])  # raw structured data for citations
         """
+        ctx = user_context or self.user_context
+        
         # 1. Retrieve
-        retrieval = self.retrieve(query, limit)
+        retrieval = self.retrieve(query, limit, user_context=ctx)
         chunks = retrieval.get("chunks", [])
 
         # 2. Synthesize (if we got data)
@@ -61,29 +69,32 @@ class StructuredRetriever:
             "strategy": retrieval.get("strategy", "unknown"),
             "sources": chunks,
             "total_sources": len(chunks),
+            "_access_level": ctx.role.value,
         }
 
-    def retrieve(self, query: str, limit: int = 5) -> dict:
+    def retrieve(self, query: str, limit: int = 5, user_context: Optional[UserContext] = None) -> dict:
         """
         Raw retrieval entry point. Returns structured chunks.
         Auto-selects strategy: text2cypher | vector_search | multi_hop
         """
+        ctx = user_context or self.user_context
         strategy = self._classify_query(query)
 
         if strategy == "vector":
-            results = self._vector_search(query, limit)
+            results = self._vector_search(query, limit, user_context=ctx)
             results = self._enrich_graph_context(results)
         elif strategy == "multi_hop":
-            results = self._graph_hop_retrieve(query, limit, hops=2)
+            results = self._graph_hop_retrieve(query, limit, hops=2, user_context=ctx)
         else:
-            results = self._text2cypher(query, limit)
+            results = self._text2cypher(query, limit, user_context=ctx)
             # NEW: enrich text2cypher results too (not just vector)
             results = self._enrich_graph_context(results)
 
         return self._format_response(query, results, strategy)
 
-    def multi_hop_retrieve(self, query: str, limit: int = 5, hops: int = 2) -> dict:
-        results = self._graph_hop_retrieve(query, limit, hops)
+    def multi_hop_retrieve(self, query: str, limit: int = 5, hops: int = 2, user_context: Optional[UserContext] = None) -> dict:
+        ctx = user_context or self.user_context
+        results = self._graph_hop_retrieve(query, limit, hops, user_context=ctx)
         return self._format_response(query, results, "multi_hop")
 
     def get_schema(self) -> dict:
@@ -164,13 +175,27 @@ Provide a clear, natural language answer. If products or entities have names ava
     # STRATEGY 1 — TEXT2CYPHER  (improved)
     # ─────────────────────────────────────────
 
-    def _text2cypher(self, query: str, limit: int) -> list:
+    def _text2cypher(self, query: str, limit: int, user_context: Optional[UserContext] = None) -> list:
+        ctx = user_context or self.user_context
+        user_id = ctx.user_id
+        
+        # RBAC: Check if user can query structured knowledge area
+        if not self.rbac.can_query_knowledge_area(user_id, 'structured'):
+            return [{
+                "id": "access_denied",
+                "title": "Access Denied",
+                "text": f"User {user_id} does not have permission to query structured data.",
+                "score": 0.0,
+                "related": [],
+            }]
+        
         schema = self._fetch_schema()
         cypher = self._generate_cypher(query, schema, limit)
 
         if not cypher:
             return []
 
+        # Execute query (no Python-level row filtering needed now)
         try:
             with self.driver.session() as session:
                 result = session.run(cypher)
@@ -232,12 +257,19 @@ CYPHER:"""
     # STRATEGY 2 — VECTOR SEARCH
     # ─────────────────────────────────────────
 
-    def _vector_search(self, query: str, limit: int) -> list:
+    def _vector_search(self, query: str, limit: int, user_context: Optional[UserContext] = None) -> list:
+        ctx = user_context or self.user_context
+        user_id = ctx.user_id
+        
+        # RBAC: Check if user can query structured knowledge area
+        if not self.rbac.can_query_knowledge_area(user_id, 'structured'):
+            return []
+        
         embedding = self._embed(query)
         indexed_labels = self._get_vector_indexed_labels()
 
         if not indexed_labels:
-            return self._text2cypher(query, limit)
+            return self._text2cypher(query, limit, user_context=ctx)
 
         results = []
         with self.driver.session() as session:
@@ -331,10 +363,17 @@ CYPHER:"""
     # STRATEGY 4 — MULTI-HOP GRAPH TRAVERSAL
     # ─────────────────────────────────────────
 
-    def _graph_hop_retrieve(self, query: str, limit: int, hops: int = 2) -> list:
-        seed_results = self._vector_search(query, limit)
+    def _graph_hop_retrieve(self, query: str, limit: int, hops: int = 2, user_context: Optional[UserContext] = None) -> list:
+        ctx = user_context or self.user_context
+        user_id = ctx.user_id
+        
+        # RBAC: Check if user can query structured knowledge area
+        if not self.rbac.can_query_knowledge_area(user_id, 'structured'):
+            return []
+        
+        seed_results = self._vector_search(query, limit, user_context=ctx)
         if not seed_results:
-            seed_results = self._text2cypher(query, limit)
+            seed_results = self._text2cypher(query, limit, user_context=ctx)
 
         seed_ids = [
             r["raw"].get("productID") or r["raw"].get("orderID") or r["id"]
@@ -479,12 +518,35 @@ CYPHER:"""
             return "vector"
         return "text2cypher"
 
+    def _apply_role_filter_to_cypher(self, cypher: str, user_context: UserContext) -> str:
+        """
+        Apply role-based filtering to a Cypher query.
+        Adds sensitivity constraints for non-admin users.
+        """
+        allowed_sensitivity = RoleFilter._get_allowed_sensitivity_levels(user_context)
+        sensitivity_list = ", ".join(f"'{s}'" for s in allowed_sensitivity)
+        
+        # Add a WHERE clause for sensitivity filtering
+        # This assumes nodes have an optional 'sensitivity' property
+        filter_clause = f"AND (n.sensitivity IS NULL OR n.sensitivity IN [{sensitivity_list}])"
+        
+        # Simple replacement: add filter to all node matches
+        # This is a basic approach; production code might parse Cypher more carefully
+        cypher = cypher.replace(
+            "MATCH (n:",
+            f"MATCH (n: WHERE {filter_clause} WITH n MATCH (n:"
+        )
+        if " WHERE " not in cypher and "MATCH" in cypher:
+            cypher = cypher.replace("RETURN", f"WHERE (NOT exists(n.sensitivity) OR n.sensitivity IN [{sensitivity_list}]) RETURN")
+        
+        return cypher
+
     # ─────────────────────────────────────────
     # UTILITIES
     # ─────────────────────────────────────────
 
     def _embed(self, text: str) -> np.ndarray:
-        response = provider.embeddings(model=EMBED_MODEL, input=text[:8000])
+        response = provider.embeddings(model=EMBEDDING_MODEL, input=text[:8000])
         return np.array(response.data[0].embedding, dtype=np.float32)
 
     def _row_title(self, row: dict) -> str:

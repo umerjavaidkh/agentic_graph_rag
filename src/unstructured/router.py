@@ -4,13 +4,16 @@ unstructured/router.py — Internal router for unstructured system
 This module contains the internal routing logic for unstructured document
 and structured graph systems. It exposes `ask()` and the MCP tool registry
 but is intended to be used via the top-level `src.bridge` facade.
+
+NOW WITH ROLE-BASED ACCESS CONTROL (RBAC)
 """
 import re
-from typing import Literal
+from typing import Literal, Optional
 
 # ── System imports ─────────────────────────────────────────────
 from .graph import esg_agent        # unstructured
 from ..structured.graph import structured_agent  # structured
+from ..auth.roles import UserContext, Role, DEFAULT_PUBLIC_CONTEXT
 
 
 # ─────────────────────────────────────────
@@ -61,44 +64,59 @@ HYBRID_SIGNALS = {
 # ─────────────────────────────────────────
 # MCP TOOLS
 # ─────────────────────────────────────────
-def search_documents(question: str) -> dict:
-    result = esg_agent.invoke({"question": question})
+def search_documents(question: str, user_context: Optional[UserContext] = None) -> dict:
+    state = {"question": question}
+    if user_context is not None:
+        state["user_context"] = user_context
+
+    result = esg_agent.invoke(state)
     return {
         "answer": result.get("answer", ""),
         "sources": result.get("sources", []),
         "agent": "unstructured",
+        "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
     }
 
 
-def query_data(question: str) -> dict:
-    result = structured_agent.invoke({"question": question})
+def query_data(question: str, user_context: Optional[UserContext] = None) -> dict:
+    state = {"question": question}
+    if user_context is not None:
+        state["user_context"] = user_context
+
+    result = structured_agent.invoke(state)
     return {
         "answer": result.get("answer", ""),
         "sources": result.get("sources", []),
         "strategy": result.get("strategy", ""),
         "agent": "structured",
+        "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
     }
 
 
-def query_hybrid(question: str) -> dict:
-    doc_result = esg_agent.invoke({"question": question})
-    data_result = structured_agent.invoke({"question": question})
+def query_hybrid(question: str, user_context: Optional[UserContext] = None) -> dict:
+    state = {"question": question}
+    if user_context is not None:
+        state["user_context"] = user_context
+
+    doc_result = esg_agent.invoke(state)
+    data_result = structured_agent.invoke(state)
     return {
         "answer": f"### From Documents:\n{doc_result.get('answer', '')}\n\n" \
                   f"### From Data:\n{data_result.get('answer', '')}",
         "document_sources": doc_result.get("sources", []),
         "data_sources": data_result.get("sources", []),
         "agent": "hybrid",
+        "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
     }
 
 
-def ask(question: str) -> dict:
+def ask(question: str, user_context: Optional[UserContext] = None) -> dict:
     route = route_query(question)
     if route == "structured":
-        return query_data(question)
+        return query_data(question, user_context=user_context)
     if route == "hybrid":
-        return query_hybrid(question)
-    return search_documents(question)
+        return query_hybrid(question, user_context=user_context)
+    return search_documents(question, user_context=user_context)
 
 
 MCP_TOOLS = [
