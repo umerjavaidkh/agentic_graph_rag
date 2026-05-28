@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import UploadFile
+from neo4j import GraphDatabase
+from neo4j.exceptions import ClientError
 
-from ..config.settings import AUTO_LOAD_TO_NEO4J, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, OPENAI_API_KEY
+from ..config.settings import AUTO_LOAD_TO_NEO4J, CLEANUP_TMP_INGEST, CYPHER_INGEST_SKIP_GENAI, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, OPENAI_API_KEY, STORE_INGESTION_ARTIFACTS
 from ..document.parser import DoclingParser
 from ..exporter.exporter import Neo4jExporter
 from ..models import DKGEdge, DKGNode
@@ -30,6 +32,7 @@ class IngestionJob:
     input_path: Optional[Path] = None
     output_dir: Optional[Path] = None
     mapping: Optional[StructuredCSVMapping] = None
+    cypher_params: Optional[Dict[str, object]] = None
     neo4j_load_status: Optional[str] = None
     neo4j_load_message: Optional[str] = None
     logs: List[str] = field(default_factory=list)
@@ -42,7 +45,8 @@ class IngestionManager:
         self.temp_dir = Path("tmp_ingest")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.output_base = Path("output/ingestion")
-        self.output_base.mkdir(parents=True, exist_ok=True)
+        if STORE_INGESTION_ARTIFACTS:
+            self.output_base.mkdir(parents=True, exist_ok=True)
 
     def submit_unstructured(
         self,
@@ -51,8 +55,9 @@ class IngestionManager:
     ) -> IngestionJob:
         job = self._create_job("unstructured", job_name=job_name)
         job.input_path = self._save_upload(upload, job.id)
-        job.output_dir = self.output_base / job.id
-        job.output_dir.mkdir(parents=True, exist_ok=True)
+        if STORE_INGESTION_ARTIFACTS:
+            job.output_dir = self.output_base / job.id
+            job.output_dir.mkdir(parents=True, exist_ok=True)
         self.jobs[job.id] = job
         self._log(job, f"Created unstructured ingestion job: {job.name or job.id}")
         return job
@@ -66,10 +71,27 @@ class IngestionManager:
         job = self._create_job("structured", job_name=job_name)
         job.mapping = mapping
         job.input_path = self._save_upload(upload, job.id)
-        job.output_dir = self.output_base / job.id
-        job.output_dir.mkdir(parents=True, exist_ok=True)
+        if STORE_INGESTION_ARTIFACTS:
+            job.output_dir = self.output_base / job.id
+            job.output_dir.mkdir(parents=True, exist_ok=True)
         self.jobs[job.id] = job
         self._log(job, f"Created structured ingestion job: {job.name or job.id}")
+        return job
+
+    def submit_cypher(
+        self,
+        upload: UploadFile,
+        job_name: Optional[str] = None,
+        cypher_params: Optional[Dict[str, object]] = None,
+    ) -> IngestionJob:
+        job = self._create_job("cypher", job_name=job_name)
+        job.cypher_params = cypher_params or None
+        job.input_path = self._save_upload(upload, job.id)
+        if STORE_INGESTION_ARTIFACTS:
+            job.output_dir = self.output_base / job.id
+            job.output_dir.mkdir(parents=True, exist_ok=True)
+        self.jobs[job.id] = job
+        self._log(job, f"Created cypher ingestion job: {job.name or job.id}")
         return job
 
     def get_job(self, job_id: str) -> Optional[IngestionJob]:
@@ -88,6 +110,8 @@ class IngestionManager:
                 self._process_unstructured(job)
             elif job.type == "structured":
                 self._process_structured(job)
+            elif job.type == "cypher":
+                self._process_cypher(job)
             else:
                 raise ValueError(f"Unsupported ingestion type: {job.type}")
 
@@ -97,6 +121,21 @@ class IngestionManager:
             job.finished_at = datetime.utcnow()
             job.error = str(exc)
             self._set_status(job, IngestionStatus.failed, f"Job failed: {job.error}")
+        finally:
+            self._cleanup_job_inputs(job)
+
+    def _cleanup_job_inputs(self, job: IngestionJob) -> None:
+        if not CLEANUP_TMP_INGEST:
+            return
+        if not job or not job.input_path:
+            return
+        try:
+            if job.input_path.exists():
+                job.input_path.unlink()
+                self._log(job, f"Cleaned up temp input: {job.input_path}")
+        except Exception as exc:
+            # Cleanup failure shouldn't fail the job.
+            self._log(job, f"Temp cleanup failed for {job.input_path}: {exc}")
 
     def _process_unstructured(self, job: IngestionJob) -> None:
         self._set_status(job, IngestionStatus.parsing, "Parsing document")
@@ -117,9 +156,10 @@ class IngestionManager:
         else:
             self._log(job, "OPENAI_API_KEY not configured; skipping semantic enrichment")
 
-        self._set_status(job, IngestionStatus.exporting, "Exporting Neo4j import artifacts")
-        exporter = Neo4jExporter(output_dir=str(job.output_dir))
-        exporter.export(nodes, edges)
+        exporter = Neo4jExporter(output_dir=str(job.output_dir) if job.output_dir else Path("."))
+        if STORE_INGESTION_ARTIFACTS and job.output_dir:
+            self._set_status(job, IngestionStatus.exporting, "Exporting Neo4j import artifacts")
+            exporter.export(nodes, edges)
 
         if AUTO_LOAD_TO_NEO4J:
             self._set_status(job, IngestionStatus.exporting, "Loading graph into Neo4j")
@@ -201,9 +241,10 @@ class IngestionManager:
         nodes = list(nodes_by_id.values())
         self._log(job, f"Created {len(nodes)} nodes and {len(edges)} relationships from CSV")
 
-        self._set_status(job, IngestionStatus.exporting, "Exporting structured nodes and relationships")
-        exporter = Neo4jExporter(output_dir=str(job.output_dir))
-        exporter.export(nodes, edges)
+        exporter = Neo4jExporter(output_dir=str(job.output_dir) if job.output_dir else Path("."))
+        if STORE_INGESTION_ARTIFACTS and job.output_dir:
+            self._set_status(job, IngestionStatus.exporting, "Exporting structured nodes and relationships")
+            exporter.export(nodes, edges)
 
         if AUTO_LOAD_TO_NEO4J:
             self._set_status(job, IngestionStatus.exporting, "Loading graph into Neo4j")
@@ -220,6 +261,119 @@ class IngestionManager:
             job.neo4j_load_status = "skipped"
             job.neo4j_load_message = "AUTO_LOAD_TO_NEO4J disabled"
             self._log(job, "Neo4j load skipped")
+
+    def _process_cypher(self, job: IngestionJob) -> None:
+        """
+        Execute a user-provided Cypher file against Neo4j.
+
+        Intended for loading arbitrary schemas/datasets (e.g. Northwind).
+        """
+        self._set_status(job, IngestionStatus.parsing, "Executing Cypher script")
+        if not job.input_path or not job.input_path.exists():
+            raise FileNotFoundError("Uploaded Cypher file was not saved correctly.")
+
+        cypher_text = job.input_path.read_text(encoding="utf-8")
+        statements, params = self._parse_cypher_script(cypher_text)
+        if job.cypher_params:
+            # Prefer explicit job params over any :param directives in the file.
+            params = {**params, **job.cypher_params}
+        if not statements:
+            raise ValueError("Cypher file contained no statements.")
+
+        driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+        try:
+            with driver.session() as session:
+                for idx, stmt in enumerate(statements, start=1):
+                    preview = " ".join(stmt.split())[:120]
+                    self._log(job, f"Running statement {idx}/{len(statements)}: {preview}...")
+                    try:
+                        session.run(stmt, **params).consume()
+                    except ClientError as exc:
+                        # Make common schema operations idempotent when scripts are re-run.
+                        # Examples: CREATE INDEX / CONSTRAINT where equivalent already exists.
+                        code = getattr(exc, "code", "") or ""
+                        if code in {
+                            "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+                            "Neo.ClientError.Schema.IndexAlreadyExists",
+                            "Neo.ClientError.Schema.ConstraintAlreadyExists",
+                        }:
+                            self._log(job, f"Skipping non-fatal schema error ({code}): {exc.message}")
+                            continue
+                        raise
+        finally:
+            driver.close()
+
+        job.neo4j_load_status = "success"
+        job.neo4j_load_message = f"Executed {len(statements)} Cypher statements successfully"
+        self._log(job, job.neo4j_load_message)
+
+    def _parse_cypher_script(self, raw_text: str) -> tuple[list[str], dict]:
+        """
+        Parse a Cypher script that may include Neo4j Browser directives like:
+          :param key => 'value';
+
+        Browser directives are not valid Cypher over the driver. We:
+        - Extract :param directives into a parameters dict
+        - Strip other ':' directives (e.g. :use)
+        - Split remaining Cypher by semicolon into statements
+        """
+        params: dict = {}
+        cypher_lines: list[str] = []
+
+        def _parse_param_value(value: str):
+            v = value.strip().rstrip(";")
+            if (v.startswith("'") and v.endswith("'")) or (v.startswith('"') and v.endswith('"')):
+                return v[1:-1]
+            low = v.lower()
+            if low == "true":
+                return True
+            if low == "false":
+                return False
+            if low == "null":
+                return None
+            try:
+                if "." in v:
+                    return float(v)
+                return int(v)
+            except Exception:
+                return v
+
+        for line in raw_text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                cypher_lines.append(line)
+                continue
+
+            # Neo4j Browser directives are prefixed with ':'
+            if stripped.startswith(":"):
+                # Support ':param name => value'
+                if stripped.lower().startswith(":param"):
+                    # Example: :param openAIKey => 'sk-...';
+                    rest = stripped[len(":param"):].strip()
+                    if "=>" in rest:
+                        key, value = rest.split("=>", 1)
+                        key = key.strip().lstrip("$")
+                        if key:
+                            params[key] = _parse_param_value(value)
+                # Always skip directive lines (they are not Cypher)
+                continue
+
+            cypher_lines.append(line)
+
+        cypher_text = "\n".join(cypher_lines)
+        statements = [s.strip() for s in cypher_text.split(";") if s.strip()]
+        if CYPHER_INGEST_SKIP_GENAI:
+            filtered: list[str] = []
+            for stmt in statements:
+                s = stmt.lower()
+                # Skip GenAI embedding calls and the most common follow-up write step.
+                if "genai.vector.encode" in s or "ai.text.embed" in s:
+                    continue
+                if "db.create.setnodevectorproperty" in s:
+                    continue
+                filtered.append(stmt)
+            statements = filtered
+        return statements, params
 
     def _save_upload(self, upload: UploadFile, job_id: str) -> Path:
         target = self.temp_dir / f"{job_id}_{upload.filename}"

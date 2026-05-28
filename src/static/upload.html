@@ -26,6 +26,7 @@
     <div class="tabs">
       <div class="tab active" id="tab-unstructured">Unstructured</div>
       <div class="tab" id="tab-structured">Structured CSV</div>
+      <div class="tab" id="tab-cypher">Cypher</div>
     </div>
 
     <div id="unstructured-panel">
@@ -62,6 +63,22 @@
 }</textarea>
       <button id="submit-structured">Submit structured ingestion</button>
     </div>
+
+    <div id="cypher-panel" class="hidden">
+      <h2>Upload Cypher (schema + data)</h2>
+      <p>Upload a <code>.cypher</code>/<code>.cql</code> file to execute directly in Neo4j. This endpoint is disabled by default and requires a compliance/admin role when enabled.</p>
+      <label>Cypher file</label>
+      <input type="file" id="cypher-file" accept=".cypher,.cql,.txt" />
+      <label>Job name (optional)</label>
+      <input type="text" id="cypher-job-name" placeholder="northwind-load" />
+      <label>Role (must be compliance_officer or admin)</label>
+      <input type="text" id="cypher-role" placeholder="compliance_officer" value="compliance_officer" />
+      <label>User ID (must exist in RBAC if you enforce it)</label>
+      <input type="text" id="cypher-user-id" placeholder="compliance_001" value="compliance_001" />
+      <label>OpenAI API key (optional)</label>
+      <input type="text" id="cypher-openai-key" placeholder="sk-..." />
+      <button id="submit-cypher">Submit cypher ingestion</button>
+    </div>
   </div>
 
   <div class="card notice" id="notice-unstructured">
@@ -83,6 +100,15 @@
     </ul>
   </div>
 
+  <div class="card notice hidden" id="notice-cypher">
+    <h2>How cypher ingestion works</h2>
+    <ul>
+      <li>The server executes your Cypher statements against the configured Neo4j.</li>
+      <li>Enable it with <code>ALLOW_CYPHER_INGEST=true</code>.</li>
+      <li>Use only in trusted environments (this can create/drop data).</li>
+    </ul>
+  </div>
+
   <div class="card">
     <h2>Job status</h2>
     <label>Job ID</label>
@@ -94,24 +120,43 @@
   <script>
     const tabUnstructured = document.getElementById('tab-unstructured');
     const tabStructured = document.getElementById('tab-structured');
+    const tabCypher = document.getElementById('tab-cypher');
     const unstructuredPanel = document.getElementById('unstructured-panel');
     const structuredPanel = document.getElementById('structured-panel');
+    const cypherPanel = document.getElementById('cypher-panel');
 
     tabUnstructured.addEventListener('click', () => {
       tabUnstructured.classList.add('active');
       tabStructured.classList.remove('active');
+      tabCypher.classList.remove('active');
       unstructuredPanel.classList.remove('hidden');
       structuredPanel.classList.add('hidden');
+      cypherPanel.classList.add('hidden');
       document.getElementById('notice-unstructured').classList.remove('hidden');
       document.getElementById('notice-structured').classList.add('hidden');
+      document.getElementById('notice-cypher').classList.add('hidden');
     });
     tabStructured.addEventListener('click', () => {
       tabStructured.classList.add('active');
       tabUnstructured.classList.remove('active');
+      tabCypher.classList.remove('active');
       structuredPanel.classList.remove('hidden');
       unstructuredPanel.classList.add('hidden');
+      cypherPanel.classList.add('hidden');
       document.getElementById('notice-structured').classList.remove('hidden');
       document.getElementById('notice-unstructured').classList.add('hidden');
+      document.getElementById('notice-cypher').classList.add('hidden');
+    });
+    tabCypher.addEventListener('click', () => {
+      tabCypher.classList.add('active');
+      tabUnstructured.classList.remove('active');
+      tabStructured.classList.remove('active');
+      cypherPanel.classList.remove('hidden');
+      unstructuredPanel.classList.add('hidden');
+      structuredPanel.classList.add('hidden');
+      document.getElementById('notice-cypher').classList.remove('hidden');
+      document.getElementById('notice-unstructured').classList.add('hidden');
+      document.getElementById('notice-structured').classList.add('hidden');
     });
 
     function showStatus(message) {
@@ -184,6 +229,31 @@
       try {
         showStatus('Submitting structured ingestion...');
         const result = await postForm('/ingest/structured', formData);
+        showStatus('Job submitted. Job ID: ' + result.job_id + '\nStatus: ' + result.status);
+      } catch (err) {
+        showStatus('Error: ' + err.message);
+      }
+    });
+
+    document.getElementById('submit-cypher').addEventListener('click', async () => {
+      const fileElement = document.getElementById('cypher-file');
+      const jobName = document.getElementById('cypher-job-name').value;
+      const role = document.getElementById('cypher-role').value;
+      const userId = document.getElementById('cypher-user-id').value;
+      const openaiKey = document.getElementById('cypher-openai-key').value;
+
+      if (!fileElement.files.length) return showStatus('Please select a Cypher file.');
+
+      const formData = new FormData();
+      formData.append('file', fileElement.files[0]);
+      if (jobName) formData.append('job_name', jobName);
+      if (role) formData.append('role', role);
+      if (userId) formData.append('user_id', userId);
+      if (openaiKey) formData.append('openai_key', openaiKey);
+
+      try {
+        showStatus('Submitting cypher ingestion...');
+        const result = await postForm('/ingest/cypher', formData);
         showStatus('Job submitted. Job ID: ' + result.job_id + '\nStatus: ' + result.status);
       } catch (err) {
         showStatus('Error: ' + err.message);

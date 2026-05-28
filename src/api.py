@@ -8,19 +8,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .bridge import ask
-from .auth.roles import UserContext, validate_role
+from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
-from .config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from .config.settings import ALLOW_CYPHER_INGEST, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, OPENAI_API_KEY
 from .ingestion.models import StructuredCSVMapping
 from .ingestion.service import IngestionManager
-from .unstructured.retriever import ESGComplianceRetriever
-from .structured.retriever import StructuredRetriever
 
 app = FastAPI(title="ESG Compliance Agent API")
-
-# for shutdown cleanup
-_unstructured_retriever = ESGComplianceRetriever()
-_structured_retriever   = StructuredRetriever()
 
 # ingestion manager state
 ingestion_manager = IngestionManager()
@@ -96,7 +90,7 @@ async def query(request: QueryRequest):
     try:
         role = validate_role(request.role or "public")
         context = UserContext(
-            user_id=request.user_id or "anonymous",
+            user_id=request.user_id or "public_001",
             role=role,
             department=request.department,
         )
@@ -157,6 +151,55 @@ async def ingest_structured(
     )
 
 
+@app.post("/ingest/cypher", response_model=IngestionResponse)
+async def ingest_cypher(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    job_name: Optional[str] = Form(None),
+    role: Optional[str] = Form(default="public"),
+    user_id: Optional[str] = Form(default="public_001"),
+    department: Optional[str] = Form(default=None),
+    openai_key: Optional[str] = Form(default=None),
+):
+    """
+    Upload and execute arbitrary Cypher against Neo4j.
+
+    Security:
+    - Disabled by default (set ALLOW_CYPHER_INGEST=true to enable)
+    - When enabled, requires role >= COMPLIANCE_OFFICER
+    """
+    if not ALLOW_CYPHER_INGEST:
+        raise HTTPException(status_code=403, detail="Cypher ingestion is disabled. Set ALLOW_CYPHER_INGEST=true to enable.")
+
+    try:
+        validated_role = validate_role(role or "public")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+    ctx = UserContext(
+        user_id=user_id or "public_001",
+        role=validated_role,
+        department=department,
+    )
+    if not ctx.has_role(Role.COMPLIANCE_OFFICER):
+        raise HTTPException(status_code=403, detail="Insufficient role to execute Cypher ingestion (requires compliance_officer or admin).")
+
+    cypher_params = {}
+    effective_openai_key = openai_key or OPENAI_API_KEY
+    if effective_openai_key:
+        # Supports scripts that expect $openAIKey (common in Neo4j Browser examples).
+        cypher_params["openAIKey"] = effective_openai_key
+
+    job = ingestion_manager.submit_cypher(file, job_name=job_name, cypher_params=cypher_params or None)
+    background_tasks.add_task(ingestion_manager.run_job, job.id)
+    return IngestionResponse(
+        job_id=job.id,
+        status=job.status.value,
+        message="Cypher ingestion job submitted.",
+        output_dir=str(job.output_dir),
+    )
+
+
 @app.get("/ingest/jobs/{job_id}", response_model=IngestionStatusResponse)
 async def get_ingestion_job(job_id: str):
     job = ingestion_manager.get_job(job_id)
@@ -181,12 +224,6 @@ async def get_ingestion_job(job_id: str):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    _unstructured_retriever.close()
-    _structured_retriever.close()
 
 
 if __name__ == "__main__":
