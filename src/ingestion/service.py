@@ -17,8 +17,9 @@ from ..document.parser import DoclingParser
 from ..exporter.exporter import Neo4jExporter
 from ..models import DKGEdge, DKGNode
 from ..semantic.axis2 import Axis2Builder
-from .models import IngestionStatus, StructuredCSVMapping
+from .models import IngestionStatus
 
+from ..auth.rbac_setup import GraphRBAC
 
 @dataclass
 class IngestionJob:
@@ -31,7 +32,6 @@ class IngestionJob:
     finished_at: Optional[datetime] = None
     input_path: Optional[Path] = None
     output_dir: Optional[Path] = None
-    mapping: Optional[StructuredCSVMapping] = None
     cypher_params: Optional[Dict[str, object]] = None
     neo4j_load_status: Optional[str] = None
     neo4j_load_message: Optional[str] = None
@@ -48,6 +48,11 @@ class IngestionManager:
         if STORE_INGESTION_ARTIFACTS:
             self.output_base.mkdir(parents=True, exist_ok=True)
 
+        # Always seed RBAC — all statements use MERGE so re-runs are safe
+        rbac = GraphRBAC(uri=NEO4J_URI, user=NEO4J_USER, password=NEO4J_PASSWORD)
+        rbac.setup_schema()
+        rbac.close()   
+
     def submit_unstructured(
         self,
         upload: UploadFile,
@@ -60,22 +65,6 @@ class IngestionManager:
             job.output_dir.mkdir(parents=True, exist_ok=True)
         self.jobs[job.id] = job
         self._log(job, f"Created unstructured ingestion job: {job.name or job.id}")
-        return job
-
-    def submit_structured(
-        self,
-        upload: UploadFile,
-        mapping: StructuredCSVMapping,
-        job_name: Optional[str] = None,
-    ) -> IngestionJob:
-        job = self._create_job("structured", job_name=job_name)
-        job.mapping = mapping
-        job.input_path = self._save_upload(upload, job.id)
-        if STORE_INGESTION_ARTIFACTS:
-            job.output_dir = self.output_base / job.id
-            job.output_dir.mkdir(parents=True, exist_ok=True)
-        self.jobs[job.id] = job
-        self._log(job, f"Created structured ingestion job: {job.name or job.id}")
         return job
 
     def submit_cypher(
@@ -108,8 +97,6 @@ class IngestionManager:
         try:
             if job.type == "unstructured":
                 self._process_unstructured(job)
-            elif job.type == "structured":
-                self._process_structured(job)
             elif job.type == "cypher":
                 self._process_cypher(job)
             else:
@@ -159,91 +146,6 @@ class IngestionManager:
         exporter = Neo4jExporter(output_dir=str(job.output_dir) if job.output_dir else Path("."))
         if STORE_INGESTION_ARTIFACTS and job.output_dir:
             self._set_status(job, IngestionStatus.exporting, "Exporting Neo4j import artifacts")
-            exporter.export(nodes, edges)
-
-        if AUTO_LOAD_TO_NEO4J:
-            self._set_status(job, IngestionStatus.exporting, "Loading graph into Neo4j")
-            try:
-                exporter.load_to_neo4j(nodes, edges, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-                job.neo4j_load_status = "success"
-                job.neo4j_load_message = "Graph loaded into Neo4j successfully"
-                self._log(job, job.neo4j_load_message)
-            except Exception as exc:
-                job.neo4j_load_status = "failed"
-                job.neo4j_load_message = str(exc)
-                self._log(job, f"Neo4j load failed: {exc}")
-        else:
-            job.neo4j_load_status = "skipped"
-            job.neo4j_load_message = "AUTO_LOAD_TO_NEO4J disabled"
-            self._log(job, "Neo4j load skipped")
-
-    def _process_structured(self, job: IngestionJob) -> None:
-        self._set_status(job, IngestionStatus.parsing, "Loading structured CSV")
-        if not job.input_path or not job.input_path.exists() or job.mapping is None:
-            raise FileNotFoundError("Structured CSV or mapping is missing.")
-
-        with job.input_path.open("r", encoding="utf-8", newline="") as file_handle:
-            reader = csv.DictReader(file_handle)
-            header = reader.fieldnames or []
-            job.mapping.validate_column_names(header)
-            nodes_by_id: Dict[str, DKGNode] = {}
-            edges: List[DKGEdge] = []
-
-            for row_index, row in enumerate(reader, start=1):
-                row_id = row.get(job.mapping.id_field, "").strip()
-                if not row_id:
-                    self._log(job, f"Skipping row {row_index} because {job.mapping.id_field} is empty")
-                    continue
-
-                title = row.get(job.mapping.properties[0], row_id) if job.mapping.properties else row_id
-                text_parts = []
-                for prop in job.mapping.properties:
-                    value = row.get(prop, "")
-                    if value:
-                        text_parts.append(f"{prop}: {value}")
-
-                node = DKGNode(
-                    id=row_id,
-                    type=job.mapping.node_label,
-                    title=title,
-                    text="\n".join(text_parts),
-                    order=row_index,
-                )
-                nodes_by_id[row_id] = node
-
-                for relation in job.mapping.relations:
-                    target_value = row.get(relation.target_id_field or relation.field, "").strip()
-                    if not target_value:
-                        continue
-
-                    source_id = row_id if relation.direction == "out" else target_value
-                    target_id = target_value if relation.direction == "out" else row_id
-                    edges.append(
-                        DKGEdge(
-                            source_id=source_id,
-                            target_id=target_id,
-                            rel_type=relation.rel_type,
-                            axis=1,
-                            properties={"source_field": relation.field},
-                        )
-                    )
-
-                    if target_id not in nodes_by_id:
-                        placeholder = DKGNode(
-                            id=target_id,
-                            type=relation.target_label,
-                            title=target_id,
-                            text="",
-                            order=0,
-                        )
-                        nodes_by_id[target_id] = placeholder
-
-        nodes = list(nodes_by_id.values())
-        self._log(job, f"Created {len(nodes)} nodes and {len(edges)} relationships from CSV")
-
-        exporter = Neo4jExporter(output_dir=str(job.output_dir) if job.output_dir else Path("."))
-        if STORE_INGESTION_ARTIFACTS and job.output_dir:
-            self._set_status(job, IngestionStatus.exporting, "Exporting structured nodes and relationships")
             exporter.export(nodes, edges)
 
         if AUTO_LOAD_TO_NEO4J:

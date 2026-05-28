@@ -10,6 +10,5 @@ This module provides:
 
 from .roles import Role, UserContext, validate_role
 from .rbac_setup import GraphRBAC, initialize_rbac_schema
-from .filters import RoleFilter
 
-__all__ = ["Role", "UserContext", "validate_role", "GraphRBAC", "initialize_rbac_schema", "RoleFilter"]
+__all__ = ["Role", "UserContext", "validate_role", "GraphRBAC", "initialize_rbac_schema"]

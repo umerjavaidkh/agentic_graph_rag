@@ -11,7 +11,6 @@ from .bridge import ask
 from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
 from .config.settings import ALLOW_CYPHER_INGEST, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, OPENAI_API_KEY
-from .ingestion.models import StructuredCSVMapping
 from .ingestion.service import IngestionManager
 
 app = FastAPI(title="ESG Compliance Agent API")
@@ -124,29 +123,6 @@ async def ingest_unstructured(
         job_id=job.id,
         status=job.status.value,
         message="Unstructured ingestion job submitted.",
-        output_dir=str(job.output_dir),
-    )
-
-
-@app.post("/ingest/structured", response_model=IngestionResponse)
-async def ingest_structured(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    mapping: str = Form(...),
-    job_name: Optional[str] = Form(None),
-):
-    try:
-        mapping_payload = json.loads(mapping)
-        csv_mapping = StructuredCSVMapping.parse_obj(mapping_payload)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid mapping payload: {exc}")
-
-    job = ingestion_manager.submit_structured(file, csv_mapping, job_name=job_name)
-    background_tasks.add_task(ingestion_manager.run_job, job.id)
-    return IngestionResponse(
-        job_id=job.id,
-        status=job.status.value,
-        message="Structured ingestion job submitted.",
         output_dir=str(job.output_dir),
     )
 

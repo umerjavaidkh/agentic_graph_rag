@@ -518,29 +518,6 @@ CYPHER:"""
             return "vector"
         return "text2cypher"
 
-    def _apply_role_filter_to_cypher(self, cypher: str, user_context: UserContext) -> str:
-        """
-        Apply role-based filtering to a Cypher query.
-        Adds sensitivity constraints for non-admin users.
-        """
-        allowed_sensitivity = RoleFilter._get_allowed_sensitivity_levels(user_context)
-        sensitivity_list = ", ".join(f"'{s}'" for s in allowed_sensitivity)
-        
-        # Add a WHERE clause for sensitivity filtering
-        # This assumes nodes have an optional 'sensitivity' property
-        filter_clause = f"AND (n.sensitivity IS NULL OR n.sensitivity IN [{sensitivity_list}])"
-        
-        # Simple replacement: add filter to all node matches
-        # This is a basic approach; production code might parse Cypher more carefully
-        cypher = cypher.replace(
-            "MATCH (n:",
-            f"MATCH (n: WHERE {filter_clause} WITH n MATCH (n:"
-        )
-        if " WHERE " not in cypher and "MATCH" in cypher:
-            cypher = cypher.replace("RETURN", f"WHERE (NOT exists(n.sensitivity) OR n.sensitivity IN [{sensitivity_list}]) RETURN")
-        
-        return cypher
-
     # ─────────────────────────────────────────
     # UTILITIES
     # ─────────────────────────────────────────

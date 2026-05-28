@@ -25,7 +25,6 @@
   <div class="card">
     <div class="tabs">
       <div class="tab active" id="tab-unstructured">Unstructured</div>
-      <div class="tab" id="tab-structured">Structured CSV</div>
       <div class="tab" id="tab-cypher">Cypher</div>
     </div>
 
@@ -37,31 +36,6 @@
       <label>Job name (optional)</label>
       <input type="text" id="unstructured-job-name" placeholder="policy-manual" />
       <button id="submit-unstructured">Submit ingestion</button>
-    </div>
-
-    <div id="structured-panel" class="hidden">
-      <h2>Upload structured CSV</h2>
-      <p>Upload a CSV and provide mapping metadata for node labels and relations.</p>
-      <label>CSV file</label>
-      <input type="file" id="structured-file" accept=".csv" />
-      <label>Job name (optional)</label>
-      <input type="text" id="structured-job-name" placeholder="products-import" />
-      <label>Mapping JSON</label>
-      <textarea id="structured-mapping" rows="10">{
-  "node_label": "Product",
-  "id_field": "product_id",
-  "properties": ["name", "price"],
-  "relations": [
-    {
-      "field": "supplier_id",
-      "target_label": "Supplier",
-      "target_id_field": "supplier_id",
-      "rel_type": "SUPPLIED_BY",
-      "direction": "out"
-    }
-  ]
-}</textarea>
-      <button id="submit-structured">Submit structured ingestion</button>
     </div>
 
     <div id="cypher-panel" class="hidden">
@@ -90,16 +64,6 @@
     </ul>
   </div>
 
-  <div class="card notice hidden" id="notice-structured">
-    <h2>How structured CSV ingestion works</h2>
-    <ul>
-      <li>Each CSV row becomes a node with the label specified in the mapping.</li>
-      <li>Foreign-key columns become relationships to target nodes.</li>
-      <li>Relationships are created based on the <code>relations</code> array in your mapping.</li>
-      <li>The result is exported as Neo4j import artifacts in <code>output/ingestion/&lt;job_id&gt;</code> and loaded into Neo4j automatically when configured.</li>
-    </ul>
-  </div>
-
   <div class="card notice hidden" id="notice-cypher">
     <h2>How cypher ingestion works</h2>
     <ul>
@@ -119,44 +83,25 @@
 
   <script>
     const tabUnstructured = document.getElementById('tab-unstructured');
-    const tabStructured = document.getElementById('tab-structured');
     const tabCypher = document.getElementById('tab-cypher');
     const unstructuredPanel = document.getElementById('unstructured-panel');
-    const structuredPanel = document.getElementById('structured-panel');
     const cypherPanel = document.getElementById('cypher-panel');
 
     tabUnstructured.addEventListener('click', () => {
       tabUnstructured.classList.add('active');
-      tabStructured.classList.remove('active');
       tabCypher.classList.remove('active');
       unstructuredPanel.classList.remove('hidden');
-      structuredPanel.classList.add('hidden');
       cypherPanel.classList.add('hidden');
       document.getElementById('notice-unstructured').classList.remove('hidden');
-      document.getElementById('notice-structured').classList.add('hidden');
-      document.getElementById('notice-cypher').classList.add('hidden');
-    });
-    tabStructured.addEventListener('click', () => {
-      tabStructured.classList.add('active');
-      tabUnstructured.classList.remove('active');
-      tabCypher.classList.remove('active');
-      structuredPanel.classList.remove('hidden');
-      unstructuredPanel.classList.add('hidden');
-      cypherPanel.classList.add('hidden');
-      document.getElementById('notice-structured').classList.remove('hidden');
-      document.getElementById('notice-unstructured').classList.add('hidden');
       document.getElementById('notice-cypher').classList.add('hidden');
     });
     tabCypher.addEventListener('click', () => {
       tabCypher.classList.add('active');
       tabUnstructured.classList.remove('active');
-      tabStructured.classList.remove('active');
       cypherPanel.classList.remove('hidden');
       unstructuredPanel.classList.add('hidden');
-      structuredPanel.classList.add('hidden');
       document.getElementById('notice-cypher').classList.remove('hidden');
       document.getElementById('notice-unstructured').classList.add('hidden');
-      document.getElementById('notice-structured').classList.add('hidden');
     });
 
     function showStatus(message) {
@@ -207,28 +152,6 @@
       try {
         showStatus('Submitting unstructured ingestion...');
         const result = await postForm('/ingest/unstructured', formData);
-        showStatus('Job submitted. Job ID: ' + result.job_id + '\nStatus: ' + result.status);
-      } catch (err) {
-        showStatus('Error: ' + err.message);
-      }
-    });
-
-    document.getElementById('submit-structured').addEventListener('click', async () => {
-      const fileElement = document.getElementById('structured-file');
-      const jobName = document.getElementById('structured-job-name').value;
-      const mapping = document.getElementById('structured-mapping').value;
-
-      if (!fileElement.files.length) return showStatus('Please select a CSV file.');
-      if (!mapping.trim()) return showStatus('Please provide mapping JSON.');
-
-      const formData = new FormData();
-      formData.append('file', fileElement.files[0]);
-      formData.append('mapping', mapping);
-      if (jobName) formData.append('job_name', jobName);
-
-      try {
-        showStatus('Submitting structured ingestion...');
-        const result = await postForm('/ingest/structured', formData);
         showStatus('Job submitted. Job ID: ' + result.job_id + '\nStatus: ' + result.status);
       } catch (err) {
         showStatus('Error: ' + err.message);

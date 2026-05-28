@@ -69,12 +69,37 @@ class Neo4jExporter:
         driver = GraphDatabase.driver(uri, auth=(user, password))
         with driver.session() as session:
             self._ensure_constraints(session, nodes)
+            self._ensure_indexes(session)          # ← ADD THIS LINE
             for node in nodes:
                 self._merge_node(session, node)
             for edge in edges:
                 self._merge_edge(session, edge)
         driver.close()
         print("✅ Loaded graph into Neo4j")
+
+    def _ensure_indexes(self, session) -> None:
+        """Idempotently create full-text + vector indexes on every ingestion."""
+        statements = [
+            "CREATE FULLTEXT INDEX node_text_index IF NOT EXISTS FOR (n:Book|Chapter|Section|Page|Concept) ON EACH [n.title, n.text]",
+            "CREATE INDEX section_order IF NOT EXISTS FOR (n:Section) ON (n.order)",
+            "CREATE INDEX page_order    IF NOT EXISTS FOR (n:Page)    ON (n.order)",
+            "CREATE INDEX page_start    IF NOT EXISTS FOR (n:Page)    ON (n.page_start)",
+            """CREATE VECTOR INDEX section_embedding IF NOT EXISTS
+            FOR (n:Section) ON (n.embedding)
+            OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}""",
+        ]
+        for stmt in statements:
+            try:
+                session.run(stmt).consume()
+            except Exception as e:
+                code = getattr(e, 'code', '') or ''
+                if any(x in code for x in [
+                    'EquivalentSchemaRuleAlreadyExists',
+                    'IndexAlreadyExists',
+                    'ConstraintAlreadyExists',
+                ]):
+                    continue
+                print(f"⚠️  Index skipped: {e}")
 
     def _ensure_constraints(self, session, nodes: list[DKGNode]) -> None:
         labels = {self._label_to_str(n.type) for n in nodes}
