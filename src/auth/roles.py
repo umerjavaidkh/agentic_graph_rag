@@ -52,7 +52,7 @@ def validate_role(role_str: str) -> Role:
 
 
 # Default user contexts for testing
-DEFAULT_PUBLIC_CONTEXT = UserContext(user_id="public_user", role=Role.PUBLIC)
+DEFAULT_PUBLIC_CONTEXT = UserContext(user_id="public_001", role=Role.PUBLIC)
 DEFAULT_OFFICE_CONTEXT = UserContext(user_id="office_user", role=Role.REGULAR_OFFICE, department="Operations")
 DEFAULT_COMPLIANCE_CONTEXT = UserContext(
     user_id="compliance_user",

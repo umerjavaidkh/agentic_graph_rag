@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ingestion Upload</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    h1, h2 { color: #1f2937; }
+    .card { border: 1px solid #d1d5db; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.5rem; background: #ffffff; }
+    label { display: block; margin-top: 0.75rem; font-weight: 600; }
+    input[type=file], textarea, input[type=text] { width: 100%; padding: 0.75rem; margin-top: 0.35rem; border: 1px solid #cbd5e1; border-radius: 8px; }
+    button { margin-top: 1rem; padding: 0.85rem 1.25rem; background: #2563eb; color: white; border: none; border-radius: 8px; cursor: pointer; }
+    button:disabled { opacity: 0.65; cursor: not-allowed; }
+    .notice { background: #f8fafc; border: 1px solid #cbd5e1; padding: 1rem; border-radius: 10px; margin-top: 1rem; }
+    .status { white-space: pre-wrap; background: #f8fafc; padding: 1rem; border-radius: 10px; margin-top: 1rem; font-family: Menlo, monospace; }
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .tab { padding: 0.75rem 1rem; border: 1px solid #cbd5e1; border-radius: 10px; cursor: pointer; background: #f8fafc; }
+    .tab.active { background: #2563eb; color: white; border-color: #2563eb; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Document Ingestion</h1>
+  <div class="card">
+    <div class="tabs">
+      <div class="tab active" id="tab-unstructured">Unstructured</div>
+      <div class="tab" id="tab-structured">Structured CSV</div>
+    </div>
+
+    <div id="unstructured-panel">
+      <h2>Upload document</h2>
+      <p>Upload a PDF/DOCX/PPTX/HTML. Ingestion will automatically build the document structure and enrich it with semantic relationships if configured.</p>
+      <label>File</label>
+      <input type="file" id="unstructured-file" accept=".pdf,.docx,.pptx,.html,.txt" />
+      <label>Job name (optional)</label>
+      <input type="text" id="unstructured-job-name" placeholder="policy-manual" />
+      <button id="submit-unstructured">Submit ingestion</button>
+    </div>
+
+    <div id="structured-panel" class="hidden">
+      <h2>Upload structured CSV</h2>
+      <p>Upload a CSV and provide mapping metadata for node labels and relations.</p>
+      <label>CSV file</label>
+      <input type="file" id="structured-file" accept=".csv" />
+      <label>Job name (optional)</label>
+      <input type="text" id="structured-job-name" placeholder="products-import" />
+      <label>Mapping JSON</label>
+      <textarea id="structured-mapping" rows="10">{
+  "node_label": "Product",
+  "id_field": "product_id",
+  "properties": ["name", "price"],
+  "relations": [
+    {
+      "field": "supplier_id",
+      "target_label": "Supplier",
+      "target_id_field": "supplier_id",
+      "rel_type": "SUPPLIED_BY",
+      "direction": "out"
+    }
+  ]
+}</textarea>
+      <button id="submit-structured">Submit structured ingestion</button>
+    </div>
+  </div>
+
+  <div class="card notice" id="notice-unstructured">
+    <h2>How ingestion works</h2>
+    <ul>
+      <li><strong>Axis 1</strong> (Document Structure): Always built first from the document parser.</li>
+      <li><strong>Axis 2</strong> (Semantic Enrichment): Automatically run when the server has an OpenAI key configured.</li>
+      <li>The result is exported as Neo4j import artifacts in <code>output/ingestion/&lt;job_id&gt;</code> and loaded into Neo4j automatically when configured.</li>
+    </ul>
+  </div>
+
+  <div class="card notice hidden" id="notice-structured">
+    <h2>How structured CSV ingestion works</h2>
+    <ul>
+      <li>Each CSV row becomes a node with the label specified in the mapping.</li>
+      <li>Foreign-key columns become relationships to target nodes.</li>
+      <li>Relationships are created based on the <code>relations</code> array in your mapping.</li>
+      <li>The result is exported as Neo4j import artifacts in <code>output/ingestion/&lt;job_id&gt;</code> and loaded into Neo4j automatically when configured.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Job status</h2>
+    <label>Job ID</label>
+    <input type="text" id="status-job-id" placeholder="Enter job ID" />
+    <button id="check-status">Check status</button>
+    <div class="status" id="status-output"></div>
+  </div>
+
+  <script>
+    const tabUnstructured = document.getElementById('tab-unstructured');
+    const tabStructured = document.getElementById('tab-structured');
+    const unstructuredPanel = document.getElementById('unstructured-panel');
+    const structuredPanel = document.getElementById('structured-panel');
+
+    tabUnstructured.addEventListener('click', () => {
+      tabUnstructured.classList.add('active');
+      tabStructured.classList.remove('active');
+      unstructuredPanel.classList.remove('hidden');
+      structuredPanel.classList.add('hidden');
+      document.getElementById('notice-unstructured').classList.remove('hidden');
+      document.getElementById('notice-structured').classList.add('hidden');
+    });
+    tabStructured.addEventListener('click', () => {
+      tabStructured.classList.add('active');
+      tabUnstructured.classList.remove('active');
+      structuredPanel.classList.remove('hidden');
+      unstructuredPanel.classList.add('hidden');
+      document.getElementById('notice-structured').classList.remove('hidden');
+      document.getElementById('notice-unstructured').classList.add('hidden');
+    });
+
+    function showStatus(message) {
+      document.getElementById('status-output').innerText = message;
+    }
+
+    function formatJobStatus(payload) {
+      const lines = [
+        `Job ID: ${payload.job_id}`,
+        `Type: ${payload.job_type}`,
+        `Status: ${payload.status}`,
+        `Created: ${payload.created_at}`,
+      ];
+
+      if (payload.started_at) lines.push(`Started: ${payload.started_at}`);
+      if (payload.finished_at) lines.push(`Finished: ${payload.finished_at}`);
+      if (payload.output_dir) lines.push(`Output directory: ${payload.output_dir}`);
+      if (payload.neo4j_load_status) lines.push(`Neo4j load: ${payload.neo4j_load_status}`);
+      if (payload.neo4j_load_message) lines.push(`Neo4j message: ${payload.neo4j_load_message}`);
+      if (payload.error) lines.push(`Error: ${payload.error}`);
+      if (payload.logs && payload.logs.length) {
+        lines.push('Logs:');
+        payload.logs.forEach(log => lines.push(`- ${log}`));
+      }
+
+      return lines.join('\n');
+    }
+
+    async function postForm(url, formData) {
+      const res = await fetch(url, { method: 'POST', body: formData });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Request failed');
+      }
+      return res.json();
+    }
+
+    document.getElementById('submit-unstructured').addEventListener('click', async () => {
+      const fileElement = document.getElementById('unstructured-file');
+      const jobName = document.getElementById('unstructured-job-name').value;
+
+      if (!fileElement.files.length) return showStatus('Please select a file.');
+
+      const formData = new FormData();
+      formData.append('file', fileElement.files[0]);
+      if (jobName) formData.append('job_name', jobName);
+
+      try {
+        showStatus('Submitting unstructured ingestion...');
+        const result = await postForm('/ingest/unstructured', formData);
+        showStatus('Job submitted. Job ID: ' + result.job_id + '\nStatus: ' + result.status);
+      } catch (err) {
+        showStatus('Error: ' + err.message);
+      }
+    });
+
+    document.getElementById('submit-structured').addEventListener('click', async () => {
+      const fileElement = document.getElementById('structured-file');
+      const jobName = document.getElementById('structured-job-name').value;
+      const mapping = document.getElementById('structured-mapping').value;
+
+      if (!fileElement.files.length) return showStatus('Please select a CSV file.');
+      if (!mapping.trim()) return showStatus('Please provide mapping JSON.');
+
+      const formData = new FormData();
+      formData.append('file', fileElement.files[0]);
+      formData.append('mapping', mapping);
+      if (jobName) formData.append('job_name', jobName);
+
+      try {
+        showStatus('Submitting structured ingestion...');
+        const result = await postForm('/ingest/structured', formData);
+        showStatus('Job submitted. Job ID: ' + result.job_id + '\nStatus: ' + result.status);
+      } catch (err) {
+        showStatus('Error: ' + err.message);
+      }
+    });
+
+    document.getElementById('check-status').addEventListener('click', async () => {
+      const jobId = document.getElementById('status-job-id').value.trim();
+      if (!jobId) return showStatus('Enter a job ID to query.');
+      try {
+        showStatus('Checking status...');
+        const res = await fetch('/ingest/jobs/' + encodeURIComponent(jobId));
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || 'Status request failed');
+        }
+        const payload = await res.json();
+        showStatus(formatJobStatus(payload));
+      } catch (err) {
+        showStatus('Error: ' + err.message);
+      }
+    });
+  </script>
+</body>
+</html>

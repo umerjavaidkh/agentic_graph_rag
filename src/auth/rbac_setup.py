@@ -38,6 +38,24 @@ class GraphRBAC:
             print(f"✗ Schema setup failed: {e}")
             return False
 
+    def is_initialized(self) -> bool:
+        """
+        Check whether the RBAC seed schema/data appears to be present.
+
+        This is intentionally a lightweight probe so it can run on app startup.
+        """
+        cypher = """
+            MATCH (ka:KnowledgeArea {id: 'esg'})
+            MATCH (r:Role {name: 'public'})
+            RETURN count(ka) > 0 AND count(r) > 0 AS ok
+        """
+        try:
+            with self.driver.session() as session:
+                row = session.run(cypher).single()
+                return bool(row and row["ok"])
+        except Exception:
+            return False
+
     def can_query_knowledge_area(self, user_id: str, knowledge_area_id: str) -> bool:
         """
         Check if user can query a knowledge area.

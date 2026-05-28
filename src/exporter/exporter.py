@@ -18,8 +18,9 @@ Produces:
 """
 import csv
 import json
-import os
 from pathlib import Path
+
+from neo4j import GraphDatabase
 
 from ..models import DKGNode, DKGEdge, NodeType, RelType
 
@@ -34,6 +35,19 @@ class Neo4jExporter:
         (self.out / "nodes").mkdir(parents=True, exist_ok=True)
         (self.out / "edges").mkdir(parents=True, exist_ok=True)
 
+    def _label_to_str(self, label: str | NodeType) -> str:
+        if isinstance(label, NodeType):
+            return label.value
+        return str(label)
+
+    def _rel_type_to_str(self, rel_type: str | RelType) -> str:
+        if isinstance(rel_type, RelType):
+            return rel_type.value
+        return str(rel_type)
+
+    def _safe_name(self, value: str) -> str:
+        return "".join(ch if ch.isalnum() else "_" for ch in value).lower()
+
     def export(self, nodes: list[DKGNode], edges: list[DKGEdge]) -> None:
         self._write_setup_cypher()
         self._write_node_csvs(nodes)
@@ -43,6 +57,64 @@ class Neo4jExporter:
         print(f"\n✅ Export complete → {self.out.resolve()}")
         print(f"   Nodes : {len(nodes)}")
         print(f"   Edges : {len(edges)}")
+
+    def load_to_neo4j(
+        self,
+        nodes: list[DKGNode],
+        edges: list[DKGEdge],
+        uri: str,
+        user: str,
+        password: str,
+    ) -> None:
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+        with driver.session() as session:
+            self._ensure_constraints(session, nodes)
+            for node in nodes:
+                self._merge_node(session, node)
+            for edge in edges:
+                self._merge_edge(session, edge)
+        driver.close()
+        print("✅ Loaded graph into Neo4j")
+
+    def _ensure_constraints(self, session, nodes: list[DKGNode]) -> None:
+        labels = {self._label_to_str(n.type) for n in nodes}
+        for label in sorted(labels):
+            safe_label = label.replace(' ', '_')
+            session.run(
+                f"CREATE CONSTRAINT {safe_label}_id IF NOT EXISTS FOR (n:{label}) REQUIRE n.id IS UNIQUE"
+            )
+
+    def _merge_node(self, session, node: DKGNode) -> None:
+        label = self._label_to_str(node.type)
+        session.run(
+            f"MERGE (n:{label} {{id: $id}})"
+            " SET n.title = $title, n.text = $text, n.order = $order,"
+            " n.page_start = $page_start, n.page_end = $page_end,"
+            " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
+            " n.embedding = $embedding",
+            id=node.id,
+            title=node.title,
+            text=node.text,
+            order=node.order,
+            page_start=node.page_start,
+            page_end=node.page_end,
+            depth=node.depth,
+            entities=node.entities,
+            cluster_id=node.cluster_id,
+            embedding=node.embedding,
+        )
+
+    def _merge_edge(self, session, edge: DKGEdge) -> None:
+        rel_type = self._rel_type_to_str(edge.rel_type)
+        session.run(
+            f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
+            f"MERGE (a)-[r:{rel_type}]->(b) "
+            "SET r.weight = $weight, r.properties = $properties",
+            source_id=edge.source_id,
+            target_id=edge.target_id,
+            weight=edge.weight,
+            properties=json.dumps(edge.properties),
+        )
 
     # ─────────────────────────────────────────
     # 1. SETUP CYPHER  (constraints + indexes)
@@ -83,23 +155,24 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
     # 2. NODE CSVs
     # ─────────────────────────────────────────
     def _write_node_csvs(self, nodes: list[DKGNode]) -> None:
-        buckets: dict[NodeType, list[DKGNode]] = {}
+        buckets: dict[str, list[DKGNode]] = {}
         for n in nodes:
-            buckets.setdefault(n.type, []).append(n)
+            label = self._label_to_str(n.type)
+            buckets.setdefault(label, []).append(n)
 
         fieldnames = ["id", "type", "title", "text", "order",
                       "page_start", "page_end", "depth",
                       "entities", "cluster_id"]
 
-        for node_type, type_nodes in buckets.items():
-            fname = f"{node_type.value.lower()}s.csv"
+        for label, type_nodes in buckets.items():
+            fname = f"{self._safe_name(label)}s.csv"
             with open(self.out / "nodes" / fname, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 for n in type_nodes:
                     writer.writerow({
                         "id":         n.id,
-                        "type":       n.type.value,
+                        "type":       self._label_to_str(n.type),
                         "title":      n.title,
                         "text":       n.text.replace("\n", "\\n"),
                         "order":      n.order,
@@ -143,13 +216,12 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
     def _write_load_csv_cypher(
         self, nodes: list[DKGNode], edges: list[DKGEdge]
     ) -> None:
-        node_types = {n.type for n in nodes}
+        node_types = {self._label_to_str(n.type) for n in nodes}
         lines = ["// ── LOAD CSV Import ──────────────────────────────────\n"]
 
         # Node imports per type
-        for nt in sorted(node_types, key=lambda x: x.value):
-            label = nt.value
-            fname = f"{label.lower()}s.csv"
+        for label in sorted(node_types):
+            fname = f"{self._safe_name(label)}s.csv"
             lines.append(f"// {label} nodes")
             lines.append(f"""\
 LOAD CSV WITH HEADERS FROM 'file:///nodes/{fname}' AS row
@@ -210,10 +282,11 @@ YIELD rel RETURN count(rel);
             text_escaped  = n.text.replace("'", "\\'").replace("\n", "\\n")
             title_escaped = n.title.replace("'", "\\'")
             cluster       = f", n.cluster_id={n.cluster_id}" if n.cluster_id is not None else ""
+            label = self._label_to_str(n.type)
             # Embedding — stored as native float list, not string
             embedding_str = json.dumps(n.embedding) if n.embedding else "null"
             lines.append(
-                f"MERGE (n:{n.type.value} {{id: '{n.id}'}})"
+                f"MERGE (n:{label} {{id: '{n.id}'}})"
                 f" SET n.title='{title_escaped}', n.text='{text_escaped}',"
                 f" n.order={n.order}, n.page_start={n.page_start},"
                 f" n.page_end={n.page_end}, n.depth={n.depth},"
@@ -224,18 +297,20 @@ YIELD rel RETURN count(rel);
         lines += ["\n// ── AXIS 1 — STRUCTURAL EDGES ───────────────"]
         axis1_edges = [e for e in edges if e.axis == 1]
         for e in axis1_edges:
+            rel_type = self._rel_type_to_str(e.rel_type)
             lines.append(
                 f"MATCH (a {{id: '{e.source_id}'}}), (b {{id: '{e.target_id}'}})"
-                f" MERGE (a)-[:{e.rel_type.value} {{weight: {e.weight}}}]->(b);"
+                f" MERGE (a)-[:{rel_type} {{weight: {e.weight}}}]->(b);"
             )
 
         lines += ["\n// ── AXIS 2 — SEMANTIC EDGES ─────────────────"]
         axis2_edges = [e for e in edges if e.axis == 2]
         for e in axis2_edges:
+            rel_type = self._rel_type_to_str(e.rel_type)
             props_str = json.dumps(e.properties).replace("'", "\\'")
             lines.append(
                 f"MATCH (a {{id: '{e.source_id}'}}), (b {{id: '{e.target_id}'}})"
-                f" MERGE (a)-[:{e.rel_type.value} {{weight: {e.weight},"
+                f" MERGE (a)-[:{rel_type} {{weight: {e.weight},"
                 f" props: '{props_str}'}}]->(b);"
             )
 

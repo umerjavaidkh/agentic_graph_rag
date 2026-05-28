@@ -7,6 +7,9 @@ docling-core>=2.10.0
 
 # ── Embeddings + LLM ────────────────────
 openai>=1.30.0
+fastapi>=0.100.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
 
 # ── Semantic analysis ───────────────────
 numpy>=1.26.0,<2.0.0       # Pinned <2 for torch/docling compatibility

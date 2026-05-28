@@ -47,7 +47,7 @@ class RelType(str, Enum):
 @dataclass
 class DKGNode:
     id:         str                        # unique: "chapter_1", "page_12", etc.
-    type:       NodeType
+    type:       str | NodeType
     title:      str                        # heading or first sentence
     text:       str                        # full text content
     order:      int                        # sequential position at this level
@@ -66,7 +66,7 @@ class DKGNode:
 class DKGEdge:
     source_id:  str
     target_id:  str
-    rel_type:   RelType
+    rel_type:   str | RelType
     weight:     float = 1.0          # similarity score where relevant
     axis:       int   = 1            # 1 = structural, 2 = semantic
     properties: dict  = field(default_factory=dict)
