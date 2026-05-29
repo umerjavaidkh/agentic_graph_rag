@@ -10,6 +10,7 @@ class IngestionStatus(str, Enum):
     parsing = "parsing"
     building_structure = "building_structure"
     semantic_enrichment = "semantic_enrichment"
+    vision_enrichment = "vision_enrichment"
     exporting = "exporting"
     completed = "completed"
     failed = "failed"

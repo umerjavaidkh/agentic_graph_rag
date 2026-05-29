@@ -57,6 +57,10 @@ class DKGNode:
     embedding:  Optional[list] = field(default=None, repr=False)
     entities:   list = field(default_factory=list)   # NER results
     cluster_id: Optional[int] = None                 # for SAME_CATEGORY
+    visual_content: Optional[str] = None  # vision LLM: tables, charts, diagrams, shapes (Page)
+    pdf_page: Optional[int] = None       # 1-based index in uploaded PDF file
+    document_page: Optional[str] = None  # label printed on page: "43", "iii", "A"
+    page_tags: list = field(default_factory=list)  # searchable: pdf:51, doc:43, …
 
 
 # ─────────────────────────────────────────

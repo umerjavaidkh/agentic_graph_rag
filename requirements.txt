@@ -4,6 +4,7 @@
 # ── Document parsing ─────────────────────
 docling>=2.5.0
 docling-core>=2.10.0
+pymupdf>=1.24.0          # page images for optional vision enrichment
 
 # ── Embeddings + LLM ────────────────────
 openai>=1.30.0

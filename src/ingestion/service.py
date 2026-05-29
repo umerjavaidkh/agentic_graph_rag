@@ -12,7 +12,18 @@ from fastapi import UploadFile
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError
 
-from ..config.settings import AUTO_LOAD_TO_NEO4J, CLEANUP_TMP_INGEST, CYPHER_INGEST_SKIP_GENAI, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, OPENAI_API_KEY, STORE_INGESTION_ARTIFACTS
+from ..config.settings import (
+    AUTO_LOAD_TO_NEO4J,
+    CLEANUP_TMP_INGEST,
+    CYPHER_INGEST_SKIP_GENAI,
+    ENABLE_PAGE_VISION,
+    NEO4J_PASSWORD,
+    NEO4J_URI,
+    NEO4J_USER,
+    OPENAI_API_KEY,
+    STORE_INGESTION_ARTIFACTS,
+)
+from ..document.page_vision import PageVisionEnricher
 from ..document.parser import DoclingParser
 from ..exporter.exporter import Neo4jExporter
 from ..models import DKGEdge, DKGNode
@@ -140,6 +151,24 @@ class IngestionManager:
         parser = DoclingParser()
         nodes, edges = parser.parse(str(job.input_path))
         self._log(job, f"Parsed {len(nodes)} nodes and {len(edges)} edges")
+
+        if (
+            ENABLE_PAGE_VISION
+            and OPENAI_API_KEY
+            and job.input_path.suffix.lower() == ".pdf"
+        ):
+            self._set_status(
+                job,
+                IngestionStatus.vision_enrichment,
+                "Vision enrichment (tables, charts, diagrams on selected pages)",
+            )
+            try:
+                count = PageVisionEnricher(api_key=OPENAI_API_KEY).enrich_document(
+                    job.input_path, nodes
+                )
+                self._log(job, f"Vision enriched {count} page(s)")
+            except Exception as exc:
+                self._log(job, f"Vision enrichment skipped: {exc}")
 
         # Always attempt Axis 2 enrichment if OpenAI key is available
         if OPENAI_API_KEY:

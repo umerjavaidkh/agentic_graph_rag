@@ -1,14 +1,41 @@
-from neo4j import GraphDatabase
-from typing import List, Dict, Optional
+"""
+Hybrid retrieval: gather related sections (vector + keywords + graph structure),
+rerank, then pass the best chunks to the LLM.
+"""
+from __future__ import annotations
+
+import json
+import re
+from typing import Dict, List, Optional
+
 import numpy as np
 from dotenv import load_dotenv
-from ..config.settings import MODEL_PROVIDER, OPENAI_API_KEY
-from ..model_providers.factory import get_model_provider
-from ..auth.roles import UserContext, Role, DEFAULT_PUBLIC_CONTEXT
+from neo4j import GraphDatabase
+
 from ..auth.rbac_setup import GraphRBAC
+from ..auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
+from ..config.settings import (
+    MODEL_PROVIDER,
+    OPENAI_API_KEY,
+    RETRIEVAL_CANDIDATE_POOL,
+    RETRIEVAL_FINAL_LIMIT,
+    RETRIEVAL_MIN_RERANK_SCORE,
+)
+from ..document.page_numbers import parse_page_number_from_query
+from ..document.patterns import TABLE_REF_PATTERN
+from ..model_providers.factory import get_model_provider
 
 load_dotenv()
 provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+
+STOPWORDS = {
+    "what", "are", "the", "that", "this", "with", "for", "and", "or",
+    "in", "of", "to", "a", "an", "is", "it", "section", "document",
+    "from", "do", "does", "did", "can", "could", "would", "should",
+    "will", "have", "has", "had", "be", "been", "being", "give", "them",
+    "their", "they", "we", "our", "us", "me", "my", "i", "about", "any",
+    "all", "how", "when", "where", "which", "who", "why", "please",
+}
 
 
 class ESGComplianceRetriever:
@@ -24,54 +51,203 @@ class ESGComplianceRetriever:
         self.user_context = user_context or DEFAULT_PUBLIC_CONTEXT
         self.rbac = GraphRBAC(uri, user, password)
 
-    # ─────────────────────────────────────────
-    # PUBLIC API  (same signatures as before)
-    # ─────────────────────────────────────────
+    def semantic_retrieve(
+        self,
+        query: str,
+        limit: int = RETRIEVAL_FINAL_LIMIT,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
+        """Broad hybrid retrieval + rerank (primary path for Q&A)."""
+        return self.hybrid_retrieve(query, limit=limit, user_context=user_context)
 
-    def semantic_retrieve(self, query: str, limit: int = 5, user_context: Optional[UserContext] = None) -> Dict:
+    def hybrid_retrieve(
+        self,
+        query: str,
+        limit: int = RETRIEVAL_FINAL_LIMIT,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
         ctx = user_context or self.user_context
-        user_id = ctx.user_id
-        
-        # RBAC: Check if user can query document graph (esg knowledge area)
-        if not self.rbac.can_query_knowledge_area(user_id, 'esg'):
-            return {
-                "query": query,
-                "chunks": [{
-                    "id": "access_denied",
-                    "title": "Access Denied",
-                    "text": f"User {user_id} does not have permission to query Agentic Graph RAG data.",
-                }],
-                "total_available": 0,
-                "_access_level": ctx.role.value,
-            }
-        
+        denied = self._access_denied_response(query, ctx)
+        if denied:
+            return denied
+
         query_embedding = self._get_embedding(query)
+        terms = self._extract_search_terms(query)
+        pool_size = max(limit * 3, RETRIEVAL_CANDIDATE_POOL)
 
-        # FIX 1: vector index query — no Python loop, no string parsing
+        if self._asks_for_subsections(query):
+            return self._subsection_tree_retrieve(query, limit=limit, user_context=ctx)
+
+        pdf_page, doc_page = parse_page_number_from_query(query)
+        if pdf_page is not None or doc_page is not None:
+            page_result = self.page_lookup_retrieve(
+                query,
+                pdf_page=pdf_page,
+                document_page=doc_page,
+                user_context=ctx,
+            )
+            if page_result.get("chunks"):
+                return page_result
+
+        if self._is_visual_element_query(query):
+            with self.driver.session() as session:
+                visual_rows = self._visual_page_search(
+                    session, terms, query, limit=max(limit, 5)
+                )
+            table_result = self._table_reference_retrieve(
+                query, limit=max(limit, 5), user_context=ctx
+            )
+            if visual_rows:
+                pool = {c["id"]: c for c in table_result.get("chunks", [])}
+                for row in visual_rows:
+                    row["match_types"] = ["visual_page"]
+                    pool[row["id"]] = {
+                        "id": row["id"],
+                        "title": row["title"],
+                        "text": row["text"],
+                        "cluster": row.get("cluster"),
+                        "score": row.get("score", 1.0),
+                        "related": [],
+                        "match_types": ["visual_page"],
+                    }
+                chunks = sorted(pool.values(), key=lambda c: -c.get("score", 0))[:limit]
+                return {
+                    **table_result,
+                    "chunks": chunks,
+                    "total_available": len(chunks),
+                    "mode": "table_reference+visual",
+                }
+            if table_result.get("chunks"):
+                return table_result
+
         with self.driver.session() as session:
-            top = self._vector_search(session, query_embedding, limit, user_context=ctx)
-            if not top:
-                # Fallback: no vector index yet → warn and use legacy
-                print("⚠️  Vector index not found — run setup.cypher first for best performance")
-                top = self._legacy_similarity(session, query_embedding, limit, user_context=ctx)
+            pool: dict[str, dict] = {}
 
-            # FIX 2: single batched context query — no N+1
-            top = self._enrich_context_batch(session, top)
+            def add_rows(rows: list, match_type: str, base_score: float = 0.0) -> None:
+                for row in rows:
+                    sid = row["id"]
+                    if sid in pool:
+                        pool[sid]["match_types"].add(match_type)
+                        pool[sid]["score"] = max(pool[sid].get("score", 0), row.get("score", base_score))
+                    else:
+                        pool[sid] = {
+                            **row,
+                            "match_types": {match_type},
+                            "score": row.get("score", base_score),
+                        }
 
-        return self._format_response(query, top, user_context=ctx)
+            vector_rows = self._vector_search(session, query_embedding, pool_size, ctx)
+            if not vector_rows:
+                vector_rows = self._legacy_similarity(session, query_embedding, pool_size, ctx)
+            for row in vector_rows:
+                row["match_type"] = "vector"
+            add_rows(vector_rows, "vector")
+
+            add_rows(self._keyword_section_search(session, terms, pool_size), "keyword", 0.45)
+            add_rows(self._structural_section_search(session, terms, query), "structural", 0.55)
+            add_rows(
+                self._visual_page_search(session, terms, query, min(limit, 10)),
+                "visual",
+                0.58,
+            )
+
+            seed_ids = [r["id"] for r in sorted(vector_rows, key=lambda x: -x.get("score", 0))[:5]]
+            add_rows(self._expand_structure(session, seed_ids), "graph_expand", 0.4)
+            add_rows(self._semantic_neighbors(session, seed_ids, hops=1), "semantic_neighbor", 0.35)
+
+            ranked = self._rerank_candidates(query, query_embedding, list(pool.values()), limit)
+            ranked = self._enrich_context_batch(session, ranked)
+
+        return self._format_response(
+            query,
+            ranked,
+            user_context=ctx,
+            meta={"candidates_pooled": len(pool), "candidates_returned": len(ranked)},
+        )
+
+    def structural_retrieve(
+        self,
+        query: str,
+        limit: int = 15,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
+        """
+        Title / hierarchy focused retrieval for section listing and subsection questions.
+        """
+        ctx = user_context or self.user_context
+        denied = self._access_denied_response(query, ctx)
+        if denied:
+            return denied
+
+        if self._asks_for_subsections(query):
+            return self._subsection_tree_retrieve(query, limit=limit, user_context=ctx)
+
+        terms = self._extract_search_terms(query)
+        with self.driver.session() as session:
+            rows = self._structural_section_search(session, terms, query, child_limit=25)
+            for row in rows:
+                row.setdefault("score", 0.7)
+                mt = row.get("match_type", "structural")
+                row["match_types"] = {mt}
+            ranked = self._rerank_candidates(query, self._get_embedding(query), rows, limit)
+            ranked = self._enrich_context_batch(session, ranked)
+
+        return self._format_response(
+            query,
+            ranked,
+            user_context=ctx,
+            meta={"mode": "structural"},
+        )
+
+    def _subsection_tree_retrieve(
+        self,
+        query: str,
+        limit: int = 15,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
+        """
+        Find the best-matching parent section by title overlap, then return it plus
+        all descendant sections (CONTAINS*), in document order.
+        """
+        ctx = user_context or self.user_context
+        with self.driver.session() as session:
+            parent = self._best_parent_section(session, query)
+            if not parent:
+                terms = self._extract_search_terms(query)
+                rows = self._structural_section_search(session, terms, query, child_limit=25)
+            else:
+                rows = [parent]
+                rows.extend(
+                    self._fetch_descendant_sections(
+                        session, parent["id"], max_depth=3, max_sections=max(limit - 1, 8)
+                    )
+                )
+
+            for row in rows:
+                row.setdefault("score", 1.0)
+                mt = row.get("match_type", "subsection_tree")
+                row["match_types"] = {mt}
+                row["rerank_score"] = 1.0
+
+            ranked = sorted(rows, key=lambda r: r.get("doc_order", 0))[:limit]
+            ranked = self._enrich_context_batch(session, ranked)
+
+        return self._format_response(
+            query,
+            ranked,
+            user_context=ctx,
+            meta={
+                "mode": "subsection_tree",
+                "parent_id": parent["id"] if parent else None,
+                "parent_title": parent.get("title") if parent else None,
+            },
+        )
 
     def get_all_sections(self, user_context: Optional[UserContext] = None) -> Dict:
-        """Return sections for TOC queries with role-based filtering."""
         ctx = user_context or self.user_context
-        user_id = ctx.user_id
-        
-        # RBAC: Check if user can query document graph knowledge area
-        if not self.rbac.can_query_knowledge_area(user_id, 'esg'):
-            return {
-                "query": "table_of_contents",
-                "chunks": [],
-                "total_available": 0,
-            }
+        denied = self._access_denied_response(query="table_of_contents", ctx=ctx)
+        if denied:
+            return {**denied, "query": "table_of_contents", "chunks": []}
 
         cypher = """
         MATCH (b:Book)-[:CONTAINS*1..3]->(s:Section)
@@ -91,180 +267,737 @@ class ESGComplianceRetriever:
                     "text": f"{r['title']} (Page {r['page']})",
                     "cluster": r["cluster"],
                     "related": [],
+                    "score": 1.0,
                 }
                 for r in rows
             ],
             "total_available": len(rows),
         }
 
-    def multi_hop_retrieve(self, query: str, limit: int = 5, hops: int = 2, user_context: Optional[UserContext] = None) -> Dict:
-        ctx = user_context or self.user_context
-        initial    = self.semantic_retrieve(query, limit=limit, user_context=ctx)
-        seed_ids   = [c["id"] for c in initial["chunks"]]
-
+    def multi_hop_retrieve(
+        self,
+        query: str,
+        limit: int = RETRIEVAL_FINAL_LIMIT,
+        hops: int = 2,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
+        """Hybrid pool first, then optional semantic graph expansion on top seeds."""
+        result = self.hybrid_retrieve(query, limit=limit, user_context=user_context)
+        seed_ids = [c["id"] for c in result["chunks"][:5]]
         if not seed_ids:
-            return initial
+            return result
 
-        # Neo4j requires literal path lengths — inline hops value
-        cypher = f"""
-            MATCH (seed:Section)
-            WHERE seed.id IN $seed_ids
-            MATCH (seed)-[:SAME_CATEGORY|SHARES_ENTITY*1..{hops}]-(related:Section)
-            WHERE NOT related.id IN $seed_ids
-            WITH related,
-                 count(DISTINCT seed) AS seed_connections
-            RETURN DISTINCT
-                   related.id         AS id,
-                   related.title      AS title,
-                   related.text       AS text,
-                   related.cluster_id AS cluster,
-                   1                  AS hop_distance,
-                   seed_connections
-            ORDER BY seed_connections DESC
-            LIMIT $expand_limit
-        """
+        ctx = user_context or self.user_context
         with self.driver.session() as session:
-            result = session.run(cypher, seed_ids=seed_ids, expand_limit=limit * 2)
-            expanded = [r.data() for r in result]
+            expanded = self._semantic_neighbors(session, seed_ids, hops=hops)
+            pool = {c["id"]: {**c, "match_types": {"hybrid"}} for c in result["chunks"]}
+            for row in expanded:
+                if row["id"] not in pool:
+                    pool[row["id"]] = {**row, "match_types": {"semantic_neighbor"}}
+            ranked = self._rerank_candidates(
+                query, self._get_embedding(query), list(pool.values()), limit
+            )
+            ranked = self._enrich_context_batch(session, ranked)
 
-        seen       = set(seed_ids)
-        all_chunks = initial["chunks"].copy()
+        result["chunks"] = [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "text": r["text"],
+                "cluster": r.get("cluster"),
+                "score": round(r.get("rerank_score", r.get("score", 0)), 3),
+                "related": r.get("related", []),
+                "match_types": list(r.get("match_types", [])),
+            }
+            for r in ranked
+        ]
+        result["total_available"] = len(ranked)
+        result["expanded"] = len(expanded)
+        return result
 
-        for r in expanded:
-            if r["id"] not in seen:
-                seen.add(r["id"])
-                all_chunks.append({
-                    "id":              r["id"],
-                    "title":           r["title"],
-                    "text":            r["text"],
-                    "cluster":         r["cluster"],
-                    "hop_distance":    r["hop_distance"],
-                    "seed_connections":r["seed_connections"],
-                    "related":         [],
-                })
-
-        return {
-            "query":           query,
-            "chunks":          all_chunks[: limit * 2],
-            "total_available": len(all_chunks),
-            "seeds":           len(seed_ids),
-            "expanded":        len(expanded),
-            "_access_level":   ctx.role.value,
-            "_user_id":        ctx.user_id,
-        }
-
-    def close(self):
+    def close(self) -> None:
         self.driver.close()
 
+    def page_lookup_retrieve(
+        self,
+        query: str,
+        pdf_page: Optional[int] = None,
+        document_page: Optional[str] = None,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
+        """
+        Fetch Page by PDF index and/or printed document_page label (text).
+        Printed label takes precedence when both are requested implicitly via 'page N'.
+        """
+        ctx = user_context or self.user_context
+        denied = self._access_denied_response(query, ctx)
+        if denied:
+            return denied
+
+        with self.driver.session() as session:
+            row = None
+            if document_page:
+                result = session.run(
+                    """
+                    MATCH (p:Page)
+                    WHERE p.document_page IS NOT NULL
+                      AND toLower(trim(p.document_page)) = toLower(trim($label))
+                    RETURN p.id AS id, p.title AS title, p.text AS text,
+                           p.visual_content AS visual_content,
+                           p.pdf_page AS pdf_page, p.document_page AS document_page,
+                           p.page_tags AS page_tags, p.order AS doc_order,
+                           1.0 AS score
+                    LIMIT 1
+                    """,
+                    label=document_page,
+                )
+                row = result.single()
+
+            if row is None and pdf_page is not None:
+                result = session.run(
+                    """
+                    MATCH (p:Page)
+                    WHERE p.pdf_page = $pdf OR (p.pdf_page IS NULL AND p.order = $pdf)
+                    RETURN p.id AS id, p.title AS title, p.text AS text,
+                           p.visual_content AS visual_content,
+                           p.pdf_page AS pdf_page, p.document_page AS document_page,
+                           p.page_tags AS page_tags, p.order AS doc_order,
+                           1.0 AS score
+                    LIMIT 1
+                    """,
+                    pdf=pdf_page,
+                )
+                row = result.single()
+
+            if row is None and document_page and document_page.isdigit():
+                result = session.run(
+                    """
+                    MATCH (p:Page)
+                    WHERE p.pdf_page = $pdf OR p.order = $pdf
+                    RETURN p.id AS id, p.title AS title, p.text AS text,
+                           p.visual_content AS visual_content,
+                           p.pdf_page AS pdf_page, p.document_page AS document_page,
+                           p.page_tags AS page_tags, p.order AS doc_order,
+                           0.8 AS score
+                    LIMIT 1
+                    """,
+                    pdf=int(document_page),
+                )
+                row = result.single()
+
+            if row is None:
+                return self._format_response(
+                    query, [], user_context=ctx, meta={"mode": "page_lookup", "found": False}
+                )
+
+            item = self._with_display_text(row.data())
+            item["match_types"] = {"page_lookup"}
+            item["rerank_score"] = 1.0
+            ranked = self._enrich_context_batch(session, [item])
+
+        pdf_val = ranked[0].get("pdf_page") or ranked[0].get("doc_order")
+        doc_val = ranked[0].get("document_page")
+        return self._format_response(
+            query,
+            ranked,
+            user_context=ctx,
+            meta={
+                "mode": "page_lookup",
+                "found": True,
+                "pdf_page": pdf_val,
+                "document_page": doc_val,
+                "page_precedence": "document_page" if doc_val and str(doc_val) != str(pdf_val) else "pdf_page",
+            },
+        )
+
+    def _is_visual_element_query(self, query: str) -> bool:
+        """Tables, charts, diagrams, figures, maps, and other page visuals."""
+        if TABLE_REF_PATTERN.search(query):
+            return True
+        q = query.lower()
+        visual_terms = (
+            "chart", "graph", "diagram", "flowchart", "flow chart",
+            "figure", "fig.", "fig ", "map", "illustration", "shape",
+            "plot", "visual", "screenshot", "infographic", "drawing",
+        )
+        if any(t in q for t in visual_terms):
+            return True
+        if "table" in q:
+            return True
+        return False
+
+    def _table_needles_from_query(self, query: str) -> list[str]:
+        needles = [f"table {ref}".lower() for ref in TABLE_REF_PATTERN.findall(query)]
+        if needles:
+            return needles
+        if "table" in query.lower():
+            return [query.lower().strip()[:100]]
+        return []
+
+    def _table_reference_retrieve(
+        self,
+        query: str,
+        limit: int = 5,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
+        """Exact table caption search on Section + Page nodes."""
+        ctx = user_context or self.user_context
+        denied = self._access_denied_response(query, ctx)
+        if denied:
+            return denied
+
+        needles = self._table_needles_from_query(query)
+        extra = [
+            t for t in self._extract_search_terms(query)
+            if len(t) > 4 and t not in needles
+        ]
+        needles = needles + extra[:4]
+
+        with self.driver.session() as session:
+            rows = self._table_reference_search(session, needles, limit=max(limit, 5))
+            for row in rows:
+                row["match_types"] = {"table_match"}
+                row["rerank_score"] = row.get("score", 1.0)
+            ranked = [self._with_display_text(r) for r in rows]
+            ranked = sorted(ranked, key=lambda r: (-r.get("score", 0), r.get("doc_order", 0)))[:limit]
+            ranked = self._enrich_context_batch(session, ranked)
+
+        return self._format_response(
+            query,
+            ranked,
+            user_context=ctx,
+            meta={"mode": "table_reference", "needles": needles},
+        )
+
+    def _table_reference_search(
+        self, session, needles: list[str], limit: int
+    ) -> list:
+        if not needles:
+            return []
+        result = session.run(
+            """
+            MATCH (n)
+            WHERE (n:Section OR n:Page)
+              AND ANY(needle IN $needles WHERE
+                  toLower(coalesce(n.title, '') + ' ' + coalesce(n.text, '')
+                    + ' ' + coalesce(n.visual_content, '')) CONTAINS needle)
+            WITH n,
+                 [needle IN $needles WHERE
+                  toLower(coalesce(n.title, '') + ' ' + coalesce(n.text, '')
+                    + ' ' + coalesce(n.visual_content, '')) CONTAINS needle
+                 ] AS hits
+            WHERE size(hits) > 0
+            RETURN n.id AS id,
+                   coalesce(n.title, head(labels(n))) AS title,
+                   n.text AS text,
+                   n.visual_content AS visual_content,
+                   n.cluster_id AS cluster,
+                   coalesce(n.order, 0) AS doc_order,
+                   (size(hits) * 3) AS score
+            ORDER BY score DESC, size(n.text) ASC
+            LIMIT $limit
+            """,
+            needles=needles,
+            limit=limit,
+        )
+        return [self._with_display_text(r.data()) for r in result]
+
+    def _visual_page_search(
+        self, session, terms: list[str], query: str, limit: int
+    ) -> list:
+        """Search Page.visual_content (vision-extracted tables/figures)."""
+        needles = list(terms)
+        needles.extend(self._table_needles_from_query(query))
+        needles = list(dict.fromkeys(n for n in needles if n))[:10]
+        if not needles:
+            return []
+
+        result = session.run(
+            """
+            MATCH (p:Page)
+            WHERE p.visual_content IS NOT NULL
+              AND ANY(needle IN $needles WHERE
+                  toLower(p.visual_content) CONTAINS needle)
+            WITH p,
+                 [needle IN $needles WHERE
+                  toLower(p.visual_content) CONTAINS needle] AS hits
+            WHERE size(hits) > 0
+            RETURN p.id AS id,
+                   p.title AS title,
+                   p.text AS text,
+                   p.visual_content AS visual_content,
+                   p.cluster_id AS cluster,
+                   coalesce(p.order, 0) AS doc_order,
+                   (size(hits) * 4) AS score
+            ORDER BY score DESC, size(p.visual_content) DESC
+            LIMIT $limit
+            """,
+            needles=needles,
+            limit=limit,
+        )
+        rows = [self._with_display_text(r.data()) for r in result]
+        for row in rows:
+            row["match_type"] = "visual_page"
+        return rows
+
+    def _with_display_text(self, row: dict) -> dict:
+        """Merge visual_content into chunk text shown to the LLM."""
+        visual = (row.get("visual_content") or "").strip()
+        body = (row.get("text") or "").strip()
+        if visual:
+            page_no = row.get("doc_order", "")
+            row["text"] = (
+                f"[Visual page content — page {page_no}]\n"
+                f"(tables, charts, diagrams, shapes)\n\n{visual}"
+                + (f"\n\n[Extracted text]\n{body}" if body else "")
+            )
+        return row
+
     # ─────────────────────────────────────────
-    # PRIVATE HELPERS
+    # GATHER — broad related set
+    # ─────────────────────────────────────────
+
+    def _keyword_section_search(
+        self, session, terms: list[str], limit: int
+    ) -> list:
+        if not terms:
+            return []
+        result = session.run(
+            """
+            MATCH (s:Section)
+            WHERE ANY(term IN $terms WHERE
+                toLower(s.title) CONTAINS term OR toLower(s.text) CONTAINS term)
+            WITH s,
+                 size([t IN $terms WHERE toLower(s.title) CONTAINS t]) AS title_hits,
+                 size([t IN $terms WHERE toLower(s.text) CONTAINS t]) AS text_hits
+            WITH s, (title_hits * 2 + text_hits) AS keyword_hits
+            WHERE keyword_hits > 0
+            RETURN s.id AS id,
+                   s.title AS title,
+                   s.text AS text,
+                   s.cluster_id AS cluster,
+                   s.order AS doc_order,
+                   keyword_hits AS score
+            ORDER BY keyword_hits DESC, s.order ASC
+            LIMIT $limit
+            """,
+            terms=terms,
+            limit=limit,
+        )
+        return [r.data() for r in result]
+
+    def _structural_section_search(
+        self,
+        session,
+        terms: list[str],
+        query: str,
+        child_limit: int = 15,
+    ) -> list:
+        if not terms:
+            return []
+
+        rows: list[dict] = []
+
+        parents = session.run(
+            """
+            MATCH (p:Section)
+            WHERE ANY(term IN $terms WHERE toLower(p.title) CONTAINS term)
+            WITH p, size([t IN $terms WHERE toLower(p.title) CONTAINS t]) AS title_hits
+            WHERE title_hits > 0
+            RETURN p.id AS id, p.title AS title, p.text AS text,
+                   p.cluster_id AS cluster, p.order AS doc_order, title_hits AS score
+            ORDER BY title_hits DESC, size(p.title) ASC
+            LIMIT 8
+            """,
+            terms=terms,
+        )
+        for p in parents:
+            pdata = p.data()
+            pdata["match_type"] = "title_match"
+            rows.append(pdata)
+
+            children = session.run(
+                """
+                MATCH (p:Section {id: $pid})-[:CONTAINS]->(c:Section)
+                RETURN c.id AS id, c.title AS title, c.text AS text,
+                       c.cluster_id AS cluster, c.order AS doc_order,
+                       1.0 AS score
+                ORDER BY c.order ASC
+                LIMIT $limit
+                """,
+                pid=pdata["id"],
+                limit=child_limit,
+            )
+            for c in children:
+                cdata = c.data()
+                cdata["match_type"] = "child_of_match"
+                rows.append(cdata)
+
+        return rows
+
+    def _best_parent_section(self, session, query: str) -> Optional[dict]:
+        """Pick the section whose title best matches the user question (not loose term hits)."""
+        q = query.lower()
+        q_norm = re.sub(r"[^a-z0-9\s\.]", " ", q)
+
+        candidates = session.run(
+            """
+            MATCH (s:Section)
+            WHERE size(s.title) >= 12
+            RETURN s.id AS id, s.title AS title, s.text AS text,
+                   s.cluster_id AS cluster, s.order AS doc_order
+            """
+        )
+        best: Optional[dict] = None
+        best_score = 0.0
+
+        for record in candidates:
+            row = record.data()
+            title = (row.get("title") or "").lower()
+            title_norm = re.sub(r"[^a-z0-9\s\.]", " ", title)
+            words = [
+                w
+                for w in title_norm.split()
+                if w not in STOPWORDS and len(w) > 2
+            ]
+            if not words:
+                continue
+
+            hits = sum(1 for w in words if w in q_norm.split())
+            score = hits / len(words)
+            if title_norm in q_norm or q_norm in title_norm:
+                score += 0.4
+            if "go.data" in title and "go.data" in q:
+                score += 0.1
+
+            if score > best_score:
+                best_score = score
+                best = {**row, "score": score, "match_type": "parent_match"}
+
+        if best_score < 0.45:
+            return None
+        return best
+
+    def _fetch_descendant_sections(
+        self,
+        session,
+        parent_id: str,
+        max_depth: int = 4,
+        max_sections: int = 12,
+    ) -> list:
+        """All nested sections under parent (handles chained CONTAINS, not only direct children)."""
+        result = session.run(
+            f"""
+            MATCH (p:Section {{id: $pid}})-[:CONTAINS*1..{max_depth}]->(c:Section)
+            RETURN c.id AS id, c.title AS title, c.text AS text,
+                   c.cluster_id AS cluster, c.order AS doc_order,
+                   1.0 AS score
+            ORDER BY c.order ASC
+            LIMIT $limit
+            """,
+            pid=parent_id,
+            limit=max_sections,
+        )
+        rows = [r.data() for r in result]
+        for row in rows:
+            row["match_type"] = "descendant_of_match"
+        return rows
+
+    def _expand_structure(self, session, seed_ids: list[str]) -> list:
+        if not seed_ids:
+            return []
+        result = session.run(
+            """
+            MATCH (s:Section) WHERE s.id IN $ids
+            OPTIONAL MATCH (s)-[:CONTAINS]->(child:Section)
+            OPTIONAL MATCH (parent:Section)-[:CONTAINS]->(s)
+            RETURN collect(DISTINCT child) AS children,
+                   collect(DISTINCT parent) AS parents,
+                   collect(DISTINCT s) AS seeds
+            """,
+            ids=seed_ids,
+        )
+        row = result.single()
+        if not row:
+            return []
+
+        out: list[dict] = []
+        for node in row["children"] or []:
+            if node:
+                out.append(self._section_row(node, 0.5, "child_expand"))
+        for node in row["parents"] or []:
+            if node:
+                out.append(self._section_row(node, 0.35, "parent_expand"))
+        return out
+
+    def _semantic_neighbors(
+        self, session, seed_ids: list[str], hops: int = 1
+    ) -> list:
+        if not seed_ids or hops < 1:
+            return []
+        cypher = f"""
+            MATCH (seed:Section) WHERE seed.id IN $ids
+            MATCH (seed)-[:SAME_CATEGORY|SHARES_ENTITY*1..{hops}]-(related:Section)
+            WHERE NOT related.id IN $ids
+            RETURN DISTINCT related.id AS id,
+                   related.title AS title,
+                   related.text AS text,
+                   related.cluster_id AS cluster,
+                   related.order AS doc_order,
+                   0.4 AS score
+            LIMIT $limit
+        """
+        result = session.run(
+            cypher, ids=seed_ids, limit=RETRIEVAL_CANDIDATE_POOL
+        )
+        return [r.data() for r in result]
+
+    def _section_row(self, node, score: float, match_type: str) -> dict:
+        return {
+            "id": node["id"],
+            "title": node.get("title", ""),
+            "text": node.get("text", ""),
+            "cluster": node.get("cluster_id"),
+            "doc_order": node.get("order", 0),
+            "score": score,
+            "match_type": match_type,
+        }
+
+    # ─────────────────────────────────────────
+    # FILTER — rerank and trim for LLM context
+    # ─────────────────────────────────────────
+
+    def _rerank_candidates(
+        self,
+        query: str,
+        query_embedding: np.ndarray,
+        candidates: list[dict],
+        limit: int,
+    ) -> list:
+        terms = self._extract_search_terms(query)
+        scored: list[dict] = []
+
+        for row in candidates:
+            vec_score = float(row.get("score", 0))
+            if vec_score <= 1.0 and "vector" not in row.get("match_types", set()):
+                vec_score = vec_score * 0.5
+
+            title = (row.get("title") or "").lower()
+            text = (row.get("text") or "").lower()[:4000]
+            bonus = 0.0
+            for term in terms:
+                if term in title:
+                    bonus += 0.12
+                if term in text:
+                    bonus += 0.04
+
+            match_types = row.get("match_types", set())
+            if isinstance(match_types, list):
+                match_types = set(match_types)
+            if "child_of_match" in match_types or "child_expand" in match_types:
+                bonus += 0.15
+            if "table_match" in match_types:
+                bonus += 0.35
+            if "visual" in match_types or "visual_page" in match_types:
+                bonus += 0.32
+            if "title_match" in match_types:
+                bonus += 0.18
+            if "vector" in match_types:
+                bonus += vec_score * 0.35
+            elif vec_score > 0:
+                bonus += min(vec_score, 1.0) * 0.25
+
+            rerank_score = bonus
+            if rerank_score < RETRIEVAL_MIN_RERANK_SCORE:
+                continue
+
+            row = {**row, "rerank_score": rerank_score}
+            scored.append(row)
+
+        scored.sort(key=lambda r: (-r["rerank_score"], r.get("doc_order", 0)))
+        return scored[:limit]
+
+    # ─────────────────────────────────────────
+    # VECTOR + ENRICH (unchanged core)
     # ─────────────────────────────────────────
 
     def _get_embedding(self, text: str) -> np.ndarray:
         response = provider.embeddings(
             model="text-embedding-3-small",
-            input=text[:8000]
+            input=text[:8000],
         )
         return np.array(response.data[0].embedding)
 
-    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
-        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
-
-    # FIX 1a — vector index path (fast)
-    def _vector_search(self, session, embedding: np.ndarray, limit: int, user_context: Optional[UserContext] = None) -> list:
-        ctx = user_context or self.user_context
+    def _vector_search(
+        self,
+        session,
+        embedding: np.ndarray,
+        limit: int,
+        user_context: Optional[UserContext] = None,
+    ) -> list:
         try:
-            result = session.run(f"""
+            result = session.run(
+                """
                 CALL db.index.vector.queryNodes('section_embedding', $limit, $embedding)
                 YIELD node AS s, score
-                RETURN s.id         AS id,
-                       s.title      AS title,
-                       s.text       AS text,
+                RETURN s.id AS id,
+                       s.title AS title,
+                       s.text AS text,
                        s.cluster_id AS cluster,
-                       s.order      AS doc_order,
+                       s.order AS doc_order,
                        score
-            """, embedding=embedding.tolist(), limit=limit)
+                """,
+                embedding=embedding.tolist(),
+                limit=limit,
+            )
             rows = [r.data() for r in result]
             self._vector_index_ready = bool(rows)
             return rows
         except Exception:
             return []
 
-    # FIX 1b — legacy fallback (no vector index)
-    def _legacy_similarity(self, session, embedding: np.ndarray, limit: int, user_context: Optional[UserContext] = None) -> list:
-        import json
-        ctx = user_context or self.user_context
-        
-        result = session.run("""
+    def _legacy_similarity(
+        self,
+        session,
+        embedding: np.ndarray,
+        limit: int,
+        user_context: Optional[UserContext] = None,
+    ) -> list:
+        result = session.run(
+            """
             MATCH (s:Section)
             WHERE s.embedding IS NOT NULL
-            RETURN s.id         AS id,
-                   s.title      AS title,
-                   s.text       AS text,
+            RETURN s.id AS id,
+                   s.title AS title,
+                   s.text AS text,
                    s.cluster_id AS cluster,
-                   s.order      AS doc_order,
-                   s.embedding  AS embedding
-        """)
+                   s.order AS doc_order,
+                   s.embedding AS embedding
+            """
+        )
         rows = [r.data() for r in result]
-
         scored = []
         for row in rows:
             raw = row.pop("embedding")
-            # handle string (stored as JSON) or list (stored as array)
             if isinstance(raw, str):
                 raw = json.loads(raw)
-            emb   = np.array(raw, dtype=np.float32)
+            emb = np.array(raw, dtype=np.float32)
             score = self._cosine_similarity(embedding, emb)
             scored.append({**row, "score": score})
-
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:limit]
 
-    # FIX 2 — single batched context query
     def _enrich_context_batch(self, session, items: list) -> list:
         if not items:
             return items
 
-        ids    = [i["id"] for i in items]
-        result = session.run("""
+        ids = [i["id"] for i in items]
+        result = session.run(
+            """
             MATCH (s:Section) WHERE s.id IN $ids
             OPTIONAL MATCH (s)-[:SAME_CATEGORY]-(cm:Section)
             OPTIONAL MATCH (s)-[:SHARES_ENTITY]-(em:Section)
             OPTIONAL MATCH (s)-[:PRECEDES|FOLLOWS]-(nb:Section)
             OPTIONAL MATCH (b:Book)-[:CONTAINS*1..3]->(s)
-            RETURN s.id                                    AS id,
-                   collect(DISTINCT cm.title)[0..3]        AS cluster_context,
-                   collect(DISTINCT em.title)[0..3]        AS entity_context,
-                   collect(DISTINCT nb.title)[0..2]        AS sequence_context,
-                   b.title                                 AS source_doc
-        """, ids=ids)
-
+            RETURN s.id AS id,
+                   collect(DISTINCT cm.title)[0..3] AS cluster_context,
+                   collect(DISTINCT em.title)[0..3] AS entity_context,
+                   collect(DISTINCT nb.title)[0..2] AS sequence_context,
+                   b.title AS source_doc
+            """,
+            ids=ids,
+        )
         ctx_map = {r["id"]: r.data() for r in result}
 
         for item in items:
             ctx = ctx_map.get(item["id"], {})
-            item["related"]     = (ctx.get("cluster_context") or []) + \
-                                  (ctx.get("entity_context")  or [])
-            item["source_doc"]  = ctx.get("source_doc", "")
+            item["related"] = (ctx.get("cluster_context") or []) + (
+                ctx.get("entity_context") or []
+            )
+            item["source_doc"] = ctx.get("source_doc", "")
 
         return items
 
     # ─────────────────────────────────────────
-    # SHARED RESPONSE FORMATTER
+    # HELPERS
     # ─────────────────────────────────────────
 
-    def _format_response(self, query: str, items: list, user_context: Optional[UserContext] = None) -> Dict:
-        ctx = user_context or self.user_context
+    def _access_denied_response(self, query: str, ctx: UserContext) -> Optional[Dict]:
+        if self.rbac.can_query_knowledge_area(ctx.user_id, "esg"):
+            return None
         return {
+            "query": query,
+            "chunks": [{
+                "id": "access_denied",
+                "title": "Access Denied",
+                "text": f"User {ctx.user_id} does not have permission to query Agentic Graph RAG data.",
+            }],
+            "total_available": 0,
+            "_access_level": ctx.role.value,
+        }
+
+    def _extract_search_terms(self, query: str) -> list[str]:
+        cleaned = re.sub(r"[^a-z0-9\s\.]", " ", query.lower())
+        words = [w for w in cleaned.split() if w not in STOPWORDS and len(w) > 2]
+        terms: list[str] = []
+        for w in words:
+            if w not in terms:
+                terms.append(w)
+        if "go.data" in query.lower() or "godata" in query.lower():
+            for extra in ("go.data", "godata", "data"):
+                if extra not in terms:
+                    terms.append(extra)
+        return terms[:8]
+
+    def _asks_for_subsections(self, query: str) -> bool:
+        q = query.lower()
+        triggers = (
+            "subsection",
+            "sub-section",
+            "sub section",
+            "sub sections",
+            "have sub",
+            "headings under",
+            "sections under",
+            "under the section",
+            "list the sections",
+            "with headings",
+            "give them with headings",
+            "children of",
+            "nested under",
+        )
+        return any(t in q for t in triggers)
+
+    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+    def _format_response(
+        self,
+        query: str,
+        items: list,
+        user_context: Optional[UserContext] = None,
+        meta: Optional[dict] = None,
+    ) -> Dict:
+        ctx = user_context or self.user_context
+        out = {
             "query": query,
             "chunks": [
                 {
-                    "id":      r["id"],
-                    "title":   r["title"],
-                    "text":    r["text"],
+                    "id": r["id"],
+                    "title": r["title"],
+                    "text": r["text"],
                     "cluster": r.get("cluster"),
-                    "score":   round(r.get("score", 0.0), 3),
+                    "score": round(
+                        r.get("rerank_score", r.get("score", 0.0)), 3
+                    ),
                     "related": r.get("related", []),
+                    "match_types": list(r.get("match_types", []))
+                    if isinstance(r.get("match_types"), set)
+                    else r.get("match_types", []),
+                    "pdf_page": r.get("pdf_page"),
+                    "document_page": r.get("document_page"),
+                    "visual_content": r.get("visual_content"),
+                    "page_tags": r.get("page_tags"),
                 }
                 for r in items
             ],
@@ -272,3 +1005,6 @@ class ESGComplianceRetriever:
             "_access_level": ctx.role.value,
             "_user_id": ctx.user_id,
         }
+        if meta:
+            out.update(meta)
+        return out

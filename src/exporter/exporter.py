@@ -80,10 +80,17 @@ class Neo4jExporter:
     def _ensure_indexes(self, session) -> None:
         """Idempotently create full-text + vector indexes on every ingestion."""
         statements = [
-            "CREATE FULLTEXT INDEX node_text_index IF NOT EXISTS FOR (n:Book|Chapter|Section|Page|Concept) ON EACH [n.title, n.text]",
+            "CREATE FULLTEXT INDEX node_text_index IF NOT EXISTS "
+            "FOR (n:Book|Chapter|Section|Page|Concept) "
+            "ON EACH [n.title, n.text, n.visual_content]",
+            "CREATE FULLTEXT INDEX page_visual_index IF NOT EXISTS "
+            "FOR (n:Page) ON EACH [n.visual_content, n.title, n.text, n.document_page]",
+            "CREATE FULLTEXT INDEX page_number_index IF NOT EXISTS "
+            "FOR (n:Page) ON EACH [n.document_page, n.page_tags, n.title]",
             "CREATE INDEX section_order IF NOT EXISTS FOR (n:Section) ON (n.order)",
             "CREATE INDEX page_order    IF NOT EXISTS FOR (n:Page)    ON (n.order)",
             "CREATE INDEX page_start    IF NOT EXISTS FOR (n:Page)    ON (n.page_start)",
+            "CREATE INDEX page_pdf_page IF NOT EXISTS FOR (n:Page) ON (n.pdf_page)",
             """CREATE VECTOR INDEX section_embedding IF NOT EXISTS
             FOR (n:Section) ON (n.embedding)
             OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}""",
@@ -116,7 +123,9 @@ class Neo4jExporter:
             " SET n.title = $title, n.text = $text, n.order = $order,"
             " n.page_start = $page_start, n.page_end = $page_end,"
             " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
-            " n.embedding = $embedding",
+            " n.embedding = $embedding, n.visual_content = $visual_content,"
+            " n.pdf_page = $pdf_page, n.document_page = $document_page,"
+            " n.page_tags = $page_tags",
             id=node.id,
             title=node.title,
             text=node.text,
@@ -127,6 +136,10 @@ class Neo4jExporter:
             entities=node.entities,
             cluster_id=node.cluster_id,
             embedding=node.embedding,
+            visual_content=node.visual_content,
+            pdf_page=node.pdf_page,
+            document_page=node.document_page,
+            page_tags=node.page_tags or [],
         )
 
     def _merge_edge(self, session, edge: DKGEdge) -> None:

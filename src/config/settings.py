@@ -35,3 +35,17 @@ CLEANUP_TMP_INGEST = os.environ.get("CLEANUP_TMP_INGEST", "true").lower() in ("1
 # SECURITY: Allows wiping the Neo4j database (DROP indexes/constraints + delete all nodes).
 # Keep disabled unless you're in a trusted dev environment.
 ALLOW_DB_RESET = os.environ.get("ALLOW_DB_RESET", "false").lower() in ("1", "true", "yes")
+
+# Unstructured retrieval: broad fetch then filter before LLM
+RETRIEVAL_CANDIDATE_POOL = int(os.environ.get("RETRIEVAL_CANDIDATE_POOL", "30"))
+RETRIEVAL_FINAL_LIMIT = int(os.environ.get("RETRIEVAL_FINAL_LIMIT", "8"))
+RETRIEVAL_MIN_RERANK_SCORE = float(os.environ.get("RETRIEVAL_MIN_RERANK_SCORE", "0.12"))
+
+# Page vision fallback (cheap model, selective pages) — tables/charts/diagrams → visual_content
+ENABLE_PAGE_VISION = os.environ.get("ENABLE_PAGE_VISION", "false").lower() in ("1", "true", "yes")
+VISION_MODEL = os.environ.get("VISION_MODEL", "gpt-4o-mini")
+VISION_DPI = int(os.environ.get("VISION_DPI", "120"))
+VISION_IMAGE_DETAIL = os.environ.get("VISION_IMAGE_DETAIL", "low")  # low | high (cost)
+VISION_MAX_PAGES_PER_DOC = int(os.environ.get("VISION_MAX_PAGES_PER_DOC", "25"))
+VISION_SELECTIVE = os.environ.get("VISION_SELECTIVE", "true").lower() in ("1", "true", "yes")
+VISION_MIN_TEXT_CHARS = int(os.environ.get("VISION_MIN_TEXT_CHARS", "350"))
