@@ -18,8 +18,8 @@ def test_rbac_access():
     print("TESTING GRAPH-BASED RBAC")
     print("="*60)
     
-    # Test case 1: Admin accessing ESG
-    print("\n[TEST 1] Admin accessing ESG knowledge area")
+    # Test case 1: Admin accessing document graph
+    print("\n[TEST 1] Admin accessing Agentic Graph RAG knowledge area")
     admin_ctx = UserContext(
         user_id='admin_001',
         role=validate_role('admin')
@@ -29,8 +29,8 @@ def test_rbac_access():
     print(f"  Knowledge Area: esg")
     print(f"  Result: {'✓ ALLOWED' if can_access else '✗ DENIED'}")
     
-    # Test case 2: Regular office accessing ESG (should be denied)
-    print("\n[TEST 2] Regular office accessing ESG (should be DENIED)")
+    # Test case 2: Regular office accessing document graph (should be denied)
+    print("\n[TEST 2] Regular office accessing Agentic Graph RAG (should be DENIED)")
     regular_ctx = UserContext(
         user_id='regular_001',
         role=validate_role('regular_office')
@@ -47,8 +47,8 @@ def test_rbac_access():
     print(f"  Knowledge Area: structured")
     print(f"  Result: {'✓ ALLOWED (expected)' if can_access else '✗ DENIED'}")
     
-    # Test case 4: Compliance officer accessing ESG
-    print("\n[TEST 4] Compliance officer accessing ESG")
+    # Test case 4: Compliance officer accessing document graph
+    print("\n[TEST 4] Compliance officer accessing Agentic Graph RAG")
     compliance_ctx = UserContext(
         user_id='compliance_001',
         role=validate_role('compliance_officer')
@@ -59,7 +59,7 @@ def test_rbac_access():
     print(f"  Result: {'✓ ALLOWED (expected)' if can_access else '✗ DENIED'}")
     
     # Test case 5: Public user accessing public KA
-    print("\n[TEST 5] Public user accessing ESG")
+    print("\n[TEST 5] Public user accessing Agentic Graph RAG")
     public_ctx = UserContext(
         user_id='public_001',
         role=validate_role('public')

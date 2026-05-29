@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ESG Chat</title>
+  <title>Agentic Graph RAG</title>
   <style>
     :root{
       --bg0:#0b1220;
@@ -239,7 +239,7 @@
     <div class="panel">
       <div class="panel-header">
         <h2 class="title">
-          <span class="brand"><span class="dot"></span>ESG Chat</span>
+          <span class="brand"><span class="dot"></span>Agentic Graph RAG</span>
           <span class="badge">FastAPI · Neo4j · RAG</span>
         </h2>
       </div>
@@ -280,7 +280,7 @@
       <div id="chat_body" class="chat-body"></div>
       <div class="chat-input">
         <div class="input-row">
-          <textarea id="q" placeholder="Ask about ESG compliance, policies, reporting obligations..." spellcheck="false"></textarea>
+          <textarea id="q" placeholder="Ask about policies, documents, reporting obligations..." spellcheck="false"></textarea>
           <button class="primary" id="send">Send</button>
         </div>
       </div>
@@ -428,7 +428,7 @@
       chatBody.innerHTML = '';
       clearError();
       setStatus('Ready');
-      addMessage('assistant', "Hi! Ask me anything about ESG compliance. I'll answer using the knowledge graph and cite what I used.");
+      addMessage('assistant', "Hi! Ask me anything — I'll answer using the Agentic Graph RAG knowledge graph and cite what I used.");
     });
 
     document.getElementById('ping').addEventListener('click', async () => {
@@ -446,7 +446,7 @@
     });
 
     // initial
-    addMessage('assistant', "Hi! Ask me anything about ESG compliance. I'll answer using the knowledge graph and cite what I used.");
+    addMessage('assistant', "Hi! Ask me anything — I'll answer using the Agentic Graph RAG knowledge graph and cite what I used.");
   </script>
 </body>
 </html>

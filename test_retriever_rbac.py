@@ -57,22 +57,22 @@ def test_structured_retriever_access():
 
 
 def test_esg_retriever_access():
-    """Test ESG retriever access control."""
+    """Test document graph retriever access control."""
     
     print("\n" + "="*60)
-    print("TESTING ESG RETRIEVER ACCESS CONTROL")
+    print("TESTING AGENTIC GRAPH RAG RETRIEVER ACCESS CONTROL")
     print("="*60)
     
     retriever = ESGComplianceRetriever()
     
-    # Test 1: Admin can access ESG
-    print("\n[TEST 1] Admin accessing ESG data")
+    # Test 1: Admin can access document graph
+    print("\n[TEST 1] Admin accessing Agentic Graph RAG data")
     admin_ctx = UserContext(
         user_id='admin_001',
         role=validate_role('admin')
     )
     result = retriever.semantic_retrieve(
-        "ESG compliance",
+        "compliance policy",
         limit=3,
         user_context=admin_ctx
     )
@@ -81,14 +81,14 @@ def test_esg_retriever_access():
     else:
         print(f"  ✗ DENIED - Access blocked")
     
-    # Test 2: Regular office CANNOT access ESG
-    print("\n[TEST 2] Regular office accessing ESG data (should be DENIED)")
+    # Test 2: Regular office CANNOT access document graph
+    print("\n[TEST 2] Regular office accessing Agentic Graph RAG data (should be DENIED)")
     regular_ctx = UserContext(
         user_id='regular_001',
         role=validate_role('regular_office')
     )
     result = retriever.semantic_retrieve(
-        "ESG compliance",
+        "compliance policy",
         limit=3,
         user_context=regular_ctx
     )
@@ -98,14 +98,14 @@ def test_esg_retriever_access():
     else:
         print(f"  ✗ UNEXPECTED - Access should have been denied")
     
-    # Test 3: Compliance officer can access ESG
-    print("\n[TEST 3] Compliance officer accessing ESG data")
+    # Test 3: Compliance officer can access document graph
+    print("\n[TEST 3] Compliance officer accessing Agentic Graph RAG data")
     compliance_ctx = UserContext(
         user_id='compliance_001',
         role=validate_role('compliance_officer')
     )
     result = retriever.semantic_retrieve(
-        "ESG compliance",
+        "compliance policy",
         limit=3,
         user_context=compliance_ctx
     )

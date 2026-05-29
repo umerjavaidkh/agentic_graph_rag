@@ -26,8 +26,8 @@ def test_retriever_access_checks():
     print(f"  User: {admin_ctx.user_id} ({admin_ctx.role.value})")
     print(f"  Retriever would: {'✓ EXECUTE query' if would_execute else '✗ BLOCK access'}")
     
-    # Scenario 2: Regular office user accessing ESG retriever (should be blocked)
-    print("\n[SCENARIO 2] Regular Office -> ESG Retriever")
+    # Scenario 2: Regular office user accessing document retriever (should be blocked)
+    print("\n[SCENARIO 2] Regular Office -> Agentic Graph RAG Retriever")
     regular_ctx = UserContext(user_id='regular_001', role=validate_role('regular_office'))
     would_execute = rbac.can_query_knowledge_area(regular_ctx.user_id, 'esg')
     print(f"  User: {regular_ctx.user_id} ({regular_ctx.role.value})")
@@ -39,15 +39,15 @@ def test_retriever_access_checks():
     print(f"  User: {regular_ctx.user_id} ({regular_ctx.role.value})")
     print(f"  Retriever would: {'✓ EXECUTE query (expected)' if would_execute else '✗ BLOCK access'}")
     
-    # Scenario 4: Compliance officer accessing ESG retriever
-    print("\n[SCENARIO 4] Compliance Officer -> ESG Retriever")
+    # Scenario 4: Compliance officer accessing document retriever
+    print("\n[SCENARIO 4] Compliance Officer -> Agentic Graph RAG Retriever")
     compliance_ctx = UserContext(user_id='compliance_001', role=validate_role('compliance_officer'))
     would_execute = rbac.can_query_knowledge_area(compliance_ctx.user_id, 'esg')
     print(f"  User: {compliance_ctx.user_id} ({compliance_ctx.role.value})")
     print(f"  Retriever would: {'✓ EXECUTE query (expected)' if would_execute else '✗ BLOCK access'}")
     
     # Scenario 5: Public user accessing public content
-    print("\n[SCENARIO 5] Public User -> ESG Retriever")
+    print("\n[SCENARIO 5] Public User -> Agentic Graph RAG Retriever")
     public_ctx = UserContext(user_id='public_001', role=validate_role('public'))
     would_execute = rbac.can_query_knowledge_area(public_ctx.user_id, 'esg')
     print(f"  User: {public_ctx.user_id} ({public_ctx.role.value})")
@@ -68,12 +68,12 @@ def test_retriever_access_checks():
     print("  If denied: Returns empty result")
     print("  If allowed: Queries vector index")
     
-    print("\n[ESGComplianceRetriever.semantic_retrieve()]")
+    print("\n[DocumentGraphRetriever.semantic_retrieve()]")
     print("  Checks: rbac.can_query_knowledge_area(user_id, 'esg')")
     print("  If denied: Returns access_denied error chunk")
     print("  If allowed: Executes semantic search")
     
-    print("\n[ESGComplianceRetriever.get_all_sections()]")
+    print("\n[DocumentGraphRetriever.get_all_sections()]")
     print("  Checks: rbac.can_query_knowledge_area(user_id, 'esg')")
     print("  If denied: Returns empty TOC")
     print("  If allowed: Returns all sections")

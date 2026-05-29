@@ -230,8 +230,8 @@ if __name__ == "__main__":
     
     # Test access checks
     print("\n--- Testing Access Checks ---")
-    print(f"admin_001 can query ESG? {rbac.can_query_knowledge_area('admin_001', 'esg')}")
-    print(f"regular_001 can query ESG? {rbac.can_query_knowledge_area('regular_001', 'esg')}")
+    print(f"admin_001 can query Agentic Graph RAG? {rbac.can_query_knowledge_area('admin_001', 'esg')}")
+    print(f"regular_001 can query Agentic Graph RAG? {rbac.can_query_knowledge_area('regular_001', 'esg')}")
     print(f"regular_001 can query structured? {rbac.can_query_knowledge_area('regular_001', 'structured')}")
     
     print("\nRoles for admin_001:", rbac.get_user_roles('admin_001'))

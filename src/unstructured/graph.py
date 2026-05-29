@@ -91,7 +91,7 @@ def generate_node(state: ESGState):
     query_type = state.get("query_type", "semantic")
 
     if not chunks:
-        return {"answer": "I couldn't find relevant compliance information in the document."}
+        return {"answer": "I couldn't find relevant information in the document knowledge graph."}
 
     # ── Confidence check (semantic queries only) ──────────────
     low_confidence = False

@@ -47,7 +47,7 @@ MERGE (public_role:Role {name: 'public', description: 'Access to public data onl
 // Create Knowledge Areas (query domains)
 MERGE (esg:KnowledgeArea {
   id: 'esg',
-  name: 'ESG Compliance',
+  name: 'Agentic Graph RAG',
   description: 'Environmental, Social, Governance data'
 })
 MERGE (structured:KnowledgeArea {
@@ -160,7 +160,7 @@ MERGE (compliance)-[:CAN_EDIT]->(policy_access);
 // Sample document structure linking to knowledge areas
 MERGE (doc_esg:Document {
   id: 'doc_esg_report_2024',
-  title: 'ESG Report 2024',
+  title: 'Agentic Graph RAG Sample Report 2024',
   sensitivity: 'sensitive',
   knowledge_area: 'esg'
 })

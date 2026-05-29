@@ -32,14 +32,14 @@ class ESGComplianceRetriever:
         ctx = user_context or self.user_context
         user_id = ctx.user_id
         
-        # RBAC: Check if user can query ESG/unstructured knowledge area
+        # RBAC: Check if user can query document graph (esg knowledge area)
         if not self.rbac.can_query_knowledge_area(user_id, 'esg'):
             return {
                 "query": query,
                 "chunks": [{
                     "id": "access_denied",
                     "title": "Access Denied",
-                    "text": f"User {user_id} does not have permission to query ESG data.",
+                    "text": f"User {user_id} does not have permission to query Agentic Graph RAG data.",
                 }],
                 "total_available": 0,
                 "_access_level": ctx.role.value,
@@ -65,7 +65,7 @@ class ESGComplianceRetriever:
         ctx = user_context or self.user_context
         user_id = ctx.user_id
         
-        # RBAC: Check if user can query ESG knowledge area
+        # RBAC: Check if user can query document graph knowledge area
         if not self.rbac.can_query_knowledge_area(user_id, 'esg'):
             return {
                 "query": "table_of_contents",

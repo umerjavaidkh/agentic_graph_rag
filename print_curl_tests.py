@@ -31,10 +31,10 @@ tests = [
         "expected": "✓ Query executes (regular_office can query 'structured')"
     },
     {
-        "name": "Regular office accessing ESG (DENIED)",
-        "description": "Regular office should be blocked from ESG data",
+        "name": "Regular office accessing Agentic Graph RAG (DENIED)",
+        "description": "Regular office should be blocked from document graph data",
         "payload": {
-            "question": "What is our ESG compliance status?",
+            "question": "What is our compliance status?",
             "role": "regular_office",
             "user_id": "regular_001",
             "department": "Sales"
@@ -42,10 +42,10 @@ tests = [
         "expected": "✗ Access denied - Access control enforced!"
     },
     {
-        "name": "Compliance officer accessing ESG",
-        "description": "Compliance officer can query ESG knowledge area",
+        "name": "Compliance officer accessing Agentic Graph RAG",
+        "description": "Compliance officer can query document graph knowledge area",
         "payload": {
-            "question": "Show ESG compliance data for Q2 2024",
+            "question": "Show compliance data for Q2 2024",
             "role": "compliance_officer",
             "user_id": "compliance_001",
             "department": "Legal"

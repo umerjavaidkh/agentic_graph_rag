@@ -21,7 +21,7 @@ from .config.settings import (
 )
 from .ingestion.service import IngestionManager
 
-app = FastAPI(title="ESG Compliance Agent API")
+app = FastAPI(title="Agentic Graph RAG API")
 
 # ingestion manager state
 ingestion_manager = IngestionManager()
