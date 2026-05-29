@@ -48,11 +48,6 @@ class IngestionManager:
         if STORE_INGESTION_ARTIFACTS:
             self.output_base.mkdir(parents=True, exist_ok=True)
 
-        # Always seed RBAC — all statements use MERGE so re-runs are safe
-        rbac = GraphRBAC(uri=NEO4J_URI, user=NEO4J_USER, password=NEO4J_PASSWORD)
-        rbac.setup_schema()
-        rbac.close()   
-
     def submit_unstructured(
         self,
         upload: UploadFile,
@@ -93,6 +88,7 @@ class IngestionManager:
 
         job.started_at = datetime.utcnow()
         self._set_status(job, IngestionStatus.validating, "Validating ingestion inputs")
+        self._ensure_rbac_schema(job)
 
         try:
             if job.type == "unstructured":
@@ -110,6 +106,18 @@ class IngestionManager:
             self._set_status(job, IngestionStatus.failed, f"Job failed: {job.error}")
         finally:
             self._cleanup_job_inputs(job)
+
+    def _ensure_rbac_schema(self, job: IngestionJob) -> None:
+        """Seed RBAC in Neo4j only when the schema is not already present."""
+        rbac = GraphRBAC(uri=NEO4J_URI, user=NEO4J_USER, password=NEO4J_PASSWORD)
+        try:
+            if rbac.is_initialized():
+                self._log(job, "RBAC schema already present; skipping setup")
+                return
+            self._log(job, "RBAC schema missing; running setup")
+            rbac.setup_schema("src/auth/rbac_schema.cypher")
+        finally:
+            rbac.close()
 
     def _cleanup_job_inputs(self, job: IngestionJob) -> None:
         if not CLEANUP_TMP_INGEST:
