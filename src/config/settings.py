@@ -31,3 +31,7 @@ CYPHER_INGEST_SKIP_GENAI = os.environ.get("CYPHER_INGEST_SKIP_GENAI", "false").l
 # If true, delete uploaded temp files in tmp_ingest/ after jobs finish.
 # Disable to keep raw inputs for debugging.
 CLEANUP_TMP_INGEST = os.environ.get("CLEANUP_TMP_INGEST", "true").lower() in ("1", "true", "yes")
+
+# SECURITY: Allows wiping the Neo4j database (DROP indexes/constraints + delete all nodes).
+# Keep disabled unless you're in a trusted dev environment.
+ALLOW_DB_RESET = os.environ.get("ALLOW_DB_RESET", "false").lower() in ("1", "true", "yes")

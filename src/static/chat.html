@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ESG Chat</title>
+  <style>
+    :root{
+      --bg0:#0b1220;
+      --bg1:#0f1a2e;
+      --card: rgba(255,255,255,0.06);
+      --card2: rgba(255,255,255,0.10);
+      --border: rgba(255,255,255,0.12);
+      --text: rgba(255,255,255,0.92);
+      --muted: rgba(255,255,255,0.68);
+      --accent:#60a5fa;
+      --accent2:#22c55e;
+      --danger:#ef4444;
+      --shadow: 0 20px 50px rgba(0,0,0,0.35);
+      --radius: 18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 15% 20%, rgba(96,165,250,0.18), transparent 60%),
+        radial-gradient(900px 500px at 85% 25%, rgba(34,197,94,0.14), transparent 60%),
+        radial-gradient(1200px 700px at 50% 100%, rgba(168,85,247,0.10), transparent 60%),
+        linear-gradient(180deg, var(--bg0), var(--bg1));
+      min-height:100vh;
+      display:flex;
+      align-items:stretch;
+      justify-content:center;
+      padding: 24px;
+    }
+    .shell{
+      width:min(1100px, 100%);
+      display:grid;
+      grid-template-columns: 360px 1fr;
+      gap: 18px;
+    }
+    @media (max-width: 980px){
+      .shell{ grid-template-columns: 1fr; }
+    }
+    .panel{
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--card);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .panel-header{
+      padding: 16px 16px 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+    }
+    .title{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 10px;
+      margin:0;
+    }
+    .brand{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      font-weight: 800;
+      letter-spacing: 0.2px;
+    }
+    .dot{
+      width:10px;height:10px;border-radius:99px;
+      background: radial-gradient(circle at 30% 30%, #93c5fd, #2563eb);
+      box-shadow: 0 0 0 4px rgba(96,165,250,0.20);
+    }
+    .badge{
+      font-size: 12px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .content{
+      padding: 16px;
+    }
+    label{
+      display:block;
+      font-size: 12px;
+      color: var(--muted);
+      margin: 14px 0 6px;
+    }
+    input[type=text], select{
+      width:100%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,0.15);
+      color: var(--text);
+      outline:none;
+    }
+    input[type=text]:focus{
+      border-color: rgba(96,165,250,0.55);
+      box-shadow: 0 0 0 4px rgba(96,165,250,0.18);
+    }
+    .hint{
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .btn-row{
+      display:flex; gap: 10px; margin-top: 14px;
+    }
+    button{
+      appearance:none;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.08);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 12px;
+      cursor:pointer;
+      font-weight: 650;
+    }
+    button.primary{
+      border-color: rgba(96,165,250,0.55);
+      background: linear-gradient(180deg, rgba(96,165,250,0.35), rgba(96,165,250,0.14));
+    }
+    button:disabled{
+      opacity: 0.6;
+      cursor:not-allowed;
+    }
+
+    /* Chat */
+    .chat{
+      display:flex;
+      flex-direction:column;
+      height: calc(100vh - 48px);
+      min-height: 640px;
+    }
+    .chat-body{
+      padding: 14px;
+      flex: 1;
+      overflow:auto;
+    }
+    .msg{
+      display:flex;
+      margin: 12px 0;
+    }
+    .msg.user{ justify-content:flex-end; }
+    .bubble{
+      max-width: 78%;
+      padding: 12px 12px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.07);
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .msg.user .bubble{
+      background: linear-gradient(180deg, rgba(96,165,250,0.28), rgba(96,165,250,0.10));
+      border-color: rgba(96,165,250,0.45);
+    }
+    .meta{
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      display:flex;
+      gap: 10px;
+      align-items:center;
+    }
+    details{
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px 10px;
+      background: rgba(0,0,0,0.12);
+    }
+    summary{
+      cursor:pointer;
+      color: var(--muted);
+      font-weight: 650;
+    }
+    .source{
+      font-family: var(--mono);
+      font-size: 12px;
+      color: rgba(255,255,255,0.86);
+      border-top: 1px dashed rgba(255,255,255,0.14);
+      padding-top: 8px;
+      margin-top: 8px;
+      white-space: pre-wrap;
+    }
+    .chat-input{
+      border-top: 1px solid var(--border);
+      padding: 12px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.08));
+    }
+    .input-row{
+      display:flex;
+      gap: 10px;
+      align-items:flex-end;
+    }
+    textarea{
+      flex:1;
+      min-height: 44px;
+      max-height: 150px;
+      resize: vertical;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,0.15);
+      color: var(--text);
+      outline:none;
+      line-height: 1.35;
+      font-family: var(--sans);
+    }
+    textarea:focus{
+      border-color: rgba(96,165,250,0.55);
+      box-shadow: 0 0 0 4px rgba(96,165,250,0.18);
+    }
+    .error{
+      color: rgba(255,255,255,0.92);
+      background: rgba(239,68,68,0.18);
+      border: 1px solid rgba(239,68,68,0.35);
+      padding: 10px 12px;
+      border-radius: 12px;
+      margin: 10px 14px 0 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="panel">
+      <div class="panel-header">
+        <h2 class="title">
+          <span class="brand"><span class="dot"></span>ESG Chat</span>
+          <span class="badge">FastAPI · Neo4j · RAG</span>
+        </h2>
+      </div>
+      <div class="content">
+        <label>Role</label>
+        <select id="role">
+          <option value="public">public</option>
+          <option value="regular_office">regular_office</option>
+          <option value="compliance_officer">compliance_officer</option>
+          <option value="admin">admin</option>
+        </select>
+
+        <label>User ID</label>
+        <input id="user_id" type="text" value="public_001" />
+
+        <label>Department (optional)</label>
+        <input id="department" type="text" placeholder="Compliance" />
+
+        <div class="btn-row">
+          <button id="new_chat">New chat</button>
+          <button class="primary" id="ping">Health</button>
+        </div>
+
+        <div class="hint">
+          Tip: If you see permission errors, use a seeded RBAC user like <span style="font-family:var(--mono)">public_001</span> / <span style="font-family:var(--mono)">compliance_001</span> / <span style="font-family:var(--mono)">admin_001</span>.
+        </div>
+      </div>
+    </div>
+
+    <div class="panel chat">
+      <div class="panel-header">
+        <h2 class="title">
+          <span class="brand">Conversation</span>
+          <span class="badge" id="status">Ready</span>
+        </h2>
+      </div>
+      <div id="err" class="error" style="display:none;"></div>
+      <div id="chat_body" class="chat-body"></div>
+      <div class="chat-input">
+        <div class="input-row">
+          <textarea id="q" placeholder="Ask about ESG compliance, policies, reporting obligations..." spellcheck="false"></textarea>
+          <button class="primary" id="send">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const chatBody = document.getElementById('chat_body');
+    const q = document.getElementById('q');
+    const sendBtn = document.getElementById('send');
+    const statusBadge = document.getElementById('status');
+    const errBox = document.getElementById('err');
+
+    function setStatus(text) {
+      statusBadge.textContent = text;
+    }
+
+    function showError(text) {
+      errBox.style.display = 'block';
+      errBox.textContent = text;
+    }
+    function clearError() {
+      errBox.style.display = 'none';
+      errBox.textContent = '';
+    }
+
+    function scrollToBottom() {
+      chatBody.scrollTop = chatBody.scrollHeight;
+    }
+
+    function addMessage(kind, text, meta) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg ' + kind;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+
+      wrap.appendChild(bubble);
+
+      if (meta) {
+        const m = document.createElement('div');
+        m.className = 'meta';
+        m.textContent = meta;
+        bubble.appendChild(m);
+      }
+
+      chatBody.appendChild(wrap);
+      scrollToBottom();
+      return bubble;
+    }
+
+    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod) {
+      const bubble = addMessage('assistant', answer || '(no answer)');
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const routePart = routeTool ? ` · route=${routeTool}` : '';
+      const methodPart = routeMethod ? ` (${routeMethod})` : '';
+      meta.textContent = `access=${accessLevel || '-'} · agent=${agent || '-'} · strategy=${strategy || '-'}${routePart}${methodPart}`;
+      bubble.appendChild(meta);
+
+      if (sources && sources.length) {
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = `Sources (${sources.length})`;
+        details.appendChild(summary);
+
+        sources.slice(0, 10).forEach((s, i) => {
+          const pre = document.createElement('div');
+          pre.className = 'source';
+          pre.textContent = JSON.stringify(s, null, 2);
+          details.appendChild(pre);
+        });
+        if (sources.length > 10) {
+          const more = document.createElement('div');
+          more.className = 'source';
+          more.textContent = `... ${sources.length - 10} more sources not shown`;
+          details.appendChild(more);
+        }
+        bubble.appendChild(details);
+      }
+    }
+
+    function getCtx() {
+      return {
+        role: document.getElementById('role').value,
+        user_id: document.getElementById('user_id').value,
+        department: document.getElementById('department').value || null,
+        thread_id: 'default'
+      };
+    }
+
+    async function send() {
+      const question = q.value.trim();
+      if (!question) return;
+      clearError();
+
+      addMessage('user', question);
+      q.value = '';
+      setStatus('Thinking…');
+      sendBtn.disabled = true;
+
+      const ctx = getCtx();
+      try {
+        const res = await fetch('/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question,
+            role: ctx.role,
+            user_id: ctx.user_id,
+            department: ctx.department,
+            thread_id: ctx.thread_id
+          })
+        });
+
+        const payloadText = await res.text();
+        if (!res.ok) throw new Error(payloadText || 'Request failed');
+        const payload = JSON.parse(payloadText);
+
+        addAssistantResponse(
+          payload.answer,
+          payload.sources,
+          payload.access_level,
+          payload.agent,
+          payload.strategy,
+          payload.route_tool,
+          payload.route_method
+        );
+        setStatus('Ready');
+      } catch (e) {
+        showError(e.message || String(e));
+        setStatus('Error');
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+
+    sendBtn.addEventListener('click', send);
+    q.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send();
+    });
+
+    document.getElementById('new_chat').addEventListener('click', () => {
+      chatBody.innerHTML = '';
+      clearError();
+      setStatus('Ready');
+      addMessage('assistant', "Hi! Ask me anything about ESG compliance. I'll answer using the knowledge graph and cite what I used.");
+    });
+
+    document.getElementById('ping').addEventListener('click', async () => {
+      clearError();
+      setStatus('Checking…');
+      try {
+        const res = await fetch('/health');
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || 'Health check failed');
+        setStatus('Healthy');
+      } catch (e) {
+        showError(e.message || String(e));
+        setStatus('Error');
+      }
+    });
+
+    // initial
+    addMessage('assistant', "Hi! Ask me anything about ESG compliance. I'll answer using the knowledge graph and cite what I used.");
+  </script>
+</body>
+</html>

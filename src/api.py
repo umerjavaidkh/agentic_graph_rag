@@ -5,12 +5,20 @@ from typing import List, Optional
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 
 from .bridge import ask
 from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
-from .config.settings import ALLOW_CYPHER_INGEST, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER, OPENAI_API_KEY
+from .config.settings import (
+    ALLOW_CYPHER_INGEST,
+    ALLOW_DB_RESET,
+    NEO4J_PASSWORD,
+    NEO4J_URI,
+    NEO4J_USER,
+    OPENAI_API_KEY,
+)
 from .ingestion.service import IngestionManager
 
 app = FastAPI(title="ESG Compliance Agent API")
@@ -42,6 +50,12 @@ app.mount(
 @app.get("/upload", response_class=HTMLResponse)
 async def upload_page():
     html_path = Path(__file__).resolve().parent / "static" / "upload.html"
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
+@app.get("/chat", response_class=HTMLResponse)
+async def chat_page():
+    html_path = Path(__file__).resolve().parent / "static" / "chat.html"
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
@@ -82,6 +96,8 @@ class QueryResponse(BaseModel):
     agent:        str   # "unstructured" | "structured" | "hybrid"
     strategy:     str   # "semantic" | "text2cypher" | "multi_hop" | "vector"
     access_level: str
+    route_tool:   Optional[str] = None   # MCP tool chosen by LLM router
+    route_method: Optional[str] = None   # e.g. llm_mcp
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -104,6 +120,8 @@ async def query(request: QueryRequest):
             agent        = result.get("agent", "unstructured"),
             strategy     = result.get("strategy", "semantic"),
             access_level = result.get("_access_level", role.value),
+            route_tool   = result.get("_route_tool"),
+            route_method = result.get("_route_method"),
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
@@ -174,6 +192,82 @@ async def ingest_cypher(
         message="Cypher ingestion job submitted.",
         output_dir=str(job.output_dir),
     )
+
+
+@app.post("/admin/reset-neo4j")
+async def reset_neo4j(
+    role: Optional[str] = Form(default="public"),
+    user_id: Optional[str] = Form(default="public_001"),
+    department: Optional[str] = Form(default=None),
+):
+    """
+    DANGEROUS: Wipes Neo4j database contents.
+
+    - Disabled by default (ALLOW_DB_RESET=true to enable)
+    - Requires admin role
+    """
+    if not ALLOW_DB_RESET:
+        raise HTTPException(
+            status_code=403,
+            detail="DB reset is disabled. Set ALLOW_DB_RESET=true to enable.",
+        )
+
+    try:
+        validated_role = validate_role(role or "public")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+    ctx = UserContext(
+        user_id=user_id or "public_001",
+        role=validated_role,
+        department=department,
+    )
+    if not ctx.has_role(Role.ADMIN):
+        raise HTTPException(status_code=403, detail="Insufficient role (requires admin).")
+
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    dropped_indexes = 0
+    dropped_constraints = 0
+    try:
+        with driver.session() as session:
+            try:
+                rows = session.run("SHOW INDEXES YIELD name RETURN name").data()
+                for r in rows:
+                    name = r.get("name")
+                    if not name:
+                        continue
+                    try:
+                        session.run(f"DROP INDEX `{name}` IF EXISTS").consume()
+                        dropped_indexes += 1
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            try:
+                rows = session.run("SHOW CONSTRAINTS YIELD name RETURN name").data()
+                for r in rows:
+                    name = r.get("name")
+                    if not name:
+                        continue
+                    try:
+                        session.run(f"DROP CONSTRAINT `{name}` IF EXISTS").consume()
+                        dropped_constraints += 1
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            session.run("MATCH (n) DETACH DELETE n").consume()
+    finally:
+        driver.close()
+
+    return {
+        "status": "ok",
+        "dropped_indexes": dropped_indexes,
+        "dropped_constraints": dropped_constraints,
+        "message": "Neo4j wiped (best-effort). RBAC will be re-initialized on next API startup.",
+    }
 
 
 @app.get("/ingest/jobs/{job_id}", response_model=IngestionStatusResponse)
