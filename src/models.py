@@ -61,6 +61,7 @@ class DKGNode:
     pdf_page: Optional[int] = None       # 1-based index in uploaded PDF file
     document_page: Optional[str] = None  # label printed on page: "43", "iii", "A"
     page_tags: list = field(default_factory=list)  # searchable: pdf:51, doc:43, …
+    image_key: Optional[str] = None  # object storage key for page JPEG
 
 
 # ─────────────────────────────────────────

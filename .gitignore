@@ -8,6 +8,7 @@ venv/
 .env
 
 # Output and generated data
+data/assets/
 output/
 output_v2/
 output_v3/

@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = Path(__file__).resolve().parents[1]  # src/
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "openai").lower()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -49,3 +50,18 @@ VISION_IMAGE_DETAIL = os.environ.get("VISION_IMAGE_DETAIL", "low")  # low | high
 VISION_MAX_PAGES_PER_DOC = int(os.environ.get("VISION_MAX_PAGES_PER_DOC", "25"))
 VISION_SELECTIVE = os.environ.get("VISION_SELECTIVE", "true").lower() in ("1", "true", "yes")
 VISION_MIN_TEXT_CHARS = int(os.environ.get("VISION_MIN_TEXT_CHARS", "350"))
+
+# Page images (JPEG) — local dir or MinIO; Neo4j stores image_key only
+ASSET_STORAGE_BACKEND = os.environ.get("ASSET_STORAGE_BACKEND", "local")  # local | minio
+ASSETS_DIR = os.environ.get("ASSETS_DIR", str(PROJECT_ROOT / "data" / "assets"))
+ASSETS_PUBLIC_PREFIX = os.environ.get("ASSETS_PUBLIC_PREFIX", "/assets")
+ENABLE_PAGE_IMAGES = os.environ.get("ENABLE_PAGE_IMAGES", "true").lower() in ("1", "true", "yes")
+PAGE_IMAGE_JPEG_QUALITY = int(os.environ.get("PAGE_IMAGE_JPEG_QUALITY", "60"))
+PAGE_IMAGE_MAX_PAGES = int(os.environ.get("PAGE_IMAGE_MAX_PAGES", "0"))  # 0 = no cap
+PAGE_IMAGE_SELECTIVE = os.environ.get("PAGE_IMAGE_SELECTIVE", "true").lower() in ("1", "true", "yes")
+
+MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
+MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "rag-assets")
+MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() in ("1", "true", "yes")

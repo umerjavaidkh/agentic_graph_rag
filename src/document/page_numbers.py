@@ -163,9 +163,13 @@ def parse_page_number_from_query(query: str) -> tuple[Optional[int], Optional[st
     Prefers explicit 'pdf page N' vs bare 'page N' (treated as document page label).
     """
     q = query.lower()
-    pdf_m = re.search(r"\bpdf\s+page\s+(\d+)\b", q, re.I)
+    pdf_m = re.search(r"\bpdf\s+(?:\w+\s+){0,3}page\s+(\d+)\b", q, re.I)
     if pdf_m:
         return int(pdf_m.group(1)), None
+
+    pdf_m2 = re.search(r"\bpdf\s+page\s+(\d+)\b", q, re.I)
+    if pdf_m2:
+        return int(pdf_m2.group(1)), None
 
     page_m = re.search(
         r"\b(?:page|p\.?|pg\.?)\s+([a-zA-Z0-9ivxlcdm\-]+)\b",

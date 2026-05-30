@@ -160,9 +160,53 @@
       border: 1px solid var(--border);
       background: rgba(255,255,255,0.07);
       line-height: 1.45;
-      white-space: pre-wrap;
       word-wrap: break-word;
     }
+    .bubble.plain-text{ white-space: pre-wrap; }
+    .pres-block{ margin: 10px 0; }
+    .pres-block:first-child{ margin-top: 0; }
+    .pres-img{
+      max-width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      margin: 8px 0;
+    }
+    .pres-caption{ font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .pres-table-wrap{ overflow-x: auto; margin: 8px 0; }
+    table.pres-table{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    table.pres-table th, table.pres-table td{
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      text-align: left;
+    }
+    table.pres-table th{ background: rgba(96,165,250,0.15); }
+    .pres-chart{
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      height: 140px;
+      margin: 10px 0;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(0,0,0,0.12);
+    }
+    .pres-bar-col{ flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 28px; }
+    .pres-bar{
+      width: 100%;
+      max-width: 48px;
+      background: linear-gradient(180deg, rgba(96,165,250,0.7), rgba(34,197,94,0.5));
+      border-radius: 6px 6px 0 0;
+      min-height: 4px;
+    }
+    .pres-bar-label{ font-size: 10px; color: var(--muted); text-align: center; }
+    .pres-md h1,.pres-md h2,.pres-md h3{ margin: 0.6em 0 0.3em; }
+    .pres-md p{ margin: 0.4em 0; }
+    .pres-md ul{ margin: 0.4em 0; padding-left: 1.2em; }
     .msg.user .bubble{
       background: linear-gradient(180deg, rgba(96,165,250,0.28), rgba(96,165,250,0.10));
       border-color: rgba(96,165,250,0.45);
@@ -316,7 +360,7 @@
       wrap.className = 'msg ' + kind;
 
       const bubble = document.createElement('div');
-      bubble.className = 'bubble';
+      bubble.className = 'bubble plain-text';
       bubble.textContent = text;
 
       wrap.appendChild(bubble);
@@ -333,13 +377,156 @@
       return bubble;
     }
 
-    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod) {
-      const bubble = addMessage('assistant', answer || '(no answer)');
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function renderMarkdownSimple(el, content) {
+      let html = escapeHtml(content || '');
+      html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+      html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+      html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+      html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      html = html.replace(/\n\n/g, '</p><p>');
+      html = html.replace(/\n/g, '<br>');
+      el.innerHTML = '<div class="pres-md"><p>' + html + '</p></div>';
+    }
+
+    const BLOCK_RENDERERS = {
+      image(block, container) {
+        const wrap = document.createElement('div');
+        wrap.className = 'pres-block';
+        const img = document.createElement('img');
+        img.className = 'pres-img';
+        img.src = block.url;
+        img.alt = block.alt || 'Page image';
+        img.loading = 'lazy';
+        wrap.appendChild(img);
+        if (block.caption) {
+          const cap = document.createElement('div');
+          cap.className = 'pres-caption';
+          cap.textContent = block.caption;
+          wrap.appendChild(cap);
+        }
+        container.appendChild(wrap);
+      },
+      table(block, container) {
+        const wrap = document.createElement('div');
+        wrap.className = 'pres-block pres-table-wrap';
+        if (block.title) {
+          const t = document.createElement('div');
+          t.className = 'pres-caption';
+          t.textContent = block.title;
+          wrap.appendChild(t);
+        }
+        const table = document.createElement('table');
+        table.className = 'pres-table';
+        const thead = document.createElement('thead');
+        const hr = document.createElement('tr');
+        (block.headers || []).forEach(h => {
+          const th = document.createElement('th');
+          th.textContent = h;
+          hr.appendChild(th);
+        });
+        thead.appendChild(hr);
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        (block.rows || []).forEach(row => {
+          const tr = document.createElement('tr');
+          row.forEach(cell => {
+            const td = document.createElement('td');
+            td.textContent = cell;
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        container.appendChild(wrap);
+      },
+      chart(block, container) {
+        const wrap = document.createElement('div');
+        wrap.className = 'pres-block';
+        if (block.title) {
+          const t = document.createElement('div');
+          t.className = 'pres-caption';
+          t.textContent = block.title;
+          wrap.appendChild(t);
+        }
+        const chart = document.createElement('div');
+        chart.className = 'pres-chart';
+        const vals = block.values || [];
+        const labels = block.labels || vals.map((_, i) => String(i + 1));
+        const max = Math.max(...vals, 1);
+        vals.forEach((v, i) => {
+          const col = document.createElement('div');
+          col.className = 'pres-bar-col';
+          const bar = document.createElement('div');
+          bar.className = 'pres-bar';
+          bar.style.height = Math.round((v / max) * 100) + '%';
+          const lbl = document.createElement('div');
+          lbl.className = 'pres-bar-label';
+          lbl.textContent = (labels[i] || '') + ' ' + v + (String(v).includes('%') ? '' : '%');
+          col.appendChild(bar);
+          col.appendChild(lbl);
+          chart.appendChild(col);
+        });
+        wrap.appendChild(chart);
+        container.appendChild(wrap);
+      },
+      markdown(block, container) {
+        const wrap = document.createElement('div');
+        wrap.className = 'pres-block';
+        renderMarkdownSimple(wrap, block.content || '');
+        container.appendChild(wrap);
+      },
+    };
+
+    function renderPresentation(bubble, presentation, fallbackAnswer) {
+      bubble.classList.remove('plain-text');
+      bubble.textContent = '';
+      const blocks = (presentation && presentation.blocks) || [];
+      if (!blocks.length) {
+        bubble.classList.add('plain-text');
+        bubble.textContent = fallbackAnswer || '(no answer)';
+        return;
+      }
+      blocks.forEach(block => {
+        const fn = BLOCK_RENDERERS[block.type];
+        if (fn) fn(block, bubble);
+        else {
+          const pre = document.createElement('pre');
+          pre.textContent = JSON.stringify(block, null, 2);
+          bubble.appendChild(pre);
+        }
+      });
+    }
+
+    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg assistant';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      if (presentation && presentation.blocks && presentation.blocks.length) {
+        renderPresentation(bubble, presentation, answer);
+      } else {
+        bubble.classList.add('plain-text');
+        bubble.textContent = answer || '(no answer)';
+      }
+      wrap.appendChild(bubble);
+      chatBody.appendChild(wrap);
+
       const meta = document.createElement('div');
       meta.className = 'meta';
       const routePart = routeTool ? ` · route=${routeTool}` : '';
       const methodPart = routeMethod ? ` (${routeMethod})` : '';
-      meta.textContent = `access=${accessLevel || '-'} · agent=${agent || '-'} · strategy=${strategy || '-'}${routePart}${methodPart}`;
+      const qt = queryType ? ` · type=${queryType}` : '';
+      const pk = presentation && presentation.kind ? ` · ui=${presentation.kind}` : '';
+      meta.textContent = `access=${accessLevel || '-'} · agent=${agent || '-'} · strategy=${strategy || '-'}${qt}${pk}${routePart}${methodPart}`;
       bubble.appendChild(meta);
 
       if (sources && sources.length) {
@@ -408,7 +595,9 @@
           payload.agent,
           payload.strategy,
           payload.route_tool,
-          payload.route_method
+          payload.route_method,
+          payload.presentation,
+          payload.query_type
         );
         setStatus('Ready');
       } catch (e) {

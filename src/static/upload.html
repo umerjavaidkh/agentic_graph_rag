@@ -61,6 +61,7 @@
     <ul>
       <li><strong>Axis 1</strong> (Document Structure): Always built first from the document parser.</li>
       <li><strong>Page vision</strong> (optional): When <code>ENABLE_PAGE_VISION=true</code>, selected PDF pages are sent to a cheap vision model; tables, charts, diagrams, maps, and shapes are stored as <code>Page.visual_content</code> for retrieval when normal text is missing or incomplete.</li>
+      <li><strong>Page images</strong>: JPEG (~60% quality) stored under <code>data/assets/</code> or MinIO (<code>ASSET_STORAGE_BACKEND=minio</code>); Neo4j stores <code>image_key</code> only.</li>
       <li><strong>Axis 2</strong> (Semantic Enrichment): Automatically run when the server has an OpenAI key configured.</li>
       <li>The result is exported as Neo4j import artifacts in <code>output/ingestion/&lt;job_id&gt;</code> and loaded into Neo4j automatically when configured.</li>
     </ul>

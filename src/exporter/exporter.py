@@ -125,7 +125,7 @@ class Neo4jExporter:
             " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
             " n.embedding = $embedding, n.visual_content = $visual_content,"
             " n.pdf_page = $pdf_page, n.document_page = $document_page,"
-            " n.page_tags = $page_tags",
+            " n.page_tags = $page_tags, n.image_key = $image_key",
             id=node.id,
             title=node.title,
             text=node.text,
@@ -140,6 +140,7 @@ class Neo4jExporter:
             pdf_page=node.pdf_page,
             document_page=node.document_page,
             page_tags=node.page_tags or [],
+            image_key=node.image_key,
         )
 
     def _merge_edge(self, session, edge: DKGEdge) -> None:

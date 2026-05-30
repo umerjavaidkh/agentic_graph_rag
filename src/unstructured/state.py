@@ -7,4 +7,5 @@ class ESGState(TypedDict, total=False):
     retrieved_context: Dict
     answer: str
     sources: List[Dict]
+    query_type: str
     user_context: Optional[UserContext]

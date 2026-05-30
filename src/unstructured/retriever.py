@@ -21,6 +21,7 @@ from ..config.settings import (
     RETRIEVAL_FINAL_LIMIT,
     RETRIEVAL_MIN_RERANK_SCORE,
 )
+from ..assets.page_images import resolve_image_url
 from ..document.page_numbers import parse_page_number_from_query
 from ..document.patterns import TABLE_REF_PATTERN
 from ..model_providers.factory import get_model_provider
@@ -345,8 +346,8 @@ class ESGComplianceRetriever:
                     RETURN p.id AS id, p.title AS title, p.text AS text,
                            p.visual_content AS visual_content,
                            p.pdf_page AS pdf_page, p.document_page AS document_page,
-                           p.page_tags AS page_tags, p.order AS doc_order,
-                           1.0 AS score
+                           p.page_tags AS page_tags, p.image_key AS image_key,
+                           p.order AS doc_order, 1.0 AS score
                     LIMIT 1
                     """,
                     label=document_page,
@@ -361,8 +362,8 @@ class ESGComplianceRetriever:
                     RETURN p.id AS id, p.title AS title, p.text AS text,
                            p.visual_content AS visual_content,
                            p.pdf_page AS pdf_page, p.document_page AS document_page,
-                           p.page_tags AS page_tags, p.order AS doc_order,
-                           1.0 AS score
+                           p.page_tags AS page_tags, p.image_key AS image_key,
+                           p.order AS doc_order, 1.0 AS score
                     LIMIT 1
                     """,
                     pdf=pdf_page,
@@ -377,8 +378,8 @@ class ESGComplianceRetriever:
                     RETURN p.id AS id, p.title AS title, p.text AS text,
                            p.visual_content AS visual_content,
                            p.pdf_page AS pdf_page, p.document_page AS document_page,
-                           p.page_tags AS page_tags, p.order AS doc_order,
-                           0.8 AS score
+                           p.page_tags AS page_tags, p.image_key AS image_key,
+                           p.order AS doc_order, 0.8 AS score
                     LIMIT 1
                     """,
                     pdf=int(document_page),
@@ -390,7 +391,8 @@ class ESGComplianceRetriever:
                     query, [], user_context=ctx, meta={"mode": "page_lookup", "found": False}
                 )
 
-            item = self._with_display_text(row.data())
+            item = self._attach_media_fields(row.data())
+            item = self._with_display_text(item)
             item["match_types"] = {"page_lookup"}
             item["rerank_score"] = 1.0
             ranked = self._enrich_context_batch(session, [item])
@@ -539,6 +541,12 @@ class ESGComplianceRetriever:
         for row in rows:
             row["match_type"] = "visual_page"
         return rows
+
+    def _attach_media_fields(self, row: dict) -> dict:
+        key = row.get("image_key")
+        if key:
+            row["image_url"] = resolve_image_url(key)
+        return row
 
     def _with_display_text(self, row: dict) -> dict:
         """Merge visual_content into chunk text shown to the LLM."""
@@ -998,6 +1006,9 @@ class ESGComplianceRetriever:
                     "document_page": r.get("document_page"),
                     "visual_content": r.get("visual_content"),
                     "page_tags": r.get("page_tags"),
+                    "image_key": r.get("image_key"),
+                    "image_url": r.get("image_url")
+                    or resolve_image_url(r.get("image_key")),
                 }
                 for r in items
             ],

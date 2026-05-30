@@ -23,8 +23,10 @@ from ..config.settings import (
     OPENAI_API_KEY,
     STORE_INGESTION_ARTIFACTS,
 )
+from ..assets.page_images import save_document_page_images
 from ..document.page_vision import PageVisionEnricher
 from ..document.parser import DoclingParser
+from ..models import NodeType
 from ..exporter.exporter import Neo4jExporter
 from ..models import DKGEdge, DKGNode
 from ..semantic.axis2 import Axis2Builder
@@ -151,6 +153,19 @@ class IngestionManager:
         parser = DoclingParser()
         nodes, edges = parser.parse(str(job.input_path))
         self._log(job, f"Parsed {len(nodes)} nodes and {len(edges)} edges")
+
+        book_id = next(
+            (n.id for n in nodes if n.type in (NodeType.BOOK, NodeType.BOOK.value)),
+            f"book_{job.id}",
+        )
+        if job.input_path.suffix.lower() == ".pdf":
+            try:
+                img_count = save_document_page_images(
+                    job.input_path, book_id, nodes
+                )
+                self._log(job, f"Stored {img_count} page image(s) (JPEG)")
+            except Exception as exc:
+                self._log(job, f"Page image storage skipped: {exc}")
 
         if (
             ENABLE_PAGE_VISION

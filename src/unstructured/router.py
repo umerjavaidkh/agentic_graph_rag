@@ -9,6 +9,7 @@ from typing import Optional
 from .graph import esg_agent
 from ..structured.graph import structured_agent
 from ..auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
+from ..presentation import build_presentation
 from ..routing import select_mcp_tool, run_via_mcp_tool
 
 
@@ -21,12 +22,22 @@ def search_documents(question: str, user_context: Optional[UserContext] = None) 
         state["user_context"] = user_context
 
     result = esg_agent.invoke(state)
+    presentation = build_presentation(
+        question=question,
+        answer=result.get("answer", ""),
+        sources=result.get("sources", []),
+        retrieved_context=result.get("retrieved_context", {}),
+        query_type=result.get("query_type"),
+    )
     return {
         "answer": result.get("answer", ""),
         "sources": result.get("sources", []),
         "keywords": result.get("keywords", []),
         "agent": "unstructured",
-        "strategy": result.get("strategy", "semantic"),
+        "strategy": result.get("query_type", "semantic"),
+        "query_type": result.get("query_type"),
+        "presentation": presentation,
+        "retrieved_context": result.get("retrieved_context", {}),
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
     }
 
