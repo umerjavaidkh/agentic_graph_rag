@@ -14,6 +14,7 @@ from neo4j.exceptions import ClientError
 
 from ..config.settings import (
     AUTO_LOAD_TO_NEO4J,
+    CLEANUP_BOOK_ASSETS_ON_INGEST,
     CLEANUP_TMP_INGEST,
     CYPHER_INGEST_SKIP_GENAI,
     ENABLE_PAGE_VISION,
@@ -23,6 +24,7 @@ from ..config.settings import (
     OPENAI_API_KEY,
     STORE_INGESTION_ARTIFACTS,
 )
+from ..assets.cleanup import cleanup_book_assets
 from ..assets.page_images import save_document_page_images
 from ..assets.region_images import save_region_images
 from ..document.page_vision import PageVisionEnricher
@@ -159,6 +161,17 @@ class IngestionManager:
             (n.id for n in nodes if n.type in (NodeType.BOOK, NodeType.BOOK.value)),
             f"book_{job.id}",
         )
+        if CLEANUP_BOOK_ASSETS_ON_INGEST:
+            try:
+                removed = cleanup_book_assets(book_id)
+                if removed:
+                    self._log(
+                        job,
+                        f"Removed {removed} stale asset file(s) for {book_id}",
+                    )
+            except Exception as exc:
+                self._log(job, f"Asset cleanup skipped for {book_id}: {exc}")
+
         if job.input_path.suffix.lower() == ".pdf":
             try:
                 region_count = save_region_images(

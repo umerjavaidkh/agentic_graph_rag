@@ -750,8 +750,9 @@
       chatBody.appendChild(card);
     }
 
-    function buildMetaChips(accessLevel, agent, strategy, routeTool, queryType, presentationKind) {
+    function buildMetaChips(accessLevel, agent, strategy, routeTool, queryType, presentationKind, followUp) {
       const chips = [];
+      if (followUp) chips.push({ label: '↳ ' + followUp.replace(/_/g, ' '), accent: true });
       if (agent) chips.push({ label: agent, accent: true });
       if (strategy) chips.push({ label: strategy });
       if (queryType) chips.push({ label: queryType });
@@ -985,7 +986,7 @@
       }
     }
 
-    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType) {
+    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType, followUp) {
       removeThinking();
       const wrap = document.createElement('div');
       wrap.className = 'msg assistant';
@@ -1019,7 +1020,8 @@
       inner.appendChild(bubble);
       inner.appendChild(buildMetaChips(
         accessLevel, agent, strategy, routeTool, queryType,
-        presentation && presentation.kind
+        presentation && presentation.kind,
+        followUp
       ));
 
       if (sources && sources.length) {
@@ -1097,7 +1099,8 @@
           payload.route_tool,
           payload.route_method,
           payload.presentation,
-          payload.query_type
+          payload.query_type,
+          payload.follow_up
         );
         setStatus('Ready');
       } catch (e) {
@@ -1117,10 +1120,17 @@
       }
     });
 
-    document.getElementById('new_chat').addEventListener('click', () => {
+    document.getElementById('new_chat').addEventListener('click', async () => {
       chatBody.innerHTML = '';
       clearError();
       setStatus('Ready');
+      try {
+        await fetch('/chat/clear', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thread_id: getCtx().thread_id }),
+        });
+      } catch (_) { /* non-fatal */ }
       renderWelcome();
     });
 

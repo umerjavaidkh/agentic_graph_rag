@@ -33,6 +33,10 @@ class AssetStore(ABC):
     def get_bytes(self, key: str) -> Optional[bytes]:
         return None
 
+    def delete_prefix(self, prefix: str) -> int:
+        """Remove all objects under a key prefix (e.g. book_abc/images/)."""
+        raise NotImplementedError
+
 
 class LocalAssetStore(AssetStore):
     def __init__(self, root: Path, public_prefix: str = "/assets"):
@@ -66,6 +70,50 @@ class LocalAssetStore(AssetStore):
         if path.is_file():
             return path.read_bytes()
         return None
+
+    def delete_prefix(self, prefix: str) -> int:
+        safe = prefix.lstrip("/").replace("..", "")
+        if not safe:
+            return self._delete_all_under_root()
+
+        base = (self.root / safe).resolve()
+        if not str(base).startswith(str(self.root)):
+            raise ValueError("Invalid asset prefix")
+        if not base.exists():
+            return 0
+        removed = 0
+        if base.is_file():
+            base.unlink()
+            return 1
+        for path in sorted(base.rglob("*"), reverse=True):
+            if path.is_file():
+                path.unlink()
+                removed += 1
+            elif path.is_dir():
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
+        try:
+            base.rmdir()
+        except OSError:
+            pass
+        return removed
+
+    def _delete_all_under_root(self) -> int:
+        """Wipe all book asset trees (admin DB reset)."""
+        removed = 0
+        if not self.root.exists():
+            return 0
+        for child in list(self.root.iterdir()):
+            if child.name.startswith("."):
+                continue
+            if child.is_file():
+                child.unlink()
+                removed += 1
+            elif child.is_dir():
+                removed += self.delete_prefix(child.name + "/")
+        return removed
 
 
 class MinioAssetStore(AssetStore):
@@ -131,6 +179,30 @@ class MinioAssetStore(AssetStore):
                     resp.release_conn()
                 except Exception:
                     pass
+
+    def delete_prefix(self, prefix: str) -> int:
+        from minio.deleteobjects import DeleteObject
+
+        safe = prefix.lstrip("/").replace("..", "")
+        if not safe:
+            removed = 0
+            for obj in self.client.list_objects(self.bucket, recursive=True):
+                self.client.remove_object(self.bucket, obj.object_name)
+                removed += 1
+            return removed
+
+        to_delete = [
+            DeleteObject(obj.object_name)
+            for obj in self.client.list_objects(
+                self.bucket, prefix=safe, recursive=True
+            )
+        ]
+        if not to_delete:
+            return 0
+        errors = list(self.client.remove_objects(self.bucket, to_delete))
+        if errors:
+            raise RuntimeError(f"MinIO delete failed: {errors[:3]}")
+        return len(to_delete)
 
 
 def create_asset_store(backend: str) -> AssetStore:

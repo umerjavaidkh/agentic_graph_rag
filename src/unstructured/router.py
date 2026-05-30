@@ -11,15 +11,28 @@ from ..structured.graph import structured_agent
 from ..auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
 from ..presentation import build_presentation
 from ..routing import select_mcp_tool, run_via_mcp_tool
+from ..conversation import clear_turn, get_turn, resolve_follow_up, save_turn
 
 
 # ─────────────────────────────────────────
 # MCP TOOLS
 # ─────────────────────────────────────────
-def search_documents(question: str, user_context: Optional[UserContext] = None) -> dict:
-    state = {"question": question}
+def search_documents(
+    question: str,
+    user_context: Optional[UserContext] = None,
+    thread_id: str = "default",
+) -> dict:
+    prior = get_turn(thread_id)
+    resolved = resolve_follow_up(question, prior)
+
+    state = {"question": resolved["question"]}
     if user_context is not None:
         state["user_context"] = user_context
+    if resolved.get("focus_section_id"):
+        state["focus_section_id"] = resolved["focus_section_id"]
+        state["parent_section_id"] = resolved.get("parent_section_id")
+    if prior:
+        state["prior_context"] = prior
 
     result = esg_agent.invoke(state)
     presentation = build_presentation(
@@ -29,7 +42,7 @@ def search_documents(question: str, user_context: Optional[UserContext] = None) 
         retrieved_context=result.get("retrieved_context", {}),
         query_type=result.get("query_type"),
     )
-    return {
+    out = {
         "answer": result.get("answer", ""),
         "sources": result.get("sources", []),
         "keywords": result.get("keywords", []),
@@ -39,10 +52,13 @@ def search_documents(question: str, user_context: Optional[UserContext] = None) 
         "presentation": presentation,
         "retrieved_context": result.get("retrieved_context", {}),
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
+        "_follow_up": resolved.get("follow_up_kind") if resolved.get("use_prior") else None,
     }
+    save_turn(thread_id, question, out)
+    return out
 
 
-def query_data(question: str, user_context: Optional[UserContext] = None) -> dict:
+def query_data(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
     state = {"question": question}
     if user_context is not None:
         state["user_context"] = user_context
@@ -64,7 +80,7 @@ def query_data(question: str, user_context: Optional[UserContext] = None) -> dic
     }
 
 
-def query_hybrid(question: str, user_context: Optional[UserContext] = None) -> dict:
+def query_hybrid(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
     state = {"question": question}
     if user_context is not None:
         state["user_context"] = user_context
@@ -137,11 +153,12 @@ MCP_TOOLS = [
 ]
 
 
-def ask(question: str, user_context: Optional[UserContext] = None) -> dict:
+def ask(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
     tool_name = select_mcp_tool(question)
     return run_via_mcp_tool(
         question,
         tool_name,
         MCP_HANDLERS,
         user_context=user_context,
+        thread_id=thread_id,
     )

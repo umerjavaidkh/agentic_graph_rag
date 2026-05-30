@@ -15,6 +15,7 @@ from ..model_providers.factory import get_model_provider
 from ..auth.roles import UserContext, Role, DEFAULT_PUBLIC_CONTEXT
 from ..auth.rbac_setup import GraphRBAC
 from .neo4j_sanitize import sanitize_row
+from .query_intent import analytics_result_limit, is_singular_best_query
 
 provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
 LLM_MODEL = CHAT_MODEL
@@ -314,12 +315,13 @@ Provide a clear, natural language answer. If products or entities have names ava
         if _SALES_REVENUE_QUERY.search(q) and re.search(
             r"\b(?:product|top|best|highest|most|leading|selling)\b", q, re.I
         ):
-            m = _TOP_N.search(query)
-            n = int(m.group(1)) if m else limit
+            n = analytics_result_limit(query, limit)
             return (
                 "MATCH (o:Order)-[d:ORDER_CONTAINS]->(p:Product)\n"
                 "RETURN p.productID AS productID, p.productName AS productName,\n"
-                "       SUM(toFloat(p.unitPrice) * toInteger(d.quantity)) AS totalRevenue\n"
+                "       SUM(toInteger(d.quantity)) AS unitsSold,\n"
+                "       SUM(toFloat(d.unitPrice) * toInteger(d.quantity) "
+                "* (1.0 - coalesce(toFloat(d.discount), 0.0))) AS totalRevenue\n"
                 "ORDER BY totalRevenue DESC\n"
                 f"LIMIT {n}"
             )

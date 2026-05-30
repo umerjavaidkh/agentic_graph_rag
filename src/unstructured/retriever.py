@@ -30,6 +30,7 @@ from ..document.page_vision import compact_visual_content
 from ..document.patterns import TABLE_REF_PATTERN
 from ..model_providers.factory import get_model_provider
 from .visual_retrieval import (
+    best_region_for_visual_focus,
     display_text_for_chunk,
     is_strict_page_lookup,
     parse_visual_intent,
@@ -216,6 +217,190 @@ class ESGComplianceRetriever:
             meta={"mode": "structural"},
         )
 
+    _INTRO_TITLE_HINTS = (
+        "introduction",
+        "executive",
+        "summary",
+        "overview",
+        "background",
+        "preface",
+        "foreword",
+        "about",
+        "purpose",
+        "scope",
+        "annual report",
+    )
+
+    def document_overview_retrieve(
+        self,
+        query: str,
+        limit: int = 12,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
+        """
+        Whole-document questions: pull introduction / early sections / Go.Data front matter,
+        not random mid-report subsections.
+        """
+        ctx = user_context or self.user_context
+        denied = self._access_denied_response(query, ctx)
+        if denied:
+            return denied
+
+        q_lower = query.lower()
+        pool: dict[str, dict] = {}
+
+        def add_rows(rows: list, match_type: str, base_score: float) -> None:
+            for row in rows:
+                sid = row["id"]
+                sc = float(row.get("score", base_score))
+                if sid in pool:
+                    pool[sid]["match_types"].add(match_type)
+                    pool[sid]["score"] = max(pool[sid].get("score", 0), sc)
+                else:
+                    pool[sid] = {
+                        **row,
+                        "match_types": {match_type},
+                        "score": sc,
+                    }
+
+        terms = self._extract_search_terms(query)
+        query_embedding = self._get_embedding(query)
+
+        with self.driver.session() as session:
+            intro = session.run(
+                """
+                MATCH (s:Section)
+                WHERE ANY(h IN $hints WHERE toLower(s.title) CONTAINS h)
+                  AND size(coalesce(s.text, '')) > 60
+                RETURN s.id AS id, s.title AS title, s.text AS text,
+                       s.cluster_id AS cluster, coalesce(s.order, 0) AS doc_order,
+                       0.9 AS score
+                ORDER BY s.order ASC
+                LIMIT 10
+                """,
+                hints=list(self._INTRO_TITLE_HINTS),
+            )
+            add_rows([r.data() for r in intro], "intro_section", 0.9)
+
+            early = session.run(
+                """
+                MATCH (s:Section)
+                WHERE size(coalesce(s.text, '')) > 120
+                RETURN s.id AS id, s.title AS title, s.text AS text,
+                       s.cluster_id AS cluster, coalesce(s.order, 0) AS doc_order,
+                       0.75 AS score
+                ORDER BY coalesce(s.order, 9999) ASC
+                LIMIT 10
+                """,
+            )
+            add_rows([r.data() for r in early], "early_section", 0.75)
+
+            if "go.data" in q_lower or "godata" in q_lower:
+                gd = session.run(
+                    """
+                    MATCH (s:Section)
+                    WHERE toLower(s.title) CONTAINS 'go.data'
+                       OR toLower(s.text) CONTAINS 'go.data'
+                    RETURN s.id AS id, s.title AS title, s.text AS text,
+                           s.cluster_id AS cluster, coalesce(s.order, 0) AS doc_order,
+                           0.82 AS score
+                    ORDER BY s.order ASC
+                    LIMIT 12
+                    """,
+                )
+                add_rows([r.data() for r in gd], "godata_section", 0.82)
+
+            add_rows(
+                self._keyword_section_search(session, terms, max(limit, 15)),
+                "keyword",
+                0.5,
+            )
+
+            vector_rows = self._vector_search(
+                session, query_embedding, max(limit, 12), ctx
+            )
+            if not vector_rows:
+                vector_rows = self._legacy_similarity(
+                    session, query_embedding, max(limit, 12), ctx
+                )
+            add_rows(vector_rows, "vector", 0.6)
+
+            ranked = self._rerank_candidates(
+                query, query_embedding, list(pool.values()), limit
+            )
+            ranked = self._enrich_context_batch(session, ranked)
+
+        return self._format_response(
+            query,
+            ranked,
+            user_context=ctx,
+            meta={"mode": "document_overview", "candidates_pooled": len(pool)},
+        )
+
+    def section_detail_retrieve(
+        self,
+        section_id: str,
+        user_context: Optional[UserContext] = None,
+        parent_section_id: Optional[str] = None,
+    ) -> Dict:
+        """Fetch one Section node (and optional parent title) for subsection drill-down."""
+        ctx = user_context or self.user_context
+        denied = self._access_denied_response(query="section_detail", ctx=ctx)
+        if denied:
+            return denied
+
+        with self.driver.session() as session:
+            row = session.run(
+                """
+                MATCH (s:Section {id: $sid})
+                RETURN s.id AS id, s.title AS title, s.text AS text,
+                       s.cluster_id AS cluster, s.order AS doc_order,
+                       s.page_start AS page_start, s.page_end AS page_end
+                LIMIT 1
+                """,
+                sid=section_id,
+            ).single()
+
+            if not row:
+                return self._format_response(
+                    "section_detail",
+                    [],
+                    user_context=ctx,
+                    meta={"mode": "section_detail", "found": False},
+                )
+
+            chunk = row.data()
+            chunk["match_types"] = ["section_detail"]
+            chunk["rerank_score"] = 1.0
+            chunk["score"] = 1.0
+
+            parent_title = None
+            if parent_section_id:
+                pr = session.run(
+                    """
+                    MATCH (p:Section {id: $pid})
+                    RETURN p.title AS title LIMIT 1
+                    """,
+                    pid=parent_section_id,
+                ).single()
+                if pr:
+                    parent_title = pr["title"]
+
+            ranked = self._enrich_context_batch(session, [chunk])
+
+        return self._format_response(
+            "section_detail",
+            ranked,
+            user_context=ctx,
+            meta={
+                "mode": "section_detail",
+                "found": True,
+                "parent_id": parent_section_id,
+                "parent_title": parent_title,
+                "focus_section_id": section_id,
+            },
+        )
+
     def _subsection_tree_retrieve(
         self,
         query: str,
@@ -394,6 +579,8 @@ class ESGComplianceRetriever:
                     "found": bool(chunks),
                     "pdf_page": intent.pdf_page or top.get("pdf_page"),
                     "document_page": intent.document_page or top.get("document_page"),
+                    "single_visual": intent.single_visual,
+                    "visual_focus": intent.visual_focus[:5],
                 },
             )
 
@@ -504,6 +691,7 @@ class ESGComplianceRetriever:
                 "pdf_page": top.get("pdf_page"),
                 "document_page": top.get("document_page"),
                 "phrases": intent.phrases[:5],
+                "list_kind": intent.kind_filter if mode == "page_visual_list" else None,
             },
         )
 
@@ -573,6 +761,24 @@ class ESGComplianceRetriever:
 
         page_data = self._attach_media_fields(dict(page_row))
         regions = self._fetch_regions_for_page(session, page_data["id"])
+
+        if intent.visual_focus:
+            reg = best_region_for_visual_focus(
+                regions, intent, page_data.get("visual_content")
+            )
+            if reg:
+                ch = self._page_chunk_with_region(page_data, reg)
+                ch["match_types"] = ["page_lookup", "visual_focus"]
+                ch["rerank_score"] = 1.0
+                ch["text"] = display_text_for_chunk(ch)
+                return [ch]
+            if intent.single_visual and page_data.get("image_key"):
+                ch = dict(page_data)
+                ch["image_source"] = "page"
+                ch["text"] = display_text_for_chunk(ch)
+                ch["match_types"] = ["page_lookup", "visual_focus"]
+                ch["rerank_score"] = 0.5
+                return [ch]
 
         if self._wants_whole_page_image(query) and page_data.get("image_key"):
             ch = dict(page_data)
@@ -652,12 +858,26 @@ class ESGComplianceRetriever:
                 return row.data()
         return None
 
+    def _dedupe_regions_for_list(self, regions: list[dict]) -> list[dict]:
+        """Drop duplicate crops (same image_key); keep distinct figures on one page."""
+        seen_keys: set[str] = set()
+        out: list[dict] = []
+        for reg in sorted(regions, key=lambda r: r.get("doc_order", 0)):
+            key = reg.get("image_key")
+            if key:
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+            out.append(reg)
+        return out
+
     def _visual_list_chunks(
         self, session, page_row: dict, intent, limit: int
     ) -> list[dict]:
         regions = self._fetch_regions_for_page(session, page_row["id"])
         if intent.kind_filter:
             regions = self._filter_regions_by_kind(regions, intent.kind_filter)
+        regions = self._dedupe_regions_for_list(regions)
         chunks = []
         for i, reg in enumerate(
             sorted(regions, key=lambda r: r.get("doc_order", 0))[:limit]
@@ -804,8 +1024,9 @@ class ESGComplianceRetriever:
             intent.pdf_page = pdf_page
         if document_page:
             intent.document_page = document_page
+        lim = 1 if intent.single_visual else 5
         return self.unified_visual_retrieve(
-            query, limit=1, user_context=user_context, intent=intent
+            query, limit=lim, user_context=user_context, intent=intent
         )
 
     def caption_figure_retrieve(
@@ -977,6 +1198,7 @@ class ESGComplianceRetriever:
             """
             MATCH (p:Page {id: $pid})-[:CONTAINS]->(r:Region)
             RETURN r.id AS id, r.title AS title, r.text AS text,
+                   r.visual_content AS visual_content,
                    r.region_kind AS region_kind, r.region_tags AS region_tags,
                    r.image_key AS image_key, r.pdf_page AS pdf_page,
                    r.document_page AS document_page, r.order AS doc_order,

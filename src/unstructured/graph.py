@@ -42,6 +42,41 @@ STRUCTURAL_PHRASES = {
 
 _NUMBERED_SECTION = re.compile(r"\b\d+(?:\.\d+)+\.?\s+[a-zA-Z]", re.I)
 
+_OVERVIEW_ABOUT = re.compile(
+    r"\bwhat\s+(?:is|'?s)\s+.+\s+about\b"
+    r"|\b(?:explain|describe|summarize|summary\s+of)\b.+\bdocument\b"
+    r"|\bdocument\s+is\s+about\b"
+    r"|\bpurpose\s+of\s+(?:the\s+)?(?:go\.?data\s+)?document\b"
+    r"|\b(?:\d{1,2}\s+points?|in\s+\d{1,2}\s+points)\b",
+    re.I,
+)
+
+
+def is_document_overview_query(question: str) -> bool:
+    """Whole-document summary (e.g. what is Go.Data about, explain in 10 points)."""
+    q = question.lower()
+    if _OVERVIEW_ABOUT.search(question):
+        return True
+    if re.search(r"\bgo\.?data\b|godata\b", q):
+        return any(
+            w in q
+            for w in (
+                "about", "explain", "summary", "overview", "points",
+                "purpose", "what is", "what's", "describe",
+            )
+        )
+    return False
+
+
+def _requested_point_count(question: str) -> int:
+    m = re.search(r"\b(\d{1,2})\s+points?\b", question, re.I)
+    if m:
+        return max(3, min(15, int(m.group(1))))
+    m = re.search(r"\bin\s+(\d{1,2})\s+points?\b", question, re.I)
+    if m:
+        return max(3, min(15, int(m.group(1))))
+    return 10
+
 
 # ─────────────────────────────────────────
 # QUERY CLASSIFIER
@@ -56,6 +91,9 @@ def classify_query(question: str) -> str:
     # TOC: contains any TOC phrase anywhere in question
     if any(phrase in q for phrase in TOC_PHRASES):
         return "toc"
+
+    if is_document_overview_query(question):
+        return "overview"
 
     # Structural: asking about a specific chapter/section by name or number (e.g. 2.2. Title)
     if any(phrase in q for phrase in STRUCTURAL_PHRASES):
@@ -119,12 +157,35 @@ def _is_visual_scene_query(question: str) -> bool:
 # ─────────────────────────────────────────
 def retrieve_node(state: ESGState):
     question    = state["question"]
-    query_type  = classify_query(question)
     user_context = state.get("user_context")
+    focus_id = state.get("focus_section_id")
+
+    if focus_id:
+        context = retriever.section_detail_retrieve(
+            focus_id,
+            user_context=user_context,
+            parent_section_id=state.get("parent_section_id"),
+        )
+        return {
+            "retrieved_context": context,
+            "keywords":          [],
+            "sources":           context["chunks"],
+            "query_type":        "section_detail",
+        }
+
+    query_type  = classify_query(question)
 
     if query_type == "toc":
         context  = retriever.get_all_sections(user_context=user_context)
         keywords = ["toc"]
+
+    elif query_type == "overview":
+        context = retriever.document_overview_retrieve(
+            query=question,
+            limit=12,
+            user_context=user_context,
+        )
+        keywords = ["overview"]
 
     elif query_type == "structural":
         context = retriever.structural_retrieve(
@@ -205,6 +266,25 @@ def _format_unified_visual_answer(retrieved: dict, chunks: list) -> str | None:
 
     c = chunks[0]
     pdf_p = retrieved.get("pdf_page") or c.get("pdf_page") or c.get("doc_order")
+    focus = retrieved.get("visual_focus") or []
+    if retrieved.get("single_visual") and focus:
+        label = focus[0].title()
+        lines = [f"**{label}**", ""]
+        if pdf_p:
+            lines.append(f"_PDF page **{pdf_p}**._")
+            lines.append("")
+        if c.get("image_url") or c.get("image_key"):
+            lines.append("_Logo/icon crop below._")
+        blob = display_text_for_chunk(c).lower()
+        if any(f.lower() in blob for f in focus):
+            lines.append("_Matched using vision text for this crop._")
+        else:
+            lines.append(
+                "_No separate logo region is indexed on this page; "
+                "showing the only figure crop available._"
+            )
+        return "\n".join(lines).strip()
+
     lines = [f"**{c.get('title', 'Page')}**", ""]
     if pdf_p:
         lines.append(f"_PDF page **{pdf_p}**._")
@@ -236,12 +316,19 @@ def _format_page_visual_list_answer(retrieved: dict, chunks: list) -> str | None
     for i, c in enumerate(chunks, 1):
         title = c.get("title") or f"{label[:-1]} {i}"
         lines.append(f"{i}. **{title}**")
-        body = (c.get("text") or "").strip()
-        if body and body != title:
-            snippet = body[:400] + ("…" if len(body) > 400 else "")
-            lines.append(f"   {snippet}")
+        visual = compact_visual_content((c.get("visual_content") or "").strip())
+        blob = visual.lower()
+        if "logo" in blob or "brand" in blob:
+            lines.append("   _Logo / brand mark._")
+        elif "diagram" in blob or "flowchart" in blob:
+            lines.append("   _Diagram._")
+        elif visual:
+            first = visual.split("\n", 1)[0].strip()
+            if len(first) > 120:
+                first = first[:117] + "…"
+            lines.append(f"   _{first}_")
         if c.get("image_url") or c.get("image_key"):
-            lines.append("   _(image below)_")
+            lines.append("   _(see image in the panel)_")
         lines.append("")
 
     return "\n".join(lines).strip()
@@ -354,9 +441,10 @@ def generate_node(state: ESGState):
     if not chunks:
         return {"answer": "I couldn't find relevant information in the document knowledge graph."}
 
-    listing = _format_subsection_listing(retrieved)
-    if listing is not None:
-        return {"answer": listing, "low_confidence": False}
+    if retrieved.get("mode") != "section_detail":
+        listing = _format_subsection_listing(retrieved)
+        if listing is not None:
+            return {"answer": listing, "low_confidence": False}
 
     visual_list = _format_page_visual_list_answer(retrieved, chunks)
     if visual_list is not None:
@@ -407,8 +495,16 @@ def generate_node(state: ESGState):
         system_prompt = load_prompt("document_page", context=context_text, question=state["question"])
     elif visual_prompt_mode:
         system_prompt = load_prompt("document_visual", context=context_text, question=state["question"])
-    elif query_type == "structural":
+    elif query_type in ("structural", "section_detail"):
         system_prompt = load_prompt("document_structural", context=context_text, question=state["question"])
+    elif query_type == "overview":
+        n_pts = _requested_point_count(state["question"])
+        q_user = state["question"]
+        if not re.search(r"\b\d{1,2}\s+points?\b", q_user, re.I):
+            q_user = f"{q_user.strip()} (Respond with exactly {n_pts} bullet points.)"
+        system_prompt = load_prompt(
+            "document_overview", context=context_text, question=q_user
+        )
     elif low_confidence:
         system_prompt = load_prompt("document_low_confidence", context=context_text, question=state["question"])
     else:

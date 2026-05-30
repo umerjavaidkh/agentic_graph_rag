@@ -14,6 +14,7 @@ from ..config.prompts import load_prompt
 from ..config.settings import CHAT_MODEL, STRUCTURED_FAST_ANSWER
 from ..model_providers.factory import get_model_provider
 from .fast_answer import try_tabular_answer
+from .query_intent import analytics_result_limit
 
 provider = get_model_provider()
 retriever = StructuredRetriever()
@@ -45,7 +46,8 @@ def retrieve_node(state: StructuredState):
         context  = retriever.get_schema()
         strategy = "schema"
     else:
-        context  = retriever.retrieve(question, limit=5, user_context=user_context)
+        lim = analytics_result_limit(question, 5)
+        context  = retriever.retrieve(question, limit=lim, user_context=user_context)
         strategy = context.get("strategy", "text2cypher")
 
     # Extract generated cypher for logging if available
@@ -76,7 +78,7 @@ def generate_node(state: StructuredState):
     has_error = any(c.get("id") == "error" for c in chunks)
 
     if STRUCTURED_FAST_ANSWER and not has_error and strategy == "text2cypher":
-        fast = try_tabular_answer(chunks)
+        fast = try_tabular_answer(chunks, question=question)
         if fast:
             return {"answer": fast, "low_confidence": False}
 

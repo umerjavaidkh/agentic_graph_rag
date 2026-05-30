@@ -39,6 +39,15 @@ _WANTS_IMAGE = re.compile(
     r"\bpdf\s+page\s+\d+\b|\bpage\s+image\b",
     re.I,
 )
+_VISUAL_FOCUS_TERM = re.compile(
+    r"\b(logos?|icons?|emblems?|brand\s*marks?|badges?|seals?)\b",
+    re.I,
+)
+_ONLY_VISUAL = re.compile(r"\b(?:only|just)\b", re.I)
+_DIAGRAM_HINTS = re.compile(
+    r"\b(diagram|flowchart|overview\s+diagram|boxes?/nodes?|arrows?)\b",
+    re.I,
+)
 
 _GENERIC_TERMS = frozenset({
     "ministry", "health", "social", "public", "workers", "assistance", "center",
@@ -59,6 +68,8 @@ class VisualIntent:
     kind_filter: Optional[str] = None  # figure | table
     phrases: list[str] = field(default_factory=list)
     terms: list[str] = field(default_factory=list)
+    visual_focus: list[str] = field(default_factory=list)  # e.g. logo
+    single_visual: bool = False  # return one crop, not a page listing
 
 
 def wants_page_text(query: str) -> bool:
@@ -87,7 +98,7 @@ def is_strict_page_lookup(intent: VisualIntent) -> bool:
     """
     if wants_page_text(intent.query):
         return False
-    if intent.list_all:
+    if intent.list_all and not intent.single_visual:
         return False
     if intent.pdf_page is None and not intent.document_page:
         return False
@@ -122,6 +133,19 @@ def parse_visual_intent(
             if t not in terms and len(t) > 2:
                 terms.append(t)
 
+    visual_focus = extract_visual_focus_terms(query)
+    single_visual = bool(visual_focus) and (
+        bool(_ONLY_VISUAL.search(q))
+        or bool(re.search(r"\b(?:logo|icon)\s+(?:only|image)\b", q, re.I))
+        or bool(re.search(r"\b(?:only|just)\s+(?:the\s+)?(?:logo|icon)\b", q, re.I))
+    )
+    if single_visual:
+        list_all = False
+        wants_image = True
+        for ft in visual_focus:
+            if ft not in terms:
+                terms.append(ft)
+
     return VisualIntent(
         query=query,
         pdf_page=pdf_p,
@@ -131,7 +155,22 @@ def parse_visual_intent(
         kind_filter=kind_filter,
         phrases=phrases,
         terms=terms,
+        visual_focus=visual_focus,
+        single_visual=single_visual,
     )
+
+
+def extract_visual_focus_terms(query: str) -> list[str]:
+    """Logo/icon/emblem when user asks for a specific visual element only."""
+    seen: list[str] = []
+    for m in _VISUAL_FOCUS_TERM.finditer(query):
+        raw = m.group(1).lower().replace(" ", "")
+        norm = raw.rstrip("s") if raw.endswith("s") and len(raw) > 4 else raw
+        if norm == "brandmark":
+            norm = "logo"
+        if norm not in seen:
+            seen.append(norm)
+    return seen
 
 
 def extract_search_phrases(query: str) -> tuple[list[str], list[str]]:
@@ -226,7 +265,44 @@ def score_visual_candidate(
     if intent.kind_filter and row.get("region_kind") == intent.kind_filter:
         score += 15.0
 
+    for term in intent.visual_focus:
+        t = term.lower()
+        if t in blobs["visual"]:
+            score += 120.0
+        elif t in blobs["tags"]:
+            score += 70.0
+        elif t in blobs["title"]:
+            score += 45.0
+        elif t in blobs["text"]:
+            score += 18.0
+        if t in ("logo", "icon", "emblem") and _DIAGRAM_HINTS.search(blobs["visual"]):
+            if t not in blobs["visual"] and t not in blobs["tags"]:
+                score -= 55.0
+
     return score
+
+
+def best_region_for_visual_focus(
+    regions: list[dict],
+    intent: VisualIntent,
+    page_visual: Optional[str] = None,
+) -> Optional[dict]:
+    """Pick the region crop that best matches logo/icon-only requests."""
+    if not intent.visual_focus:
+        return None
+    scored: list[tuple[float, dict]] = []
+    for reg in regions:
+        if not reg.get("image_key"):
+            continue
+        row = dict(reg)
+        if not row.get("visual_content") and page_visual:
+            row["visual_content"] = page_visual
+        s = score_visual_candidate(intent, row, node_label="Region")
+        scored.append((s, reg))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: (-x[0], x[1].get("doc_order", 0)))
+    return scored[0][1]
 
 
 def display_text_for_chunk(row: dict) -> str:

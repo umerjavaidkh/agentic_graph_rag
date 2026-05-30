@@ -79,8 +79,8 @@ TOOL_TO_AGENT: dict[str, str] = {
 }
 
 _DATA_ROUTE = re.compile(
-    r"\b(?:products?|orders?|customers?|suppliers?|categories?|sales|revenue|sold|"
-    r"northwind|top\s+\d+|best\s+selling|most\s+(?:sold|popular)|cypher|neo4j|"
+    r"\b(?:products?|orders?|customers?|suppliers?|categories?|sales|revenue|profit|sold|"
+    r"northwind|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|cypher|neo4j|"
     r"how\s+many|count|aggregate|schema|monthly|timeline|trend|volume|chronological)\b",
     re.I,
 )
@@ -158,10 +158,11 @@ def run_via_mcp_tool(
     tool_name: str,
     handlers: dict[str, Callable[..., dict]],
     user_context: Optional[UserContext] = None,
+    thread_id: str = "default",
 ) -> dict:
     """Execute the chosen MCP tool handler."""
     fn = handlers.get(tool_name) or handlers["search_documents"]
-    result = fn(question, user_context=user_context)
+    result = fn(question, user_context=user_context, thread_id=thread_id)
     result["_route_tool"] = tool_name
     result["_route_method"] = "llm_mcp"
     return result

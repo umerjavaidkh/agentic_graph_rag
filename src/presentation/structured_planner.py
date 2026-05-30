@@ -6,6 +6,8 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
+from ..structured.query_intent import is_singular_best_query
+
 _ANALYTICS = re.compile(
     r"\b(top|bottom|best|worst|highest|lowest|most|least|ranking|rank|"
     r"sales|sold|revenue|profit|count|sum|total|average|compare|trend|"
@@ -25,6 +27,8 @@ _LABEL_PRIORITY = (
 _VALUE_PRIORITY = (
     "ordervolume",
     "order_volume",
+    "unitssold",
+    "units_sold",
     "totalrevenue",
     "total_revenue",
     "revenue",
@@ -137,9 +141,18 @@ def build_structured_presentation(
     Returns { kind, blocks } or None if not suitable for rich structured UI.
     """
     rows = extract_rows_from_sources(sources)
-    if len(rows) < 2:
+    if not rows:
         return None
     if not is_structured_analytics_query(question):
+        return None
+
+    if is_singular_best_query(question) or len(rows) == 1:
+        return {
+            "kind": "plain",
+            "blocks": [{"type": "markdown", "content": (answer or "").strip()}],
+        }
+
+    if len(rows) < 2:
         return None
 
     label_key, value_key, display_keys = _pick_columns(rows)

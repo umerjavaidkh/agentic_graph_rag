@@ -9,13 +9,16 @@ from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 
 from .bridge import ask
+from .conversation import clear_turn
 from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
+from .assets.cleanup import cleanup_all_book_assets
 from .assets.factory import get_asset_store
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
     ASSETS_DIR,
+    CLEANUP_ASSETS_ON_DB_RESET,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
@@ -104,6 +107,10 @@ class QueryRequest(BaseModel):
     thread_id:   Optional[str] = Field(default="default")
 
 
+class ClearThreadRequest(BaseModel):
+    thread_id: Optional[str] = Field(default="default")
+
+
 class QueryResponse(BaseModel):
     answer:       str
     sources:      list
@@ -116,6 +123,7 @@ class QueryResponse(BaseModel):
     route_method: Optional[str] = None   # e.g. llm_mcp
     presentation: Optional[dict] = None  # { kind, blocks[] } for rich UI
     query_type:   Optional[str] = None
+    follow_up:    Optional[str] = None  # set when last-turn context was used
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -128,7 +136,11 @@ async def query(request: QueryRequest):
             department=request.department,
         )
 
-        result = ask(request.question, user_context=context)
+        result = ask(
+            request.question,
+            user_context=context,
+            thread_id=request.thread_id or "default",
+        )
 
         return QueryResponse(
             answer       = result.get("answer", "No answer generated."),
@@ -142,11 +154,19 @@ async def query(request: QueryRequest):
             route_method = result.get("_route_method"),
             presentation = result.get("presentation"),
             query_type   = result.get("query_type"),
+            follow_up    = result.get("_follow_up"),
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/chat/clear")
+async def chat_clear(request: ClearThreadRequest):
+    """Forget the last critical document turn for this thread (e.g. New chat)."""
+    clear_turn(request.thread_id or "default")
+    return {"ok": True, "thread_id": request.thread_id or "default"}
 
 
 @app.post("/ingest/unstructured", response_model=IngestionResponse)
@@ -282,11 +302,26 @@ async def reset_neo4j(
     finally:
         driver.close()
 
+    assets_removed = 0
+    if CLEANUP_ASSETS_ON_DB_RESET:
+        try:
+            assets_removed = cleanup_all_book_assets()
+        except Exception:
+            pass
+
     return {
         "status": "ok",
         "dropped_indexes": dropped_indexes,
         "dropped_constraints": dropped_constraints,
-        "message": "Neo4j wiped (best-effort). RBAC will be re-initialized on next API startup.",
+        "assets_removed": assets_removed,
+        "message": (
+            "Neo4j wiped (best-effort). RBAC will be re-initialized on next API startup."
+            + (
+                f" Removed {assets_removed} asset file(s) from storage."
+                if assets_removed
+                else ""
+            )
+        ),
     }
 
 

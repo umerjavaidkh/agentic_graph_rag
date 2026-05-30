@@ -11,6 +11,7 @@ from typing import Any, Callable, Optional
 from ..assets.page_images import resolve_image_url
 from ..document.page_numbers import parse_page_number_from_query
 from .structured_planner import build_structured_presentation
+from ..document.page_vision import compact_visual_content
 from ..unstructured.visual_retrieval import wants_page_text
 
 # ── Intent detectors (extensible) ─────────────────────────────
@@ -20,7 +21,8 @@ _IMAGE_QUERY = re.compile(
     r"\b(?:image|picture|photo|screenshot)\s+(?:of|from|on)\b|"
     r"\bshow\s+page\b|\bsee\s+page\b|\bdisplay\s+page\b|"
     r"\bwhole\s+page\b|\bfull\s+page\b|\bentire\s+page\b|"
-    r"\bpdf\s+page\s+\d+",
+    r"\bpdf\s+page\s+\d+"
+    r"|\b(?:logo|icon)\s+(?:only|image)\b|\b(?:only|just)\s+(?:the\s+)?(?:logo|icon)\b",
     re.I,
 )
 _TEXT_ONLY = re.compile(
@@ -107,10 +109,14 @@ def _image_blocks_from_sources(
     page_text_mode = mode == "page_text"
     pin_pdf = ctx.get("pdf_page")
     single_page_image = (
-        (mode == "page_lookup" or query_type == "page")
-        and wants_page_image(question)
-        and not page_text_mode
-        and not wants_page_text(question)
+        ctx.get("single_visual")
+        or (
+            mode != "page_visual_list"
+            and (mode == "page_lookup" or query_type == "page")
+            and wants_page_image(question)
+            and not page_text_mode
+            and not wants_page_text(question)
+        )
     )
     if pin_pdf is None and single_page_image:
         pin_pdf, _ = parse_page_number_from_query(question)
@@ -149,6 +155,78 @@ def _image_blocks_from_sources(
         })
         if single_page_image:
             break
+    return blocks
+
+
+def _short_visual_blurb(src: dict) -> str:
+    """One-line summary for list UI — not the full vision dump."""
+    visual = compact_visual_content((src.get("visual_content") or "").strip())
+    blob = visual.lower()
+    if "logo" in blob or "brand" in blob or "emblem" in blob:
+        return "Logo / brand mark"
+    if "diagram" in blob or "flowchart" in blob:
+        return "Diagram"
+    if "chart" in blob or "graph" in blob:
+        return "Chart"
+    if "table" in blob:
+        return "Table"
+    kind = (src.get("region_kind") or "figure").strip()
+    if kind:
+        return kind.replace("_", " ").title()
+    first = visual.split("\n", 1)[0].strip()
+    if len(first) > 100:
+        first = first[:97] + "…"
+    return first or "Figure"
+
+
+def _page_visual_list_blocks(
+    sources: list[dict],
+    ctx: dict,
+) -> list[dict]:
+    """Interleave compact captions with one image per figure (no duplicate wall of text)."""
+    blocks: list[dict] = []
+    pdf_p = ctx.get("pdf_page")
+    doc_p = ctx.get("document_page")
+    items = [s for s in sources if s.get("image_key")]
+    if not items:
+        return blocks
+
+    header = f"**Visuals on PDF page {pdf_p}** ({len(items)} found)"
+    if doc_p and pdf_p and str(doc_p) != str(pdf_p):
+        header += f"\n\n_Printed page **{doc_p}**._"
+    blocks.append({"type": "markdown", "content": header})
+
+    seen_keys: set[str] = set()
+    for i, src in enumerate(items, 1):
+        key = src.get("image_key")
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        url = resolve_image_url(key)
+        if not url:
+            continue
+        title = src.get("title") or f"Figure {i}"
+        blurb = _short_visual_blurb(src)
+        blocks.append({
+            "type": "markdown",
+            "content": f"\n{i}. **{title}** — _{blurb}_",
+        })
+        doc_page = src.get("document_page")
+        pdf_page = src.get("pdf_page") or pdf_p
+        kind = src.get("region_kind")
+        caption = title
+        if kind:
+            caption = f"{title} ({kind})"
+        if doc_page and str(doc_page) != str(pdf_page):
+            caption = f"{caption} — printed {doc_page}, PDF {pdf_page}"
+        elif pdf_page:
+            caption = f"{caption} — PDF page {pdf_page}"
+        blocks.append({
+            "type": "image",
+            "url": url,
+            "alt": caption,
+            "caption": caption,
+        })
     return blocks
 
 
@@ -208,6 +286,14 @@ def build_presentation(
     ctx = retrieved_context or {}
     mode = ctx.get("mode") or ""
     blocks: list[dict] = []
+
+    if mode == "page_visual_list":
+        blocks = _page_visual_list_blocks(sources, ctx)
+        kinds = {b["type"] for b in blocks}
+        return {
+            "kind": "mixed" if len(kinds) > 1 else (next(iter(kinds)) if kinds else "plain"),
+            "blocks": blocks,
+        }
 
     text_only = bool(_TEXT_ONLY.search(question)) or wants_page_text(question)
     page_text_mode = mode == "page_text"
