@@ -13,6 +13,11 @@ openai>=1.30.0
 fastapi>=0.100.0
 uvicorn>=0.24.0
 python-multipart>=0.0.6
+pydantic>=2.5.0
+
+# ── App runtime (agents, config) ──────────
+python-dotenv>=1.0.0
+langgraph>=0.2.0
 
 # ── Semantic analysis ───────────────────
 numpy>=1.26.0,<2.0.0       # Pinned <2 for torch/docling compatibility

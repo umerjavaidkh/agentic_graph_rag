@@ -1,0 +1,2 @@
+# Kept for Docker backwards compatibility — use requirements.txt only.
+-r requirements.txt

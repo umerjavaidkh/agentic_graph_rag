@@ -1,9 +1,6 @@
-// Manual Neo4j Browser load (optional OpenAI embeddings at bottom).
-// Docker demo uses docker/northwind-docker.cypher instead (no API key in file).
+// Northwind demo load for Docker (no Neo4j GenAI / no API keys).
+// Requires APOC (enabled in docker-compose neo4j service).
 
-/////////////////////////////////////////////////////////
-// Load Northwind Data
-/////////////////////////////////////////////////////////
 CREATE CONSTRAINT Product_productID IF NOT EXISTS FOR (p:Product) REQUIRE (p.productID) IS UNIQUE;
 CREATE CONSTRAINT Category_categoryID IF NOT EXISTS FOR (c:Category) REQUIRE (c.categoryID) IS UNIQUE;
 CREATE CONSTRAINT Supplier_supplierID IF NOT EXISTS FOR (s:Supplier) REQUIRE (s.supplierID) IS UNIQUE;
@@ -58,7 +55,6 @@ SET a.name = row.shipName,
     a.postalCode = row.shipPostalCode,
     a.country = row.shipCountry
 MERGE (o)-[:SHIPPED_TO]->(a)
-
 WITH o
 MATCH (c:Customer)
 WHERE c.customerID = o.customerID
@@ -69,26 +65,10 @@ MATCH (p:Product), (o:Order)
 WHERE p.productID = row.productID AND o.orderID = row.orderID
 MERGE (o)-[details:ORDER_CONTAINS]->(p)
 SET details = row,
-details.quantity = toInteger(row.quantity);
+details.unitPrice = toFloat(row.unitPrice),
+details.quantity = toInteger(row.quantity),
+details.discount = toFloat(row.discount);
 
-/////////////////////////////////////////////////////////
-// Set Text Property and Vector Index
-/////////////////////////////////////////////////////////
-//create text and embedding vector properties
-
-MATCH(p:Product)-[:BELONGS_TO]-(c:Category)
-SET p.text = "Product Category: " + c.categoryName + ' - ' + c.description + "\nProduct Name: " + p.productName
-WITH p, genai.vector.encode(p.text, 'OpenAI', {token:$openAIKey}) AS textEmbedding
-CALL db.create.setNodeVectorProperty(p,'textEmbedding', textEmbedding)
-RETURN p.productID, p.text, p.textEmbedding;
-
-//create vector index
-CREATE VECTOR INDEX product_text_embeddings
-FOR (n:Product) ON (n.textEmbedding)
-OPTIONS {indexConfig: {
- `vector.dimensions`: 1536,
- `vector.similarity_function`: 'cosine'
-}};
-
-//await index coming online
-CALL db.awaitIndex("product_text_embeddings", 300);
+MATCH (p:Product)-[:BELONGS_TO]->(c:Category)
+SET p.text = "Product Category: " + c.categoryName + " - " + coalesce(c.description, "")
+  + "\nProduct Name: " + p.productName;

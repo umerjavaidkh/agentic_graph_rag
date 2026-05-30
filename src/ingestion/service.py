@@ -28,7 +28,7 @@ from ..assets.cleanup import cleanup_book_assets
 from ..assets.page_images import save_document_page_images
 from ..assets.region_images import save_region_images
 from ..document.page_vision import PageVisionEnricher
-from ..document.parser import DoclingParser
+from ..document.parser import DOCLING_AVAILABLE, DoclingParser
 from ..models import NodeType
 from ..exporter.exporter import Neo4jExporter
 from ..models import DKGEdge, DKGNode
@@ -154,6 +154,14 @@ class IngestionManager:
             raise FileNotFoundError("Uploaded file was not saved correctly.")
 
         parser = DoclingParser()
+        if not DOCLING_AVAILABLE:
+            import os
+            if os.environ.get("ENABLE_PDF_INGEST", "true").lower() in ("0", "false", "no"):
+                raise RuntimeError(
+                    "PDF ingest is disabled in this Docker image (slim demo). "
+                    "Structured Northwind queries work. For PDF upload use "
+                    "docker-compose.full.yml — see DOCKER.md."
+                )
         nodes, edges = parser.parse(str(job.input_path))
         self._log(job, f"Parsed {len(nodes)} nodes and {len(edges)} edges")
 

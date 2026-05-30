@@ -20,6 +20,9 @@ from ..config.settings import (
     RETRIEVAL_CANDIDATE_POOL,
     RETRIEVAL_FINAL_LIMIT,
     RETRIEVAL_MIN_RERANK_SCORE,
+    NEO4J_URI,
+    NEO4J_USER,
+    NEO4J_PASSWORD,
 )
 from ..assets.page_images import resolve_image_url
 from ..document.page_numbers import (
@@ -62,9 +65,9 @@ def _cypher_needle_match(var: str = "n") -> str:
 class ESGComplianceRetriever:
     def __init__(
         self,
-        uri="bolt://localhost:7687",
-        user="neo4j",
-        password="password123",
+        uri=NEO4J_URI,
+        user=NEO4J_USER,
+        password=NEO4J_PASSWORD,
         user_context: Optional[UserContext] = None,
     ):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))

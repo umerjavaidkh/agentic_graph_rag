@@ -10,11 +10,18 @@ This module provides:
 from typing import List, Dict, Optional
 from neo4j import GraphDatabase
 
+from ..config.settings import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
+
 
 class GraphRBAC:
     """Graph-based Role-Based Access Control using Neo4j relationships."""
 
-    def __init__(self, uri: str = "bolt://localhost:7687", user: str = "neo4j", password: str = "password123"):
+    def __init__(
+        self,
+        uri: str = NEO4J_URI,
+        user: str = NEO4J_USER,
+        password: str = NEO4J_PASSWORD,
+    ):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
 
     def setup_schema(self, cypher_file: str = "src/auth/rbac_schema.cypher"):
@@ -208,9 +215,9 @@ class GraphRBAC:
 
 # Convenience function for RBAC schema setup
 def initialize_rbac_schema(
-    uri: str = "bolt://localhost:7687",
-    user: str = "neo4j",
-    password: str = "password123",
+    uri: str = NEO4J_URI,
+    user: str = NEO4J_USER,
+    password: str = NEO4J_PASSWORD,
     cypher_file: str = "src/auth/rbac_schema.cypher"
 ) -> bool:
     """Initialize RBAC schema from Cypher file."""

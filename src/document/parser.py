@@ -13,9 +13,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from docling.document_converter import DocumentConverter
-from docling_core.types.doc import DocItemLabel, DoclingDocument
-
 from ..models import DKGEdge, DKGNode, NodeType, RelType
 from .page_numbers import enrich_page_nodes
 from .patterns import (
@@ -27,17 +24,39 @@ from .patterns import (
 )
 from ..assets.region_images import build_region_tags, region_title
 
-CHAPTER_LABELS = {DocItemLabel.TITLE}
-SECTION_LABELS = {DocItemLabel.SECTION_HEADER}
-REGION_LABELS = {DocItemLabel.TABLE, DocItemLabel.PICTURE}
-TEXT_LABELS = {
-    DocItemLabel.TEXT,
-    DocItemLabel.LIST_ITEM,
-    DocItemLabel.TABLE,
-    DocItemLabel.CAPTION,
-    DocItemLabel.FOOTNOTE,
-}
+try:
+    from docling.document_converter import DocumentConverter
+    from docling_core.types.doc import DocItemLabel, DoclingDocument
+
+    DOCLING_AVAILABLE = True
+except ImportError:
+    DOCLING_AVAILABLE = False
+    DocumentConverter = None  # type: ignore[misc, assignment]
+    DocItemLabel = None  # type: ignore[misc, assignment]
+    DoclingDocument = None  # type: ignore[misc, assignment]
+
+CHAPTER_LABELS = {DocItemLabel.TITLE} if DOCLING_AVAILABLE else set()
+SECTION_LABELS = {DocItemLabel.SECTION_HEADER} if DOCLING_AVAILABLE else set()
+REGION_LABELS = (
+    {DocItemLabel.TABLE, DocItemLabel.PICTURE} if DOCLING_AVAILABLE else set()
+)
+TEXT_LABELS = (
+    {
+        DocItemLabel.TEXT,
+        DocItemLabel.LIST_ITEM,
+        DocItemLabel.TABLE,
+        DocItemLabel.CAPTION,
+        DocItemLabel.FOOTNOTE,
+    }
+    if DOCLING_AVAILABLE
+    else set()
+)
 HEADING_LABELS = CHAPTER_LABELS | SECTION_LABELS
+
+_DOCLING_INSTALL_HINT = (
+    "PDF ingest requires Docling (~8 GB Docker image). "
+    "Use: docker compose -f docker-compose.yml -f docker-compose.full.yml up --build"
+)
 
 
 class DoclingParser:
@@ -47,9 +66,14 @@ class DoclingParser:
     """
 
     def __init__(self):
+        if not DOCLING_AVAILABLE:
+            self.converter = None
+            return
         self.converter = DocumentConverter()
 
     def parse(self, source: str | Path) -> tuple[list[DKGNode], list[DKGEdge]]:
+        if not DOCLING_AVAILABLE:
+            raise RuntimeError(_DOCLING_INSTALL_HINT)
         source = Path(source)
         doc_name = source.stem
 

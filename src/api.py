@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
@@ -23,6 +23,7 @@ from .config.settings import (
     NEO4J_URI,
     NEO4J_USER,
     OPENAI_API_KEY,
+    PROJECT_ROOT,
 )
 from .ingestion.service import IngestionManager
 
@@ -41,7 +42,7 @@ async def _ensure_rbac_schema_initialized():
     rbac = GraphRBAC(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     try:
         if not rbac.is_initialized():
-            rbac.setup_schema("src/auth/rbac_schema.cypher")
+            rbac.setup_schema(str(PROJECT_ROOT / "src" / "auth" / "rbac_schema.cypher"))
     finally:
         rbac.close()
 
@@ -64,6 +65,11 @@ async def serve_asset(asset_path: str):
         raise HTTPException(status_code=404, detail="Asset not found")
     media = "image/jpeg" if asset_path.lower().endswith(".jpg") else "application/octet-stream"
     return Response(content=data, media_type=media)
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/static/chat.html")
 
 
 @app.get("/upload", response_class=HTMLResponse)

@@ -10,7 +10,15 @@ import re
 import numpy as np
 from typing import Optional
 from neo4j import GraphDatabase
-from ..config.settings import MODEL_PROVIDER, OPENAI_API_KEY, CHAT_MODEL, EMBEDDING_MODEL
+from ..config.settings import (
+    MODEL_PROVIDER,
+    OPENAI_API_KEY,
+    CHAT_MODEL,
+    EMBEDDING_MODEL,
+    NEO4J_URI,
+    NEO4J_USER,
+    NEO4J_PASSWORD,
+)
 from ..model_providers.factory import get_model_provider
 from ..auth.roles import UserContext, Role, DEFAULT_PUBLIC_CONTEXT
 from ..auth.rbac_setup import GraphRBAC
@@ -44,9 +52,9 @@ class StructuredRetriever:
 
     def __init__(
         self,
-        uri:      str = "bolt://localhost:7687",
-        user:     str = "neo4j",
-        password: str = "password123",
+        uri:      str = NEO4J_URI,
+        user:     str = NEO4J_USER,
+        password: str = NEO4J_PASSWORD,
         user_context: Optional[UserContext] = None,
     ):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))

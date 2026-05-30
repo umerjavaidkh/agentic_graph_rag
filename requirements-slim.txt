@@ -1,0 +1,25 @@
+# Slim demo image (~500–900 MB) — chat, structured Northwind, API.
+# No Docling/PyTorch. PDF upload needs Dockerfile.full instead.
+
+# ── Page assets (no Docling) ─────────────
+pymupdf>=1.24.0
+Pillow>=10.0.0
+minio>=7.2.0
+
+# ── Embeddings + LLM ────────────────────
+openai>=1.30.0
+fastapi>=0.100.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+pydantic>=2.5.0
+
+# ── App runtime ─────────────────────────
+python-dotenv>=1.0.0
+langgraph>=0.2.0
+
+# ── Semantic analysis ───────────────────
+numpy>=1.26.0,<2.0.0
+scikit-learn>=1.4.0
+
+# ── Neo4j ───────────────────────────────
+neo4j>=5.20.0

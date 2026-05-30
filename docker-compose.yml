@@ -1,7 +1,66 @@
-# Optional MinIO for page image storage (ASSET_STORAGE_BACKEND=minio).
-# Neo4j is assumed to run separately (your existing Docker setup).
+# Agentic Graph RAG — slim demo (~1 GB app + Neo4j)
+#
+#   cp .env.example .env && docker compose up --build
+#
+# Already have Neo4j on 7687? Use:
+#   docker compose -f docker-compose.yml -f docker-compose.external-neo4j.yml up --build
+
 services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: graphrag-neo4j
+    ports:
+      - "${NEO4J_HTTP_PORT:-17474}:7474"
+      - "${NEO4J_BOLT_PORT:-17687}:7687"
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password123}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-password123} 'RETURN 1' || exit 1",
+        ]
+      interval: 5s
+      timeout: 15s
+      retries: 30
+      start_period: 45s
+
+  app:
+    build: .
+    container_name: graphrag-app
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Always use Docker service name; do not override from .env (localhost breaks in-container).
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-password123}
+      ASSETS_DIR: /app/data/assets
+      ENABLE_PAGE_VISION: "false"
+      FAST_ROUTE_QUERIES: "true"
+      STRUCTURED_FAST_ANSWER: "true"
+      CLEANUP_BOOK_ASSETS_ON_INGEST: "true"
+      LOAD_NORTHWIND_DEMO: "true"
+      ENABLE_PDF_INGEST: "false"
+    volumes:
+      - app_assets:/app/data/assets
+      - app_tmp:/app/tmp_ingest
+    depends_on:
+      neo4j:
+        condition: service_healthy
+
   minio:
+    profiles: ["minio"]
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     ports:
@@ -14,4 +73,7 @@ services:
       - minio_data:/data
 
 volumes:
+  neo4j_data:
+  app_assets:
+  app_tmp:
   minio_data:

@@ -1,16 +1,10 @@
-import os
 import numpy as np
 from neo4j import GraphDatabase
 from openai import OpenAI
 
-from dotenv import load_dotenv
-load_dotenv()
+from ..config.settings import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, OPENAI_API_KEY
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASS = os.getenv("NEO4J_PASS", "password123")
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 def get_embedding(text: str) -> list[float]:
     """Generate OpenAI embedding for text."""
@@ -21,7 +15,7 @@ def get_embedding(text: str) -> list[float]:
     return response.data[0].embedding
 
 def embed_all_sections():
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     
     with driver.session() as session:
         # Get all sections

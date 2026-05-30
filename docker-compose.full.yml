@@ -1,0 +1,9 @@
+# PDF ingest — Docling + PyTorch (~8–10 GB app image).
+#   docker compose -f docker-compose.yml -f docker-compose.bundled-neo4j.yml -f docker-compose.full.yml up --build
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.full
+    environment:
+      ENABLE_PDF_INGEST: "true"

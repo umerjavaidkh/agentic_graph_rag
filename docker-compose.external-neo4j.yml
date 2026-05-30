@@ -1,0 +1,10 @@
+# Use your existing Neo4j on localhost:7687 (skip bundled container).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.external-neo4j.yml up --build --scale neo4j=0
+#
+# Set NEO4J_PASSWORD in .env to match your local Neo4j.
+services:
+  app:
+    depends_on: {}
+    environment:
+      NEO4J_URI: ${NEO4J_URI:-bolt://host.docker.internal:7687}
