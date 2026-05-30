@@ -27,7 +27,11 @@ from ..models import DKGNode, NodeType
 VISION_SYSTEM = """You are a document page analyst. Describe ONLY what is visible on the page image.
 Do not invent numbers, names, or data that are not clearly readable.
 
-Structure your reply exactly as:
+Use these section headings ONLY when that kind of content is actually on the page.
+Omit entire sections that have nothing to show. Never write placeholders such as
+"No tables are visible" or "None" — if a category is absent, skip that heading completely.
+
+When present, structure as:
 
 ## Tables
 - For each table: caption/title if visible, then a complete markdown pipe table with every row and column you can read.
@@ -47,6 +51,97 @@ Structure your reply exactly as:
 If something is unreadable, write "unclear". Prefer completeness over brevity for tables."""
 
 # Pages likely to contain non-text visuals (not only tables)
+_NEGATIVE_VISUAL_LINE = re.compile(
+    r"^\s*-\s*"
+    r"(no\s+.+?\s+(visible|present|on\s+the\s+page|on\s+this\s+page)"
+    r"|none\s*(visible|present|found)?\.?"
+    r"|nothing\s+(visible|present|on\s+the\s+page)\.?"
+    r"|n/?a\.?"
+    r")\s*\.?\s*$",
+    re.IGNORECASE,
+)
+
+_SECTION_TITLE = re.compile(
+    r"^(?:##\s+)?("
+    r"Tables|Charts and graphs|Diagrams and flowcharts|"
+    r"Shapes, maps, and other figures|Other visible content"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def _split_visual_sections(text: str) -> list[str]:
+    """Split on ## headings or plain section titles (Tables, Charts and graphs, …)."""
+    blocks = re.split(r"(?=^##\s+)", text.strip(), flags=re.MULTILINE)
+    if len(blocks) == 1 and not blocks[0].lstrip().startswith("##"):
+        lines = text.strip().splitlines()
+        chunks: list[list[str]] = []
+        current: list[str] = []
+        for ln in lines:
+            if _SECTION_TITLE.match(ln.strip()):
+                if current:
+                    chunks.append(current)
+                current = [ln]
+            else:
+                current.append(ln)
+        if current:
+            chunks.append(current)
+        if len(chunks) > 1 or (
+            chunks and _SECTION_TITLE.match(chunks[0][0].strip())
+        ):
+            return ["\n".join(c) for c in chunks]
+    return blocks
+
+
+def _is_negative_visual_line(ln: str) -> bool:
+    return bool(
+        _NEGATIVE_VISUAL_LINE.match(ln)
+        or re.match(r"^\s*-\s*no\s+", ln, re.I)
+    )
+
+
+def compact_visual_content(text: str) -> str:
+    """
+    Remove vision sections that only state something is absent (empty placeholders).
+    Applied at ingest and when rendering answers.
+    """
+    if not text or not text.strip():
+        return ""
+
+    kept: list[str] = []
+    for block in _split_visual_sections(text.strip()):
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.splitlines()
+        header = None
+        if lines and (lines[0].startswith("##") or _SECTION_TITLE.match(lines[0].strip())):
+            header = lines[0]
+            body_lines = lines[1:]
+        else:
+            body_lines = lines
+
+        substantive = [ln for ln in body_lines if ln.strip() and not _is_negative_visual_line(ln)]
+        if not substantive:
+            continue
+        if header:
+            kept.append(header + "\n" + "\n".join(substantive))
+        else:
+            kept.append("\n".join(substantive))
+
+    result = "\n\n".join(kept).strip()
+    if not result:
+        return ""
+
+    non_empty = [
+        ln for ln in result.splitlines()
+        if ln.strip() and not ln.startswith("##") and not _SECTION_TITLE.match(ln.strip())
+    ]
+    if non_empty and all(_is_negative_visual_line(ln) for ln in non_empty):
+        return ""
+    return result
+
+
 VISUAL_PAGE_HINTS = re.compile(
     r"\btable\b|\bfigure\b|\bfig\.\b|\bannex\b|\[table\]|\[figure\]"
     r"|chart|diagram|graph\b|flowchart|flow\s+chart|map\b|illustration"
@@ -91,9 +186,11 @@ class PageVisionEnricher:
                 page_no = page_node.pdf_page or page_node.page_start or page_node.order
                 if page_no < 1 or page_no > len(doc):
                     continue
-                description = self._describe_page_image(doc[page_no - 1])
+                description = compact_visual_content(
+                    self._describe_page_image(doc[page_no - 1])
+                )
                 if description:
-                    page_node.visual_content = description.strip()
+                    page_node.visual_content = description
                     enriched += 1
         finally:
             doc.close()

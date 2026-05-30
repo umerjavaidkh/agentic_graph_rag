@@ -13,7 +13,15 @@ from ..assets.page_images import resolve_image_url
 # ── Intent detectors (extensible) ─────────────────────────────
 
 _IMAGE_QUERY = re.compile(
-    r"\b(image|picture|photo|screenshot|scan|show\s+page|see\s+page|display\s+page)\b",
+    r"\b(?:show|display|see|fetch|get)\s+(?:the\s+)?(?:image|picture|photo|figure|page|pdf)\b|"
+    r"\b(?:image|picture|photo|screenshot)\s+(?:of|from|on)\b|"
+    r"\bshow\s+page\b|\bsee\s+page\b|\bdisplay\s+page\b|"
+    r"\bwhole\s+page\b|\bfull\s+page\b|\bentire\s+page\b|"
+    r"\bpdf\s+page\s+\d+",
+    re.I,
+)
+_TEXT_ONLY = re.compile(
+    r"\b(?:text\s+only|only\s+text|no\s+image|without\s+image|don'?t\s+show\s+image)\b",
     re.I,
 )
 _PERCENT_PATTERN = re.compile(
@@ -24,6 +32,8 @@ _PIPE_TABLE_ROW = re.compile(r"^\s*\|.+\|\s*$")
 
 
 def wants_page_image(question: str) -> bool:
+    if _TEXT_ONLY.search(question):
+        return False
     return bool(_IMAGE_QUERY.search(question))
 
 
@@ -87,21 +97,28 @@ def _image_blocks_from_sources(
     if not want:
         return blocks
 
-    seen: set[str] = set()
+    seen_keys: set[str] = set()
+    seen_urls: set[str] = set()
     for src in sources:
         key = src.get("image_key")
-        if not key or key in seen:
+        if not key or key in seen_keys:
             continue
-        seen.add(key)
+        seen_keys.add(key)
         url = resolve_image_url(key)
-        if not url:
+        if not url or url in seen_urls:
             continue
+        seen_urls.add(url)
         title = src.get("title") or "Page"
         doc_p = src.get("document_page")
         pdf_p = src.get("pdf_page")
+        kind = src.get("region_kind")
         caption = title
+        if kind:
+            caption = f"{title} ({kind})"
         if doc_p and str(doc_p) != str(pdf_p):
-            caption = f"{title} (printed {doc_p}, PDF {pdf_p})"
+            caption = f"{caption} — printed {doc_p}, PDF {pdf_p}"
+        elif pdf_p:
+            caption = f"{caption} — PDF page {pdf_p}"
         blocks.append({
             "type": "image",
             "url": url,
@@ -158,7 +175,20 @@ def build_presentation(
     mode = ctx.get("mode") or ""
     blocks: list[dict] = []
 
-    force_image = query_type == "page" or mode == "page_lookup" or wants_page_image(question)
+    text_only = bool(_TEXT_ONLY.search(question))
+    visual_query_type = query_type in ("page", "visual_scene", "figure_caption")
+    visual_mode = mode in (
+        "unified_visual", "page_lookup", "page_visual_list",
+        "visual_scene", "caption_figure",
+    )
+    force_image = (
+        not text_only
+        and (
+            visual_query_type
+            or visual_mode
+            or wants_page_image(question)
+        )
+    )
 
     image_blocks = _image_blocks_from_sources(sources, question, force=force_image)
     blocks.extend(image_blocks)

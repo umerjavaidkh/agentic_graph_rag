@@ -1,9 +1,14 @@
 from langgraph.graph import StateGraph, END
 from .state import ESGState
-from ..document.page_numbers import parse_page_number_from_query
+from ..document.page_numbers import (
+    is_valid_document_page_label,
+    parse_page_number_from_query,
+)
+from ..document.page_vision import compact_visual_content
 from .retriever import ESGComplianceRetriever
+from .visual_retrieval import display_text_for_chunk
 import re
-from typing import List
+from typing import List, Optional
 from ..config.prompts import load_prompt
 from ..config.settings import CHAT_MODEL
 from ..model_providers.factory import get_model_provider
@@ -32,7 +37,10 @@ STRUCTURAL_PHRASES = {
     "headings under", "under the section", "list the sections",
     "with headings", "give them with headings", "children of",
     "nested under", "what are the sub",
+    "tell me about", "explain section", "what does section",
 }
+
+_NUMBERED_SECTION = re.compile(r"\b\d+(?:\.\d+)+\.?\s+[a-zA-Z]", re.I)
 
 
 # ─────────────────────────────────────────
@@ -49,18 +57,61 @@ def classify_query(question: str) -> str:
     if any(phrase in q for phrase in TOC_PHRASES):
         return "toc"
 
-    # Structural: asking about a specific chapter/section by name
+    # Structural: asking about a specific chapter/section by name or number (e.g. 2.2. Title)
     if any(phrase in q for phrase in STRUCTURAL_PHRASES):
+        return "structural"
+    if _NUMBERED_SECTION.search(question):
         return "structural"
 
     pdf_p, doc_p = parse_page_number_from_query(question)
-    if pdf_p is not None or doc_p is not None:
+    if pdf_p is not None or (doc_p is not None and is_valid_document_page_label(doc_p)):
         return "page"
+
+    if _is_figure_caption_query(question):
+        return "figure_caption"
+
+    if _is_visual_scene_query(question):
+        return "visual_scene"
 
     if re.search(r"\b(?:page|p\.|pg\.)\s+[a-z0-9ivxlcdm\-]+\b", q, re.I):
-        return "page"
+        m = re.search(r"\b(?:page|p\.|pg\.)\s+([a-z0-9ivxlcdm\-]+)\b", q, re.I)
+        if m and is_valid_document_page_label(m.group(1)):
+            return "page"
 
     return "semantic"
+
+
+def _is_figure_caption_query(question: str) -> bool:
+    """Long caption + figure/image search (not a page number)."""
+    q = re.sub(
+        r"\s*(?:search|find|show|locate)\s+(?:for\s+)?(?:that\s+)?"
+        r"(?:figure|fig\.?|table|image).*",
+        "",
+        question,
+        flags=re.I,
+    ).strip()
+    if len(q) < 30:
+        return False
+    return bool(re.search(r"\b(figure|fig\.?|image|photo|picture)\b", question, re.I))
+
+
+def _is_visual_scene_query(question: str) -> bool:
+    """Describe-a-picture / find page by scene (no page number)."""
+    q = question.lower()
+    pdf_p, doc_p = parse_page_number_from_query(question)
+    if pdf_p is not None or (doc_p and is_valid_document_page_label(doc_p)):
+        return False
+    scene_hints = (
+        "lady", "woman", "man", "person", "people", "holding", "phone",
+        "screenshot", "photo", "picture", "image where", "image of", "shows",
+        "showing", "illustration of", "diagram with",
+    )
+    if not any(h in q for h in scene_hints):
+        return False
+    return bool(
+        re.search(r"\b(image|picture|photo|screenshot|page)\b", q)
+        or "holding" in q
+    )
 
 
 # ─────────────────────────────────────────
@@ -93,6 +144,14 @@ def retrieve_node(state: ESGState):
         )
         keywords = ["page"]
 
+    elif query_type in ("visual_scene", "figure_caption"):
+        context = retriever.unified_visual_retrieve(
+            query=question,
+            limit=5,
+            user_context=user_context,
+        )
+        keywords = ["visual"]
+
     else:
         # Broad fetch → rerank → top chunks for LLM
         context = retriever.hybrid_retrieve(
@@ -110,44 +169,64 @@ def retrieve_node(state: ESGState):
     }
 
 
-def _format_page_lookup_answer(retrieved: dict, chunks: list) -> str | None:
-    if retrieved.get("mode") != "page_lookup" or not chunks:
-        if retrieved.get("mode") == "page_lookup" and not chunks:
-            return "No page found for that page number in the knowledge graph."
+def _format_unified_visual_answer(retrieved: dict, chunks: list) -> str | None:
+    mode = retrieved.get("mode") or ""
+    if mode not in (
+        "unified_visual", "page_lookup", "caption_figure",
+        "visual_scene", "page_visual_list",
+    ):
         return None
+    if not chunks:
+        return (
+            "No matching page or figure found. "
+            "Try a **PDF page number** (e.g. `pdf page 15`) or re-ingest with vision enabled."
+        )
+
+    if mode == "page_visual_list":
+        return _format_page_visual_list_answer(retrieved, chunks)
 
     c = chunks[0]
-    meta = retrieved
-    pdf_p = meta.get("pdf_page") or c.get("pdf_page")
-    doc_p = meta.get("document_page") or c.get("document_page")
+    pdf_p = retrieved.get("pdf_page") or c.get("pdf_page") or c.get("doc_order")
     lines = [f"**{c.get('title', 'Page')}**", ""]
-    if doc_p and str(doc_p) != str(pdf_p):
-        lines.append(
-            f"_Printed page **{doc_p}** (PDF sheet **{pdf_p}**). "
-            "Answers use the printed page label when they differ._"
-        )
+    if pdf_p:
+        lines.append(f"_PDF page **{pdf_p}**._")
         lines.append("")
-    elif doc_p:
-        lines.append(f"_PDF page and printed page label: **{doc_p}**._")
+    if c.get("image_url") or c.get("image_key"):
+        src = "region crop" if c.get("image_source") == "region" else "page image"
+        lines.append(f"_Showing {src} below._")
         lines.append("")
-
-    body = (c.get("text") or "").strip()
+    body = display_text_for_chunk(c)
     if body:
-        lines.append("### Text")
-        lines.append(body)
+        lines.append(body[:4000])
+    return "\n".join(lines).strip()
+
+
+def _format_page_visual_list_answer(retrieved: dict, chunks: list) -> str | None:
+    if retrieved.get("mode") != "page_visual_list" or not chunks:
+        return None
+
+    kind = retrieved.get("list_kind") or "visual"
+    label = "Figures" if kind == "figure" else "Tables" if kind == "table" else "Visuals"
+    pdf_p = retrieved.get("pdf_page") or chunks[0].get("pdf_page")
+    doc_p = retrieved.get("document_page") or chunks[0].get("document_page")
+
+    lines = [f"**{label} on PDF page {pdf_p}** ({len(chunks)} found)", ""]
+    if doc_p and str(doc_p) != str(pdf_p):
+        lines.append(f"_Printed page **{doc_p}**._")
         lines.append("")
 
-    visual = c.get("visual_content") or ""
-    if not visual and "[Visual page content" in body:
-        visual = body
-    elif visual:
-        lines.append("### Visual description (tables, charts, diagrams)")
-        lines.append(visual)
+    for i, c in enumerate(chunks, 1):
+        title = c.get("title") or f"{label[:-1]} {i}"
+        lines.append(f"{i}. **{title}**")
+        body = (c.get("text") or "").strip()
+        if body and body != title:
+            snippet = body[:400] + ("…" if len(body) > 400 else "")
+            lines.append(f"   {snippet}")
+        if c.get("image_url") or c.get("image_key"):
+            lines.append("   _(image below)_")
+        lines.append("")
 
-    if len(lines) <= 3:
-        lines.append("_No text or visual description stored for this page. Re-ingest with vision enabled._")
-
-    return "\n".join(lines)
+    return "\n".join(lines).strip()
 
 
 def _uses_visual_prompt(retrieved: dict, chunks: list) -> bool:
@@ -156,18 +235,26 @@ def _uses_visual_prompt(retrieved: dict, chunks: list) -> bool:
         return True
     for c in chunks:
         types = c.get("match_types") or []
-        if any(t in types for t in ("visual_page", "visual", "table_match")):
+        if any(t in types for t in ("visual_page", "visual", "visual_region", "table_match", "region_match")):
             return True
         if "[Visual page content" in (c.get("text") or ""):
             return True
     return False
 
 
-def _passthrough_visual_content(chunks: list, question: str) -> str | None:
+def _passthrough_visual_content(
+    chunks: list, question: str, retrieved: Optional[dict] = None
+) -> str | None:
     """
     For table/chart/diagram questions, return stored vision text directly when present
     so the answer is not shortened or rewritten by the chat model.
     """
+    if retrieved and retrieved.get("mode") in (
+        "unified_visual", "caption_figure", "visual_scene",
+        "page_visual_list", "page_lookup",
+    ):
+        return None
+
     q = question.lower()
     if not any(
         w in q
@@ -178,10 +265,27 @@ def _passthrough_visual_content(chunks: list, question: str) -> str | None:
     ):
         return None
 
+    caption = _is_figure_caption_query(question)
+    anchors: list[str] = []
+    if caption:
+        cap_text = re.sub(
+            r"\s*(?:search|find|show|locate)\s+(?:for\s+)?(?:that\s+)?"
+            r"(?:figure|fig\.?|table|image).*",
+            "",
+            question,
+            flags=re.I,
+        ).lower()
+        for phrase in ("guatemala", "respiratory", "windhoek", "namibia"):
+            if phrase in cap_text:
+                anchors.append(phrase)
+
     for c in chunks:
         text = c.get("text") or ""
         marker = "[Visual page content"
         if marker not in text:
+            continue
+        blob = ((c.get("visual_content") or "") + text).lower()
+        if anchors and not any(a in blob for a in anchors):
             continue
         idx = text.index(marker)
         body = text[idx:]
@@ -236,11 +340,17 @@ def generate_node(state: ESGState):
     if listing is not None:
         return {"answer": listing, "low_confidence": False}
 
-    page_answer = _format_page_lookup_answer(retrieved, chunks)
-    if page_answer is not None:
-        return {"answer": page_answer, "low_confidence": False}
+    visual_list = _format_page_visual_list_answer(retrieved, chunks)
+    if visual_list is not None:
+        return {"answer": visual_list, "low_confidence": False}
 
-    visual_answer = _passthrough_visual_content(chunks, state["question"])
+    visual_answer = _format_unified_visual_answer(retrieved, chunks)
+    if visual_answer is not None:
+        return {"answer": visual_answer, "low_confidence": False}
+
+    visual_answer = _passthrough_visual_content(
+        chunks, state["question"], retrieved=retrieved
+    )
     if visual_answer is not None:
         return {"answer": visual_answer, "low_confidence": False}
 

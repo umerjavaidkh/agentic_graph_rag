@@ -24,6 +24,7 @@ from ..config.settings import (
     STORE_INGESTION_ARTIFACTS,
 )
 from ..assets.page_images import save_document_page_images
+from ..assets.region_images import save_region_images
 from ..document.page_vision import PageVisionEnricher
 from ..document.parser import DoclingParser
 from ..models import NodeType
@@ -160,10 +161,17 @@ class IngestionManager:
         )
         if job.input_path.suffix.lower() == ".pdf":
             try:
+                region_count = save_region_images(
+                    job.input_path, book_id, nodes
+                )
+                self._log(job, f"Stored {region_count} region crop(s) (TABLE/FIGURE)")
+            except Exception as exc:
+                self._log(job, f"Region image storage skipped: {exc}")
+            try:
                 img_count = save_document_page_images(
                     job.input_path, book_id, nodes
                 )
-                self._log(job, f"Stored {img_count} page image(s) (JPEG)")
+                self._log(job, f"Stored {img_count} full-page image(s) (JPEG fallback)")
             except Exception as exc:
                 self._log(job, f"Page image storage skipped: {exc}")
 

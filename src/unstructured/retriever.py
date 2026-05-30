@@ -22,9 +22,18 @@ from ..config.settings import (
     RETRIEVAL_MIN_RERANK_SCORE,
 )
 from ..assets.page_images import resolve_image_url
-from ..document.page_numbers import parse_page_number_from_query
+from ..document.page_numbers import (
+    is_valid_document_page_label,
+    parse_page_number_from_query,
+)
+from ..document.page_vision import compact_visual_content
 from ..document.patterns import TABLE_REF_PATTERN
 from ..model_providers.factory import get_model_provider
+from .visual_retrieval import (
+    display_text_for_chunk,
+    parse_visual_intent,
+    score_visual_candidate,
+)
 
 load_dotenv()
 provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
@@ -37,6 +46,14 @@ STOPWORDS = {
     "their", "they", "we", "our", "us", "me", "my", "i", "about", "any",
     "all", "how", "when", "where", "which", "who", "why", "please",
 }
+
+# region_tags is stored as a Neo4j list — match tags with ANY(), not toString(list)
+def _cypher_needle_match(var: str = "n") -> str:
+    return f"""(
+                toLower(coalesce({var}.title, '') + ' ' + coalesce({var}.text, '')
+                  + ' ' + coalesce({var}.visual_content, '')) CONTAINS needle
+                OR ANY(tag IN coalesce({var}.region_tags, []) WHERE toLower(tag) CONTAINS needle)
+            )"""
 
 
 class ESGComplianceRetriever:
@@ -79,16 +96,13 @@ class ESGComplianceRetriever:
         if self._asks_for_subsections(query):
             return self._subsection_tree_retrieve(query, limit=limit, user_context=ctx)
 
-        pdf_page, doc_page = parse_page_number_from_query(query)
-        if pdf_page is not None or doc_page is not None:
-            page_result = self.page_lookup_retrieve(
-                query,
-                pdf_page=pdf_page,
-                document_page=doc_page,
-                user_context=ctx,
+        intent = parse_visual_intent(query, self._extract_search_terms)
+        if self._should_use_unified_visual(intent, query):
+            visual_result = self.unified_visual_retrieve(
+                query, limit=max(limit, 5), user_context=ctx, intent=intent
             )
-            if page_result.get("chunks"):
-                return page_result
+            if visual_result.get("chunks"):
+                return visual_result
 
         if self._is_visual_element_query(query):
             with self.driver.session() as session:
@@ -319,6 +333,308 @@ class ESGComplianceRetriever:
     def close(self) -> None:
         self.driver.close()
 
+    def _should_use_unified_visual(self, intent, query: str) -> bool:
+        """Only when the user asked for a page #, figure/image, or visual scene — not long text Q&A."""
+        if intent.pdf_page is not None or intent.document_page:
+            return True
+        if intent.list_all:
+            return True
+        if self._is_figure_caption_query(query):
+            return True
+        if self._is_visual_scene_query(query):
+            return True
+        return False
+
+    def unified_visual_retrieve(
+        self,
+        query: str,
+        limit: int = 5,
+        user_context: Optional[UserContext] = None,
+        intent=None,
+    ) -> Dict:
+        """
+        Single path: page #, caption, scene, list-all figures.
+        Scores Pages/Regions by vision text (photo) > printed text (caption).
+        """
+        ctx = user_context or self.user_context
+        denied = self._access_denied_response(query, ctx)
+        if denied:
+            return denied
+
+        intent = intent or parse_visual_intent(query, self._extract_search_terms)
+        needles = list(dict.fromkeys(intent.terms + intent.phrases))[:14]
+        if not needles and intent.pdf_page is None:
+            return self._format_response(
+                query, [], user_context=ctx, meta={"mode": "unified_visual", "found": False}
+            )
+
+        with self.driver.session() as session:
+            page_row = self._resolve_page_row(session, intent)
+            candidates: dict[str, dict] = {}
+
+            if page_row:
+                candidates[page_row["id"]] = {**page_row, "node_label": "Page"}
+                for reg in self._fetch_regions_for_page(session, page_row["id"]):
+                    reg["node_label"] = "Region"
+                    candidates[reg["id"]] = reg
+
+            if needles:
+                needle_match = _cypher_needle_match("n")
+                result = session.run(
+                    f"""
+                    MATCH (n)
+                    WHERE (n:Page OR n:Region)
+                      AND ANY(needle IN $needles WHERE {needle_match})
+                    RETURN n.id AS id, labels(n)[0] AS node_label,
+                           coalesce(n.title, '') AS title, n.text AS text,
+                           n.visual_content AS visual_content,
+                           n.image_key AS image_key, n.region_kind AS region_kind,
+                           n.region_tags AS region_tags, n.pdf_page AS pdf_page,
+                           n.document_page AS document_page,
+                           coalesce(n.order, 0) AS doc_order
+                    LIMIT 50
+                    """,
+                    needles=needles,
+                )
+                for row in result:
+                    d = row.data()
+                    candidates.setdefault(d["id"], d)
+
+            if intent.wants_image:
+                result = session.run(
+                    """
+                    MATCH (r:Region)
+                    WHERE r.image_key IS NOT NULL
+                    OPTIONAL MATCH (p:Page)
+                    WHERE p.pdf_page = r.pdf_page OR p.id = 'page_' + toString(r.pdf_page)
+                    RETURN r.id AS id, labels(r)[0] AS node_label,
+                           r.title AS title, r.text AS text,
+                           r.visual_content AS visual_content,
+                           r.image_key AS image_key, r.region_kind AS region_kind,
+                           r.region_tags AS region_tags, r.pdf_page AS pdf_page,
+                           r.document_page AS document_page, coalesce(r.order, 0) AS doc_order,
+                           p.visual_content AS page_visual, p.text AS page_text
+                    LIMIT 80
+                    """,
+                )
+                for row in result:
+                    d = row.data()
+                    if d.get("page_visual") and not d.get("visual_content"):
+                        d["visual_content"] = d["page_visual"]
+                    if d.get("page_text") and len((d.get("text") or "")) < 80:
+                        d["text"] = (d.get("text") or "") + " " + d["page_text"]
+                    candidates.setdefault(d["id"], d)
+
+            scored_rows: list[tuple[float, dict]] = []
+            for row in candidates.values():
+                label = row.get("node_label", "Page")
+                if intent.kind_filter and row.get("region_kind") != intent.kind_filter:
+                    if label == "Region":
+                        continue
+                s = score_visual_candidate(intent, row, node_label=label)
+                if s <= 0 and intent.pdf_page is None:
+                    continue
+                scored_rows.append((s, row))
+
+            scored_rows.sort(key=lambda x: (-x[0], x[1].get("doc_order", 0)))
+
+            if intent.list_all and page_row:
+                chunks = self._visual_list_chunks(
+                    session, page_row, intent, limit=max(limit, 10)
+                )
+                mode = "page_visual_list"
+            elif not scored_rows:
+                chunks = []
+                mode = "unified_visual"
+            else:
+                chunks = self._visual_best_chunks(
+                    session, scored_rows, intent, limit=limit
+                )
+                mode = "unified_visual"
+
+            ranked = self._rerank_visual_by_embedding(query, chunks, limit)
+            ranked = self._enrich_context_batch(session, ranked)
+
+        top = ranked[0] if ranked else {}
+        return self._format_response(
+            query,
+            ranked,
+            user_context=ctx,
+            meta={
+                "mode": mode,
+                "found": bool(ranked),
+                "pdf_page": top.get("pdf_page"),
+                "document_page": top.get("document_page"),
+                "phrases": intent.phrases[:5],
+            },
+        )
+
+    def _resolve_page_row(self, session, intent) -> Optional[dict]:
+        if intent.document_page:
+            row = session.run(
+                """
+                MATCH (p:Page)
+                WHERE p.document_page IS NOT NULL
+                  AND toLower(trim(p.document_page)) = toLower(trim($label))
+                RETURN p.id AS id, p.title AS title, p.text AS text,
+                       p.visual_content AS visual_content,
+                       p.pdf_page AS pdf_page, p.document_page AS document_page,
+                       p.page_tags AS page_tags, p.image_key AS image_key,
+                       p.order AS doc_order
+                LIMIT 1
+                """,
+                label=intent.document_page,
+            ).single()
+            if row:
+                return row.data()
+        if intent.pdf_page is not None:
+            row = session.run(
+                """
+                MATCH (p:Page)
+                WHERE p.pdf_page = $pdf OR (p.pdf_page IS NULL AND p.order = $pdf)
+                RETURN p.id AS id, p.title AS title, p.text AS text,
+                       p.visual_content AS visual_content,
+                       p.pdf_page AS pdf_page, p.document_page AS document_page,
+                       p.page_tags AS page_tags, p.image_key AS image_key,
+                       p.order AS doc_order
+                LIMIT 1
+                """,
+                pdf=intent.pdf_page,
+            ).single()
+            if row:
+                return row.data()
+        return None
+
+    def _visual_list_chunks(
+        self, session, page_row: dict, intent, limit: int
+    ) -> list[dict]:
+        regions = self._fetch_regions_for_page(session, page_row["id"])
+        if intent.kind_filter:
+            regions = self._filter_regions_by_kind(regions, intent.kind_filter)
+        chunks = []
+        for i, reg in enumerate(
+            sorted(regions, key=lambda r: r.get("doc_order", 0))[:limit]
+        ):
+            if intent.wants_image and not reg.get("image_key"):
+                continue
+            ch = self._page_chunk_with_region(page_row, reg)
+            ch["text"] = display_text_for_chunk(ch)
+            ch["match_types"] = ["unified_visual", "page_visual_list"]
+            ch["rerank_score"] = 1.0 - i * 0.02
+            chunks.append(self._attach_media_fields(ch))
+        return chunks
+
+    def _visual_best_chunks(
+        self,
+        session,
+        scored_rows: list[tuple[float, dict]],
+        intent,
+        limit: int,
+    ) -> list[dict]:
+        chunks: list[dict] = []
+        seen_images: set[str] = set()
+
+        for score, row in scored_rows:
+            if len(chunks) >= limit:
+                break
+            label = row.get("node_label", "Page")
+            if label == "Region" and row.get("image_key"):
+                key = row["image_key"]
+                if key in seen_images and intent.pdf_page is None:
+                    continue
+                seen_images.add(key)
+                page_data = self._page_data_for_region(session, row)
+                ch = self._page_chunk_with_region(page_data, row)
+            else:
+                ch = self._attach_media_fields(dict(row))
+                ch["image_source"] = "page"
+            ch["text"] = display_text_for_chunk(ch)
+            ch["_visual_score"] = score
+            ch["match_types"] = ["unified_visual"]
+            ch["rerank_score"] = float(score)
+            chunks.append(ch)
+
+        if not chunks and scored_rows:
+            _, row = scored_rows[0]
+            ch = self._attach_media_fields(dict(row))
+            ch["text"] = display_text_for_chunk(ch)
+            ch["match_types"] = ["unified_visual"]
+            chunks.append(ch)
+        return chunks
+
+    def _page_data_for_region(self, session, region: dict) -> dict:
+        rid = region["id"]
+        page_match = session.run(
+            """
+            MATCH (p:Page)-[:CONTAINS]->(r {id: $rid})
+            RETURN p.id AS id, p.title AS title, p.text AS text,
+                   p.visual_content AS visual_content,
+                   p.pdf_page AS pdf_page, p.document_page AS document_page,
+                   p.image_key AS image_key, p.order AS doc_order
+            LIMIT 1
+            """,
+            rid=rid,
+        ).single()
+        if page_match:
+            return page_match.data()
+        pdf_p = region.get("pdf_page") or region.get("doc_order")
+        return {
+            "id": f"page_{pdf_p}",
+            "title": f"Page {pdf_p}",
+            "pdf_page": pdf_p,
+            "text": region.get("page_text") or "",
+            "visual_content": region.get("page_visual") or region.get("visual_content"),
+        }
+
+    def _rerank_visual_by_embedding(
+        self, query: str, chunks: list[dict], limit: int
+    ) -> list[dict]:
+        if len(chunks) <= 1:
+            return chunks
+        try:
+            q_emb = self._get_embedding(query)
+        except Exception:
+            return chunks[:limit]
+        for ch in chunks:
+            blob = display_text_for_chunk(ch) or ch.get("title", "")
+            if len(blob) < 8:
+                ch["rerank_score"] = ch.get("rerank_score", 0)
+                continue
+            try:
+                c_emb = self._get_embedding(blob[:4000])
+                sim = self._cosine_similarity(q_emb, c_emb)
+            except Exception:
+                sim = 0.0
+            base = float(ch.get("_visual_score", ch.get("rerank_score", 0)))
+            ch["rerank_score"] = base * 0.35 + sim * 0.65
+        chunks.sort(key=lambda c: -c.get("rerank_score", 0))
+        return chunks[:limit]
+
+    def _is_visual_scene_query(self, query: str) -> bool:
+        q = query.lower()
+        pdf_p, doc_p = parse_page_number_from_query(query)
+        if pdf_p is not None or (doc_p and is_valid_document_page_label(doc_p)):
+            return False
+        scene_hints = (
+            "lady", "woman", "man", "person", "people", "holding", "phone",
+            "screenshot", "photo", "picture", "image where", "image of",
+            "showing", "illustration",
+        )
+        if not any(h in q for h in scene_hints):
+            return False
+        return bool(
+            re.search(r"\b(image|picture|photo|screenshot|page|pdf)\b", q)
+            or "holding" in q
+        )
+
+    def _wants_whole_page_image(self, query: str) -> bool:
+        q = query.lower()
+        return bool(
+            re.search(r"\b(whole|full|entire)\s+(pdf\s+)?page\b", q)
+            or re.search(r"\bpdf\s+page\s+data\b", q)
+            or re.search(r"\bpage\s+data\b", q)
+        )
+
     def page_lookup_retrieve(
         self,
         query: str,
@@ -326,90 +642,34 @@ class ESGComplianceRetriever:
         document_page: Optional[str] = None,
         user_context: Optional[UserContext] = None,
     ) -> Dict:
-        """
-        Fetch Page by PDF index and/or printed document_page label (text).
-        Printed label takes precedence when both are requested implicitly via 'page N'.
-        """
-        ctx = user_context or self.user_context
-        denied = self._access_denied_response(query, ctx)
-        if denied:
-            return denied
+        """Delegates to unified_visual_retrieve (page # + image + caption)."""
+        intent = parse_visual_intent(query, self._extract_search_terms)
+        if pdf_page is not None:
+            intent.pdf_page = pdf_page
+        if document_page:
+            intent.document_page = document_page
+        return self.unified_visual_retrieve(
+            query, limit=5, user_context=user_context, intent=intent
+        )
 
-        with self.driver.session() as session:
-            row = None
-            if document_page:
-                result = session.run(
-                    """
-                    MATCH (p:Page)
-                    WHERE p.document_page IS NOT NULL
-                      AND toLower(trim(p.document_page)) = toLower(trim($label))
-                    RETURN p.id AS id, p.title AS title, p.text AS text,
-                           p.visual_content AS visual_content,
-                           p.pdf_page AS pdf_page, p.document_page AS document_page,
-                           p.page_tags AS page_tags, p.image_key AS image_key,
-                           p.order AS doc_order, 1.0 AS score
-                    LIMIT 1
-                    """,
-                    label=document_page,
-                )
-                row = result.single()
+    def caption_figure_retrieve(
+        self,
+        query: str,
+        limit: int = 3,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
+        return self.unified_visual_retrieve(
+            query, limit=limit, user_context=user_context
+        )
 
-            if row is None and pdf_page is not None:
-                result = session.run(
-                    """
-                    MATCH (p:Page)
-                    WHERE p.pdf_page = $pdf OR (p.pdf_page IS NULL AND p.order = $pdf)
-                    RETURN p.id AS id, p.title AS title, p.text AS text,
-                           p.visual_content AS visual_content,
-                           p.pdf_page AS pdf_page, p.document_page AS document_page,
-                           p.page_tags AS page_tags, p.image_key AS image_key,
-                           p.order AS doc_order, 1.0 AS score
-                    LIMIT 1
-                    """,
-                    pdf=pdf_page,
-                )
-                row = result.single()
-
-            if row is None and document_page and document_page.isdigit():
-                result = session.run(
-                    """
-                    MATCH (p:Page)
-                    WHERE p.pdf_page = $pdf OR p.order = $pdf
-                    RETURN p.id AS id, p.title AS title, p.text AS text,
-                           p.visual_content AS visual_content,
-                           p.pdf_page AS pdf_page, p.document_page AS document_page,
-                           p.page_tags AS page_tags, p.image_key AS image_key,
-                           p.order AS doc_order, 0.8 AS score
-                    LIMIT 1
-                    """,
-                    pdf=int(document_page),
-                )
-                row = result.single()
-
-            if row is None:
-                return self._format_response(
-                    query, [], user_context=ctx, meta={"mode": "page_lookup", "found": False}
-                )
-
-            item = self._attach_media_fields(row.data())
-            item = self._with_display_text(item)
-            item["match_types"] = {"page_lookup"}
-            item["rerank_score"] = 1.0
-            ranked = self._enrich_context_batch(session, [item])
-
-        pdf_val = ranked[0].get("pdf_page") or ranked[0].get("doc_order")
-        doc_val = ranked[0].get("document_page")
-        return self._format_response(
-            query,
-            ranked,
-            user_context=ctx,
-            meta={
-                "mode": "page_lookup",
-                "found": True,
-                "pdf_page": pdf_val,
-                "document_page": doc_val,
-                "page_precedence": "document_page" if doc_val and str(doc_val) != str(pdf_val) else "pdf_page",
-            },
+    def visual_scene_retrieve(
+        self,
+        query: str,
+        limit: int = 3,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
+        return self.unified_visual_retrieve(
+            query, limit=limit, user_context=user_context
         )
 
     def _is_visual_element_query(self, query: str) -> bool:
@@ -428,7 +688,261 @@ class ESGComplianceRetriever:
             return True
         return False
 
+    def _asks_list_all_visuals(self, query: str) -> bool:
+        """List every table/figure/etc. on a page (not a single numbered one)."""
+        q = query.lower()
+        if not re.search(r"\b(all|every|each|list|show\s+all)\b", q):
+            return False
+        return bool(
+            re.search(
+                r"\b(figures?|figs?\.?|tables?|charts?|diagrams?|visuals?|images?)\b",
+                q,
+            )
+        )
+
+    def _visual_kind_filter(self, query: str) -> Optional[str]:
+        q = query.lower()
+        if re.search(r"\b(figures?|figs?\.?)\b", q):
+            return "figure"
+        if re.search(r"\btables?\b", q):
+            return "table"
+        if re.search(r"\b(charts?|graphs?)\b", q):
+            return "figure"
+        if re.search(r"\b(diagrams?|flowcharts?)\b", q):
+            return "figure"
+        return None
+
+    def _filter_regions_by_kind(
+        self, regions: list[dict], kind_filter: Optional[str]
+    ) -> list[dict]:
+        if not kind_filter:
+            return regions
+        filtered = [
+            r for r in regions
+            if (r.get("region_kind") or "").lower() == kind_filter
+        ]
+        if filtered:
+            return filtered
+        return [
+            r for r in regions
+            if kind_filter in self._region_search_blob(r)
+        ]
+
+    def _region_to_list_chunk(self, page_data: dict, region: dict, index: int) -> dict:
+        chunk = {
+            "id": region.get("id") or f"{page_data['id']}_r{index}",
+            "title": region.get("title") or f"Region {index}",
+            "text": (region.get("text") or region.get("title") or "")[:800],
+            "pdf_page": region.get("pdf_page") or page_data.get("pdf_page"),
+            "document_page": region.get("document_page") or page_data.get("document_page"),
+            "region_kind": region.get("region_kind"),
+            "region_tags": region.get("region_tags"),
+            "image_key": region.get("image_key"),
+            "visual_content": None,
+            "doc_order": region.get("doc_order", index),
+            "score": 1.0 - index * 0.01,
+            "rerank_score": 1.0 - index * 0.01,
+            "match_types": ["page_visual_list"],
+            "image_source": "region" if region.get("image_key") else None,
+        }
+        return self._attach_media_fields(chunk)
+
+    def _figures_from_visual_content(self, page_data: dict) -> list[dict]:
+        """Fallback when Region nodes are missing: parse Figure N lines from vision text."""
+        visual = compact_visual_content((page_data.get("visual_content") or "").strip())
+        if not visual:
+            return []
+
+        entries: list[dict] = []
+        for m in re.finditer(
+            r"(?:^|\n)\s*(?:[-*]\s*)?(Figure\s+(\d+(?:\.\d+)?)[^\n]*)",
+            visual,
+            re.IGNORECASE,
+        ):
+            line = m.group(1).strip()
+            num = m.group(2)
+            entries.append({
+                "id": f"{page_data['id']}_vision_fig_{num}",
+                "title": f"Figure {num}",
+                "text": line,
+                "region_kind": "figure",
+                "region_tags": [f"figure:{num}", f"pdf:{page_data.get('pdf_page')}"],
+                "image_key": page_data.get("image_key"),
+                "pdf_page": page_data.get("pdf_page"),
+                "document_page": page_data.get("document_page"),
+                "doc_order": int(float(num)) if num.replace(".", "", 1).isdigit() else len(entries) + 1,
+            })
+        return entries
+
+    def _build_visual_list_chunks(
+        self,
+        session,
+        page_data: dict,
+        regions: list[dict],
+        kind_filter: Optional[str],
+    ) -> list[dict]:
+        filtered = self._filter_regions_by_kind(regions, kind_filter)
+        if not filtered and kind_filter == "figure":
+            filtered = self._figures_from_visual_content(page_data)
+
+        chunks = [
+            self._region_to_list_chunk(page_data, r, i)
+            for i, r in enumerate(
+                sorted(filtered, key=lambda x: x.get("doc_order", 0))
+            )
+        ]
+        if not chunks:
+            return []
+        return self._enrich_context_batch(session, chunks)
+
+    def _is_specific_visual_request(self, query: str) -> bool:
+        """User asked for a particular table/figure/chart, not just 'page N'."""
+        if self._asks_list_all_visuals(query):
+            return False
+        if re.search(r"\b(figure|fig\.?|table)\s+\d", query, re.I):
+            return True
+        if self._is_visual_element_query(query):
+            return True
+        return bool(
+            re.search(
+                r"\b(image|picture|photo|screenshot|scan|show|display|see)\b",
+                query,
+                re.I,
+            )
+            and re.search(
+                r"\b(table|figure|fig|chart|diagram|graph|map|picture|image)\s+[a-z0-9]",
+                query,
+                re.I,
+            )
+        )
+
+    def _fetch_regions_for_page(self, session, page_id: str) -> list[dict]:
+        result = session.run(
+            """
+            MATCH (p:Page {id: $pid})-[:CONTAINS]->(r:Region)
+            RETURN r.id AS id, r.title AS title, r.text AS text,
+                   r.region_kind AS region_kind, r.region_tags AS region_tags,
+                   r.image_key AS image_key, r.pdf_page AS pdf_page,
+                   r.document_page AS document_page, r.order AS doc_order,
+                   coalesce(r.order, 0) AS score
+            ORDER BY r.order ASC
+            """,
+            pid=page_id,
+        )
+        rows = [r.data() for r in result]
+        for row in rows:
+            self._attach_media_fields(row)
+        return rows
+
+    def _first_region_with_image(self, regions: list[dict]) -> Optional[dict]:
+        for row in sorted(regions, key=lambda r: r.get("doc_order", 0)):
+            if row.get("image_key"):
+                return row
+        return None
+
+    def _region_search_blob(self, region: dict) -> str:
+        tags = region.get("region_tags") or []
+        tag_text = " ".join(tags) if isinstance(tags, list) else str(tags)
+        return " ".join([
+            region.get("title") or "",
+            region.get("text") or "",
+            region.get("region_kind") or "",
+            tag_text,
+        ]).lower()
+
+    def _visual_needles_from_query(
+        self, query: str, visual_content: Optional[str] = None
+    ) -> list[str]:
+        needles: list[str] = []
+        needles.extend(self._table_needles_from_query(query))
+        for term in self._extract_search_terms(query):
+            if len(term) > 2:
+                needles.append(term.lower())
+
+        q = query.lower()
+        for pat in (
+            (r"\bfigure\s+(\d+(?:\.\d+)?)\b", "figure"),
+            (r"\bfig\.?\s+(\d+(?:\.\d+)?)\b", "figure"),
+            (r"\bchart\s+(\d+(?:\.\d+)?)\b", "chart"),
+            (r"\bdiagram\s+(\d+(?:\.\d+)?)\b", "diagram"),
+        ):
+            for m in re.finditer(pat[0], q):
+                needles.append(m.group(0).strip())
+                if pat[1] == "figure":
+                    needles.append(f"figure:{m.group(1).lower()}")
+
+        if visual_content:
+            vc = visual_content.lower()
+            for ref in TABLE_REF_PATTERN.findall(vc):
+                needles.append(f"table {ref.lower()}")
+                needles.append(f"table:{ref.lower()}")
+            for m in re.finditer(r"\bfigure\s+(\d+(?:\.\d+)?)\b", vc):
+                needles.append(m.group(0).strip())
+                needles.append(f"figure:{m.group(1).lower()}")
+
+        return list(dict.fromkeys(n for n in needles if n))[:12]
+
+    def _match_regions_to_query(
+        self,
+        query: str,
+        regions: list[dict],
+        visual_content: Optional[str] = None,
+    ) -> list[dict]:
+        needles = self._visual_needles_from_query(query, visual_content)
+        if not needles:
+            return []
+
+        scored: list[tuple[int, dict]] = []
+        for region in regions:
+            blob = self._region_search_blob(region)
+            tags = region.get("region_tags") or []
+            tag_blob = " ".join(tags).lower() if isinstance(tags, list) else str(tags).lower()
+            hits = 0
+            for needle in needles:
+                if needle in blob or needle in tag_blob:
+                    hits += 3 if needle.startswith("table:") or needle.startswith("figure:") else 1
+            if hits:
+                scored.append((hits, region))
+
+        scored.sort(key=lambda x: (-x[0], x[1].get("doc_order", 0)))
+        return [r for _, r in scored]
+
+    def _page_chunk_with_region(self, page: dict, region: dict) -> dict:
+        item = dict(page)
+        item["title"] = region.get("title") or item.get("title")
+        if region.get("image_key"):
+            item["image_key"] = region["image_key"]
+            item["image_source"] = "region"
+        else:
+            item["image_source"] = "page"
+        item["region_kind"] = region.get("region_kind")
+        item["region_tags"] = region.get("region_tags")
+        item["matched_region_id"] = region.get("id")
+        item["text"] = display_text_for_chunk(item)
+        return self._attach_media_fields(item)
+
+    def _caption_phrase_from_query(self, query: str) -> Optional[str]:
+        """Long figure/table caption text before trailing 'search for figure…'."""
+        q = re.sub(
+            r"\s*(?:search|find|show|locate)\s+(?:for\s+)?(?:that\s+)?"
+            r"(?:figure|fig\.?|table|image).*",
+            "",
+            query,
+            flags=re.I,
+        ).strip()
+        if len(q) >= 30:
+            return q.lower()[:200]
+        return None
+
+    def _is_figure_caption_query(self, query: str) -> bool:
+        if not self._caption_phrase_from_query(query):
+            return False
+        return bool(re.search(r"\b(figure|fig\.?|image|photo|picture)\b", query, re.I))
+
     def _table_needles_from_query(self, query: str) -> list[str]:
+        caption = self._caption_phrase_from_query(query)
+        if caption:
+            return [caption]
         needles = [f"table {ref}".lower() for ref in TABLE_REF_PATTERN.findall(query)]
         if needles:
             return needles
@@ -453,7 +967,7 @@ class ESGComplianceRetriever:
             t for t in self._extract_search_terms(query)
             if len(t) > 4 and t not in needles
         ]
-        needles = needles + extra[:4]
+        needles = list(dict.fromkeys(needles + extra[:6]))
 
         with self.driver.session() as session:
             rows = self._table_reference_search(session, needles, limit=max(limit, 5))
@@ -476,23 +990,24 @@ class ESGComplianceRetriever:
     ) -> list:
         if not needles:
             return []
+        needle_match = _cypher_needle_match("n")
         result = session.run(
-            """
+            f"""
             MATCH (n)
-            WHERE (n:Section OR n:Page)
-              AND ANY(needle IN $needles WHERE
-                  toLower(coalesce(n.title, '') + ' ' + coalesce(n.text, '')
-                    + ' ' + coalesce(n.visual_content, '')) CONTAINS needle)
+            WHERE (n:Section OR n:Page OR n:Region)
+              AND ANY(needle IN $needles WHERE {needle_match})
             WITH n,
-                 [needle IN $needles WHERE
-                  toLower(coalesce(n.title, '') + ' ' + coalesce(n.text, '')
-                    + ' ' + coalesce(n.visual_content, '')) CONTAINS needle
-                 ] AS hits
+                 [needle IN $needles WHERE {needle_match}] AS hits
             WHERE size(hits) > 0
             RETURN n.id AS id,
                    coalesce(n.title, head(labels(n))) AS title,
                    n.text AS text,
                    n.visual_content AS visual_content,
+                   n.image_key AS image_key,
+                   n.region_kind AS region_kind,
+                   n.region_tags AS region_tags,
+                   n.pdf_page AS pdf_page,
+                   n.document_page AS document_page,
                    n.cluster_id AS cluster,
                    coalesce(n.order, 0) AS doc_order,
                    (size(hits) * 3) AS score
@@ -502,7 +1017,10 @@ class ESGComplianceRetriever:
             needles=needles,
             limit=limit,
         )
-        return [self._with_display_text(r.data()) for r in result]
+        return [
+            self._attach_media_fields(self._with_display_text(r.data()))
+            for r in result
+        ]
 
     def _visual_page_search(
         self, session, terms: list[str], query: str, limit: int
@@ -513,6 +1031,36 @@ class ESGComplianceRetriever:
         needles = list(dict.fromkeys(n for n in needles if n))[:10]
         if not needles:
             return []
+
+        region_match = _cypher_needle_match("r")
+        result = session.run(
+            f"""
+            MATCH (r:Region)
+            WHERE r.image_key IS NOT NULL
+              AND ANY(needle IN $needles WHERE {region_match})
+            WITH r,
+                 [needle IN $needles WHERE {region_match}] AS hits
+            WHERE size(hits) > 0
+            RETURN r.id AS id,
+                   r.title AS title,
+                   r.text AS text,
+                   r.region_kind AS region_kind,
+                   r.region_tags AS region_tags,
+                   r.image_key AS image_key,
+                   r.pdf_page AS pdf_page,
+                   r.document_page AS document_page,
+                   null AS cluster,
+                   coalesce(r.order, 0) AS doc_order,
+                   (size(hits) * 5) AS score
+            ORDER BY score DESC
+            LIMIT $limit
+            """,
+            needles=needles,
+            limit=limit,
+        )
+        region_rows = [self._attach_media_fields(self._with_display_text(r.data())) for r in result]
+        for row in region_rows:
+            row["match_type"] = "visual_region"
 
         result = session.run(
             """
@@ -528,6 +1076,9 @@ class ESGComplianceRetriever:
                    p.title AS title,
                    p.text AS text,
                    p.visual_content AS visual_content,
+                   p.image_key AS image_key,
+                   p.pdf_page AS pdf_page,
+                   p.document_page AS document_page,
                    p.cluster_id AS cluster,
                    coalesce(p.order, 0) AS doc_order,
                    (size(hits) * 4) AS score
@@ -537,10 +1088,15 @@ class ESGComplianceRetriever:
             needles=needles,
             limit=limit,
         )
-        rows = [self._with_display_text(r.data()) for r in result]
-        for row in rows:
+        page_rows = [self._with_display_text(r.data()) for r in result]
+        for row in page_rows:
             row["match_type"] = "visual_page"
-        return rows
+            self._attach_media_fields(row)
+
+        merged: dict[str, dict] = {}
+        for row in region_rows + page_rows:
+            merged[row["id"]] = row
+        return list(merged.values())
 
     def _attach_media_fields(self, row: dict) -> dict:
         key = row.get("image_key")
@@ -550,7 +1106,7 @@ class ESGComplianceRetriever:
 
     def _with_display_text(self, row: dict) -> dict:
         """Merge visual_content into chunk text shown to the LLM."""
-        visual = (row.get("visual_content") or "").strip()
+        visual = compact_visual_content((row.get("visual_content") or "").strip())
         body = (row.get("text") or "").strip()
         if visual:
             page_no = row.get("doc_order", "")
@@ -1009,6 +1565,10 @@ class ESGComplianceRetriever:
                     "image_key": r.get("image_key"),
                     "image_url": r.get("image_url")
                     or resolve_image_url(r.get("image_key")),
+                    "region_kind": r.get("region_kind"),
+                    "region_tags": r.get("region_tags"),
+                    "image_source": r.get("image_source"),
+                    "matched_region_id": r.get("matched_region_id"),
                 }
                 for r in items
             ],

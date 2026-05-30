@@ -25,9 +25,11 @@ from .patterns import (
     parse_numbered_title,
     slug,
 )
+from ..assets.region_images import build_region_tags, region_title
 
 CHAPTER_LABELS = {DocItemLabel.TITLE}
 SECTION_LABELS = {DocItemLabel.SECTION_HEADER}
+REGION_LABELS = {DocItemLabel.TABLE, DocItemLabel.PICTURE}
 TEXT_LABELS = {
     DocItemLabel.TEXT,
     DocItemLabel.LIST_ITEM,
@@ -265,11 +267,21 @@ class DoclingParser:
 
         finalize_section()
 
+        max_pdf_page = self._max_page(doc)
+        all_page_numbers = set(range(1, max_pdf_page + 1)) | set(page_buckets.keys())
         page_nodes = self._build_page_nodes(
-            page_buckets, edges, chapter_nodes, section_nodes, book_id
+            page_buckets,
+            edges,
+            chapter_nodes,
+            section_nodes,
+            book_id,
+            all_page_numbers=all_page_numbers,
         )
         enrich_page_nodes(page_nodes, section_nodes)
         nodes.extend(page_nodes)
+
+        region_nodes = self._build_region_nodes(doc, page_nodes, edges)
+        nodes.extend(region_nodes)
 
         self._add_sequential_edges(chapter_nodes, edges)
         self._add_sequential_edges(section_nodes, edges)
@@ -279,9 +291,86 @@ class DoclingParser:
 
         print(
             f"   📐 Structure: {len(chapter_nodes)} chapters, "
-            f"{len(section_nodes)} sections (nested CONTAINS), {len(page_nodes)} pages"
+            f"{len(section_nodes)} sections (nested CONTAINS), {len(page_nodes)} pages, "
+            f"{len(region_nodes)} regions"
         )
         return nodes, edges
+
+    def _build_region_nodes(
+        self,
+        doc: DoclingDocument,
+        page_nodes: list[DKGNode],
+        edges: list[DKGEdge],
+    ) -> list[DKGNode]:
+        """TABLE / PICTURE items with Docling bboxes → Region nodes linked to Page."""
+        page_by_pdf: dict[int, DKGNode] = {}
+        for pn in page_nodes:
+            key = pn.pdf_page or pn.order
+            page_by_pdf[key] = pn
+
+        region_nodes: list[DKGNode] = []
+        index_by_page: dict[int, int] = {}
+
+        for item, _level in doc.iterate_items():
+            label = getattr(item, "label", None)
+            if label not in REGION_LABELS:
+                continue
+            if not getattr(item, "prov", None):
+                continue
+
+            prov = item.prov[0]
+            try:
+                page_no = int(prov.page_no)
+            except Exception:
+                continue
+            if not getattr(prov, "bbox", None):
+                continue
+
+            page = doc.pages.get(page_no)
+            if page is None or page.size is None:
+                continue
+
+            page_h = float(page.size.height)
+            page_w = float(page.size.width)
+            bbox_tl = prov.bbox.to_top_left_origin(page_h)
+            bbox_tuple = bbox_tl.as_tuple()
+            if not bbox_tuple:
+                continue
+
+            index_by_page[page_no] = index_by_page.get(page_no, 0) + 1
+            idx = index_by_page[page_no]
+            kind = "table" if label == DocItemLabel.TABLE else "figure"
+            text = self._item_text(doc, item)
+
+            page_node = page_by_pdf.get(page_no)
+            doc_page = page_node.document_page if page_node else None
+            tags = build_region_tags(kind, text, page_no, idx, doc_page)
+            title = region_title(kind, text, page_no, idx)
+            node_id = f"region_{page_no}_{idx}"
+
+            node = DKGNode(
+                id=node_id,
+                type=NodeType.REGION,
+                title=title,
+                text=text or title,
+                order=idx,
+                page_start=page_no,
+                page_end=page_no,
+                pdf_page=page_no,
+                document_page=doc_page,
+                depth=100,
+                region_kind=kind,
+                region_tags=tags,
+                bbox=list(bbox_tuple),
+                bbox_page_size=[page_w, page_h],
+            )
+            region_nodes.append(node)
+
+            page_id = page_node.id if page_node else f"page_{page_no}"
+            edges.append(DKGEdge(page_id, node_id, RelType.CONTAINS, axis=1))
+            edges.append(DKGEdge(node_id, page_id, RelType.PART_OF, axis=1))
+
+        return region_nodes
 
     def _extract_raw_items(self, doc: DoclingDocument) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -388,16 +477,18 @@ class DoclingParser:
         chapter_nodes: list[DKGNode],
         section_nodes: list[DKGNode],
         book_id: str,
+        all_page_numbers: set[int] | None = None,
     ) -> list[DKGNode]:
         page_nodes: list[DKGNode] = []
-        for page_no in sorted(page_buckets.keys()):
-            texts = page_buckets[page_no]
+        page_nos = sorted(set(page_buckets.keys()) | (all_page_numbers or set()))
+        for page_no in page_nos:
+            texts = page_buckets.get(page_no, [])
             node_id = f"page_{page_no}"
             node = DKGNode(
                 id=node_id,
                 type=NodeType.PAGE,
                 title=f"Page {page_no}",
-                text="\n".join(texts),
+                text="\n".join(texts) if texts else "",
                 order=page_no,
                 page_start=page_no,
                 page_end=page_no,

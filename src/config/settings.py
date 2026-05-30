@@ -59,6 +59,8 @@ ENABLE_PAGE_IMAGES = os.environ.get("ENABLE_PAGE_IMAGES", "true").lower() in ("1
 PAGE_IMAGE_JPEG_QUALITY = int(os.environ.get("PAGE_IMAGE_JPEG_QUALITY", "60"))
 PAGE_IMAGE_MAX_PAGES = int(os.environ.get("PAGE_IMAGE_MAX_PAGES", "0"))  # 0 = no cap
 PAGE_IMAGE_SELECTIVE = os.environ.get("PAGE_IMAGE_SELECTIVE", "true").lower() in ("1", "true", "yes")
+PAGE_IMAGE_SKIP_WHEN_REGIONS = os.environ.get("PAGE_IMAGE_SKIP_WHEN_REGIONS", "true").lower() in ("1", "true", "yes")
+ENABLE_REGION_IMAGES = os.environ.get("ENABLE_REGION_IMAGES", "true").lower() in ("1", "true", "yes")
 
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
 MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")

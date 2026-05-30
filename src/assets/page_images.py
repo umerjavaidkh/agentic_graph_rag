@@ -13,16 +13,13 @@ from ..config.settings import (
     PAGE_IMAGE_JPEG_QUALITY,
     PAGE_IMAGE_MAX_PAGES,
     PAGE_IMAGE_SELECTIVE,
+    PAGE_IMAGE_SKIP_WHEN_REGIONS,
     VISION_MIN_TEXT_CHARS,
 )
 from ..document.page_vision import VISUAL_PAGE_HINTS
 from ..models import DKGNode, NodeType
 from .factory import get_asset_store
-
-
-def page_image_key(book_id: str, pdf_page: int) -> str:
-    safe_book = book_id.replace("/", "_")
-    return f"{safe_book}/pages/{pdf_page}.jpg"
+from .image_keys import page_full_image_key
 
 
 def _select_pages_for_images(
@@ -78,6 +75,7 @@ def save_document_page_images(
         if n.type in (NodeType.SECTION, NodeType.SECTION.value)
     ]
     targets = _select_pages_for_images(page_nodes, section_nodes)
+    # Always keep full-page JPEGs (even when region crops exist) for whole-page queries.
     if PAGE_IMAGE_MAX_PAGES > 0:
         targets = targets[:PAGE_IMAGE_MAX_PAGES]
 
@@ -89,7 +87,7 @@ def save_document_page_images(
             pdf_page = pn.pdf_page or pn.page_start or pn.order
             if pdf_page < 1 or pdf_page > len(doc):
                 continue
-            key = page_image_key(book_id, pdf_page)
+            key = page_full_image_key(book_id, pdf_page)
             data = _render_page_jpeg(doc[pdf_page - 1], PAGE_IMAGE_JPEG_QUALITY)
             store.put(key, data)
             pn.image_key = key

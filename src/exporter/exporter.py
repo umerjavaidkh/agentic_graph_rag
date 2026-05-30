@@ -81,10 +81,12 @@ class Neo4jExporter:
         """Idempotently create full-text + vector indexes on every ingestion."""
         statements = [
             "CREATE FULLTEXT INDEX node_text_index IF NOT EXISTS "
-            "FOR (n:Book|Chapter|Section|Page|Concept) "
+            "FOR (n:Book|Chapter|Section|Page|Region|Concept) "
             "ON EACH [n.title, n.text, n.visual_content]",
             "CREATE FULLTEXT INDEX page_visual_index IF NOT EXISTS "
             "FOR (n:Page) ON EACH [n.visual_content, n.title, n.text, n.document_page]",
+            "CREATE FULLTEXT INDEX region_tag_index IF NOT EXISTS "
+            "FOR (n:Region) ON EACH [n.title, n.text, n.region_tags, n.region_kind]",
             "CREATE FULLTEXT INDEX page_number_index IF NOT EXISTS "
             "FOR (n:Page) ON EACH [n.document_page, n.page_tags, n.title]",
             "CREATE INDEX section_order IF NOT EXISTS FOR (n:Section) ON (n.order)",
@@ -125,7 +127,8 @@ class Neo4jExporter:
             " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
             " n.embedding = $embedding, n.visual_content = $visual_content,"
             " n.pdf_page = $pdf_page, n.document_page = $document_page,"
-            " n.page_tags = $page_tags, n.image_key = $image_key",
+            " n.page_tags = $page_tags, n.image_key = $image_key,"
+            " n.region_kind = $region_kind, n.region_tags = $region_tags",
             id=node.id,
             title=node.title,
             text=node.text,
@@ -141,6 +144,8 @@ class Neo4jExporter:
             document_page=node.document_page,
             page_tags=node.page_tags or [],
             image_key=node.image_key,
+            region_kind=node.region_kind,
+            region_tags=node.region_tags or [],
         )
 
     def _merge_edge(self, session, edge: DKGEdge) -> None:

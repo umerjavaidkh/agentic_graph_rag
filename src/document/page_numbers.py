@@ -171,6 +171,10 @@ def parse_page_number_from_query(query: str) -> tuple[Optional[int], Optional[st
     if pdf_m2:
         return int(pdf_m2.group(1)), None
 
+    pdf_m3 = re.search(r"\(\s*pdf\s+page\s+(\d+)\s*\)", q, re.I)
+    if pdf_m3:
+        return int(pdf_m3.group(1)), None
+
     page_m = re.search(
         r"\b(?:page|p\.?|pg\.?)\s+([a-zA-Z0-9ivxlcdm\-]+)\b",
         query,
@@ -178,8 +182,29 @@ def parse_page_number_from_query(query: str) -> tuple[Optional[int], Optional[st
     )
     if page_m:
         label = page_m.group(1).strip()
+        if not is_valid_document_page_label(label):
+            return None, None
         if label.isdigit():
             return None, label
         return None, label
 
     return None, None
+
+
+# Words that follow "page X" but are not printed page labels (e.g. "pdf page data")
+_PAGE_LABEL_STOPWORDS = frozenset({
+    "data", "content", "text", "image", "info", "information", "details",
+    "number", "num", "index", "sheet", "pdf", "form", "whole", "fetch",
+    "from", "where", "with", "that", "this", "about", "showing", "shows",
+})
+
+
+def is_valid_document_page_label(label: Optional[str]) -> bool:
+    if not label or not str(label).strip():
+        return False
+    low = str(label).strip().lower()
+    if low in _PAGE_LABEL_STOPWORDS:
+        return False
+    if len(low) > 12:
+        return False
+    return True
