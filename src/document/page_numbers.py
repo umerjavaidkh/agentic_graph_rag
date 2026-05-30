@@ -175,6 +175,15 @@ def parse_page_number_from_query(query: str) -> tuple[Optional[int], Optional[st
     if pdf_m3:
         return int(pdf_m3.group(1)), None
 
+    # "page 32 of pdf" / "page 32 in the pdf" → PDF file index, not printed page label
+    page_of_pdf = re.search(
+        r"\bpage\s+(\d+)\s+(?:of|in|from)\s+(?:the\s+)?pdf\b",
+        q,
+        re.I,
+    )
+    if page_of_pdf:
+        return int(page_of_pdf.group(1)), None
+
     page_m = re.search(
         r"\b(?:page|p\.?|pg\.?)\s+([a-zA-Z0-9ivxlcdm\-]+)\b",
         query,
@@ -185,6 +194,9 @@ def parse_page_number_from_query(query: str) -> tuple[Optional[int], Optional[st
         if not is_valid_document_page_label(label):
             return None, None
         if label.isdigit():
+            # "page 32 ... pdf" anywhere → treat as PDF page 32 (common phrasing)
+            if re.search(r"\bpdf\b", q):
+                return int(label), None
             return None, label
         return None, label
 

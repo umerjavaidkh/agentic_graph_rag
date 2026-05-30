@@ -172,7 +172,11 @@ class PageVisionEnricher:
             n for n in nodes
             if n.type in (NodeType.SECTION, NodeType.SECTION.value)
         ]
-        targets = self._select_pages(page_nodes, section_nodes)
+        region_nodes = [
+            n for n in nodes
+            if n.type in (NodeType.REGION, NodeType.REGION.value)
+        ]
+        targets = self._select_pages(page_nodes, section_nodes, region_nodes)
         if VISION_MAX_PAGES_PER_DOC > 0:
             targets = targets[:VISION_MAX_PAGES_PER_DOC]
 
@@ -201,6 +205,7 @@ class PageVisionEnricher:
         self,
         page_nodes: list[DKGNode],
         section_nodes: list[DKGNode],
+        region_nodes: list[DKGNode] | None = None,
     ) -> list[DKGNode]:
         if not VISION_SELECTIVE:
             return sorted(page_nodes, key=lambda p: p.order)
@@ -214,9 +219,15 @@ class PageVisionEnricher:
                 for pno in range(start, end + 1):
                     visual_pages.add(pno)
 
+        for reg in region_nodes or []:
+            if reg.region_kind in ("figure", "table"):
+                pno = reg.pdf_page or reg.page_start or reg.order
+                if pno is not None:
+                    visual_pages.add(int(pno))
+
         selected: list[DKGNode] = []
         for pn in sorted(page_nodes, key=lambda p: p.order):
-            page_no = pn.page_start or pn.order
+            page_no = pn.pdf_page or pn.page_start or pn.order
             text_len = len((pn.text or "").strip())
             if page_no in visual_pages:
                 selected.append(pn)

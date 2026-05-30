@@ -61,6 +61,42 @@ class VisualIntent:
     terms: list[str] = field(default_factory=list)
 
 
+def wants_page_text(query: str) -> bool:
+    """User wants readable page text, not a figure crop or image."""
+    q = query.lower()
+    if re.search(r"\b(?:text\s+only|only\s+text|no\s+image|without\s+image)\b", q):
+        return True
+    if re.search(r"\b(?:image|picture|photo|screenshot|figure\s+from)\b", q) and not re.search(
+        r"\b(?:all|full|entire)\s+(?:the\s+)?text\b|\btext\s+(?:from|on|of)\b", q
+    ):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:all|full|entire|complete)\s+(?:the\s+)?(?:text|content|words)\b"
+            r"|\b(?:text|content|words)\s+(?:from|on|of)\s+(?:the\s+)?(?:pdf\s+)?page\b"
+            r"|\bgive\s+me\s+(?:all\s+)?(?:the\s+)?text\b"
+            r"|\bwhat\s+(?:does|is)\s+(?:pdf\s+)?page\s+\d+\s+say\b",
+            q,
+        )
+    )
+
+
+def is_strict_page_lookup(intent: VisualIntent) -> bool:
+    """
+    User asked for a specific page (e.g. "image from page 32") — not a document-wide caption search.
+    """
+    if wants_page_text(intent.query):
+        return False
+    if intent.list_all:
+        return False
+    if intent.pdf_page is None and not intent.document_page:
+        return False
+    for phrase in intent.phrases:
+        if len(phrase) >= 50:
+            return False
+    return True
+
+
 def parse_visual_intent(
     query: str,
     extract_terms: Optional[Callable[[str], list[str]]] = None,

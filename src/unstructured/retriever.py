@@ -31,8 +31,10 @@ from ..document.patterns import TABLE_REF_PATTERN
 from ..model_providers.factory import get_model_provider
 from .visual_retrieval import (
     display_text_for_chunk,
+    is_strict_page_lookup,
     parse_visual_intent,
     score_visual_candidate,
+    wants_page_text,
 )
 
 load_dotenv()
@@ -362,6 +364,39 @@ class ESGComplianceRetriever:
             return denied
 
         intent = intent or parse_visual_intent(query, self._extract_search_terms)
+
+        if wants_page_text(query):
+            with self.driver.session() as session:
+                chunks = self._page_text_chunks(session, intent)
+            top = chunks[0] if chunks else {}
+            return self._format_response(
+                query,
+                chunks,
+                user_context=ctx,
+                meta={
+                    "mode": "page_text",
+                    "found": bool(chunks),
+                    "pdf_page": intent.pdf_page or top.get("pdf_page"),
+                    "document_page": intent.document_page or top.get("document_page"),
+                },
+            )
+
+        if is_strict_page_lookup(intent):
+            with self.driver.session() as session:
+                chunks = self._strict_page_visual_chunks(session, intent, query)
+            top = chunks[0] if chunks else {}
+            return self._format_response(
+                query,
+                chunks,
+                user_context=ctx,
+                meta={
+                    "mode": "page_lookup",
+                    "found": bool(chunks),
+                    "pdf_page": intent.pdf_page or top.get("pdf_page"),
+                    "document_page": intent.document_page or top.get("document_page"),
+                },
+            )
+
         needles = list(dict.fromkeys(intent.terms + intent.phrases))[:14]
         if not needles and intent.pdf_page is None:
             return self._format_response(
@@ -378,7 +413,7 @@ class ESGComplianceRetriever:
                     reg["node_label"] = "Region"
                     candidates[reg["id"]] = reg
 
-            if needles:
+            if needles and intent.pdf_page is None and not intent.document_page:
                 needle_match = _cypher_needle_match("n")
                 result = session.run(
                     f"""
@@ -400,7 +435,8 @@ class ESGComplianceRetriever:
                     d = row.data()
                     candidates.setdefault(d["id"], d)
 
-            if intent.wants_image:
+            # Document-wide region scan only when NOT pinned to a single page number
+            if intent.wants_image and intent.pdf_page is None and not intent.document_page:
                 result = session.run(
                     """
                     MATCH (r:Region)
@@ -452,7 +488,9 @@ class ESGComplianceRetriever:
                 )
                 mode = "unified_visual"
 
-            ranked = self._rerank_visual_by_embedding(query, chunks, limit)
+            ranked = self._rerank_visual_by_embedding(
+                query, chunks, limit, pin_pdf_page=intent.pdf_page if intent.pdf_page is not None else None
+            )
             ranked = self._enrich_context_batch(session, ranked)
 
         top = ranked[0] if ranked else {}
@@ -468,6 +506,111 @@ class ESGComplianceRetriever:
                 "phrases": intent.phrases[:5],
             },
         )
+
+    def _page_text_chunks(self, session, intent) -> list[dict]:
+        """Full page text for 'all text from page N' queries — no figure crop."""
+        page_row = self._resolve_page_row(session, intent)
+        if not page_row:
+            return []
+
+        pdf_p = intent.pdf_page or page_row.get("pdf_page")
+        parts: list[str] = []
+        title = page_row.get("title") or f"Page {pdf_p}"
+        page_body = (page_row.get("text") or "").strip()
+        if page_body:
+            parts.append(page_body)
+
+        if pdf_p is not None:
+            result = session.run(
+                """
+                MATCH (s:Section)
+                WHERE s.page_start IS NOT NULL AND s.page_end IS NOT NULL
+                  AND s.page_start <= $p AND s.page_end >= $p
+                RETURN s.title AS title, s.text AS text, s.order AS ord
+                ORDER BY s.order ASC
+                """,
+                p=int(pdf_p),
+            )
+            seen = {page_body[:200]} if page_body else set()
+            for row in result:
+                data = row.data()
+                sec_text = (data.get("text") or "").strip()
+                if not sec_text or sec_text[:200] in seen:
+                    continue
+                seen.add(sec_text[:200])
+                sec_title = (data.get("title") or "").strip()
+                if sec_title and sec_title.lower() != title.lower():
+                    parts.append(f"### {sec_title}\n\n{sec_text}")
+                elif sec_text != page_body:
+                    parts.append(sec_text)
+
+        full_text = "\n\n".join(parts).strip()
+        ch = self._attach_media_fields({
+            "id": page_row["id"],
+            "title": title,
+            "text": full_text or page_body or "(No text extracted for this page.)",
+            "pdf_page": pdf_p,
+            "document_page": page_row.get("document_page"),
+            "page_tags": page_row.get("page_tags"),
+            "visual_content": page_row.get("visual_content"),
+            "match_types": ["page_text"],
+            "rerank_score": 1.0,
+            "image_key": None,
+            "image_url": None,
+        })
+        return [ch]
+
+    def _strict_page_visual_chunks(
+        self,
+        session,
+        intent,
+        query: str,
+    ) -> list[dict]:
+        """One page only: no document-wide region scan or cross-page rerank."""
+        page_row = self._resolve_page_row(session, intent)
+        if not page_row:
+            return []
+
+        page_data = self._attach_media_fields(dict(page_row))
+        regions = self._fetch_regions_for_page(session, page_data["id"])
+
+        if self._wants_whole_page_image(query) and page_data.get("image_key"):
+            ch = dict(page_data)
+            ch["image_source"] = "page"
+            ch["text"] = display_text_for_chunk(ch)
+            ch["match_types"] = ["page_lookup"]
+            ch["rerank_score"] = 1.0
+            return [ch]
+
+        matched = self._match_regions_to_query(
+            query, regions, page_data.get("visual_content")
+        )
+        if matched and matched[0].get("image_key"):
+            ch = self._page_chunk_with_region(page_data, matched[0])
+            ch["match_types"] = ["page_lookup"]
+            ch["rerank_score"] = 1.0
+            return [ch]
+
+        pick_regions = regions
+        if intent.kind_filter:
+            pick_regions = self._filter_regions_by_kind(regions, intent.kind_filter)
+
+        reg = self._first_region_with_image(pick_regions)
+        if reg:
+            ch = self._page_chunk_with_region(page_data, reg)
+            ch["match_types"] = ["page_lookup"]
+            ch["rerank_score"] = 1.0
+            return [ch]
+
+        if page_data.get("image_key"):
+            ch = dict(page_data)
+            ch["image_source"] = "page"
+            ch["text"] = display_text_for_chunk(ch)
+            ch["match_types"] = ["page_lookup"]
+            ch["rerank_score"] = 1.0
+            return [ch]
+
+        return []
 
     def _resolve_page_row(self, session, intent) -> Optional[dict]:
         if intent.document_page:
@@ -487,6 +630,10 @@ class ESGComplianceRetriever:
             ).single()
             if row:
                 return row.data()
+            # Printed label missing in graph — try same number as PDF index
+            if str(intent.document_page).strip().isdigit():
+                intent.pdf_page = int(str(intent.document_page).strip())
+                intent.document_page = None
         if intent.pdf_page is not None:
             row = session.run(
                 """
@@ -537,6 +684,10 @@ class ESGComplianceRetriever:
         for score, row in scored_rows:
             if len(chunks) >= limit:
                 break
+            if intent.pdf_page is not None:
+                rp = row.get("pdf_page") or row.get("doc_order")
+                if rp is not None and int(rp) != int(intent.pdf_page):
+                    continue
             label = row.get("node_label", "Page")
             if label == "Region" and row.get("image_key"):
                 key = row["image_key"]
@@ -587,10 +738,15 @@ class ESGComplianceRetriever:
         }
 
     def _rerank_visual_by_embedding(
-        self, query: str, chunks: list[dict], limit: int
+        self, query: str, chunks: list[dict], limit: int, *, pin_pdf_page: Optional[int] = None
     ) -> list[dict]:
+        if pin_pdf_page is not None:
+            chunks = [
+                c for c in chunks
+                if c.get("pdf_page") is None or int(c.get("pdf_page")) == int(pin_pdf_page)
+            ]
         if len(chunks) <= 1:
-            return chunks
+            return chunks[:limit]
         try:
             q_emb = self._get_embedding(query)
         except Exception:
@@ -649,7 +805,7 @@ class ESGComplianceRetriever:
         if document_page:
             intent.document_page = document_page
         return self.unified_visual_retrieve(
-            query, limit=5, user_context=user_context, intent=intent
+            query, limit=1, user_context=user_context, intent=intent
         )
 
     def caption_figure_retrieve(

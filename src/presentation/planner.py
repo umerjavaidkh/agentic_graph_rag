@@ -9,7 +9,9 @@ import re
 from typing import Any, Callable, Optional
 
 from ..assets.page_images import resolve_image_url
+from ..document.page_numbers import parse_page_number_from_query
 from .structured_planner import build_structured_presentation
+from ..unstructured.visual_retrieval import wants_page_text
 
 # ── Intent detectors (extensible) ─────────────────────────────
 
@@ -92,15 +94,34 @@ def _image_blocks_from_sources(
     sources: list[dict],
     question: str,
     force: bool = False,
+    retrieved_context: Optional[dict] = None,
+    query_type: Optional[str] = None,
 ) -> list[dict]:
     blocks: list[dict] = []
     want = force or wants_page_image(question)
     if not want:
         return blocks
 
+    ctx = retrieved_context or {}
+    mode = ctx.get("mode") or ""
+    page_text_mode = mode == "page_text"
+    pin_pdf = ctx.get("pdf_page")
+    single_page_image = (
+        (mode == "page_lookup" or query_type == "page")
+        and wants_page_image(question)
+        and not page_text_mode
+        and not wants_page_text(question)
+    )
+    if pin_pdf is None and single_page_image:
+        pin_pdf, _ = parse_page_number_from_query(question)
+
     seen_keys: set[str] = set()
     seen_urls: set[str] = set()
     for src in sources:
+        if pin_pdf is not None:
+            sp = src.get("pdf_page")
+            if sp is not None and int(sp) != int(pin_pdf):
+                continue
         key = src.get("image_key")
         if not key or key in seen_keys:
             continue
@@ -126,6 +147,8 @@ def _image_blocks_from_sources(
             "alt": caption,
             "caption": caption,
         })
+        if single_page_image:
+            break
     return blocks
 
 
@@ -186,7 +209,8 @@ def build_presentation(
     mode = ctx.get("mode") or ""
     blocks: list[dict] = []
 
-    text_only = bool(_TEXT_ONLY.search(question))
+    text_only = bool(_TEXT_ONLY.search(question)) or wants_page_text(question)
+    page_text_mode = mode == "page_text"
     visual_query_type = query_type in ("page", "visual_scene", "figure_caption")
     visual_mode = mode in (
         "unified_visual", "page_lookup", "page_visual_list",
@@ -194,14 +218,21 @@ def build_presentation(
     )
     force_image = (
         not text_only
+        and not page_text_mode
         and (
-            visual_query_type
-            or visual_mode
+            (visual_query_type and wants_page_image(question))
+            or (visual_mode and wants_page_image(question))
             or wants_page_image(question)
         )
     )
 
-    image_blocks = _image_blocks_from_sources(sources, question, force=force_image)
+    image_blocks = _image_blocks_from_sources(
+        sources,
+        question,
+        force=force_image,
+        retrieved_context=ctx,
+        query_type=query_type,
+    )
     blocks.extend(image_blocks)
 
     table_blocks = _table_blocks_from_answer(answer)

@@ -169,6 +169,24 @@ def retrieve_node(state: ESGState):
     }
 
 
+def _format_page_text_answer(retrieved: dict, chunks: list) -> str | None:
+    if retrieved.get("mode") != "page_text" or not chunks:
+        return None
+    c = chunks[0]
+    pdf_p = retrieved.get("pdf_page") or c.get("pdf_page")
+    text = (c.get("text") or "").strip()
+    if not text or text == "(No text extracted for this page.)":
+        return (
+            f"No extractable text was found on PDF page **{pdf_p}**. "
+            "The page may be image-only; try asking for the image instead."
+        )
+    header = f"**Text from PDF page {pdf_p}**"
+    doc_p = c.get("document_page")
+    if doc_p and str(doc_p) != str(pdf_p):
+        header += f" (printed page **{doc_p}**)"
+    return f"{header}\n\n{text}"
+
+
 def _format_unified_visual_answer(retrieved: dict, chunks: list) -> str | None:
     mode = retrieved.get("mode") or ""
     if mode not in (
@@ -344,6 +362,10 @@ def generate_node(state: ESGState):
     if visual_list is not None:
         return {"answer": visual_list, "low_confidence": False}
 
+    page_text_answer = _format_page_text_answer(retrieved, chunks)
+    if page_text_answer is not None:
+        return {"answer": page_text_answer, "low_confidence": False}
+
     visual_answer = _format_unified_visual_answer(retrieved, chunks)
     if visual_answer is not None:
         return {"answer": visual_answer, "low_confidence": False}
@@ -408,9 +430,7 @@ def generate_node(state: ESGState):
 
 
 def should_continue(state: ESGState):
-    chunks = state["retrieved_context"]["chunks"]
-    if len(chunks) < MIN_CHUNKS_REQUIRED:
-        return "no_context"
+    # Always run generate_node so empty retrieval still returns a user-visible message.
     return "generate"
 
 
@@ -439,7 +459,7 @@ workflow.set_entry_point("retrieve")
 workflow.add_conditional_edges(
     "retrieve",
     should_continue,
-    {"no_context": END, "generate": "generate"},
+    {"generate": "generate"},
 )
 workflow.add_edge("generate", END)
 
