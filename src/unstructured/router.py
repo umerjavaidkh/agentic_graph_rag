@@ -48,11 +48,18 @@ def query_data(question: str, user_context: Optional[UserContext] = None) -> dic
         state["user_context"] = user_context
 
     result = structured_agent.invoke(state)
+    presentation = build_presentation(
+        question=question,
+        answer=result.get("answer", ""),
+        sources=result.get("sources", []),
+        agent="structured",
+    )
     return {
         "answer": result.get("answer", ""),
         "sources": result.get("sources", []),
         "strategy": result.get("strategy", ""),
         "agent": "structured",
+        "presentation": presentation,
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
     }
 
@@ -64,6 +71,29 @@ def query_hybrid(question: str, user_context: Optional[UserContext] = None) -> d
 
     doc_result = esg_agent.invoke(state)
     data_result = structured_agent.invoke(state)
+    data_pres = build_presentation(
+        question=question,
+        answer=data_result.get("answer", ""),
+        sources=data_result.get("sources", []),
+        agent="structured",
+    )
+    if data_pres and data_pres.get("blocks"):
+        blocks = [
+            {
+                "type": "markdown",
+                "content": f"### From Documents\n\n{doc_result.get('answer', '')}",
+            },
+            *data_pres["blocks"],
+        ]
+        presentation = {"kind": "mixed", "blocks": blocks}
+    else:
+        presentation = build_presentation(
+            question=question,
+            answer=doc_result.get("answer", ""),
+            sources=doc_result.get("sources", []),
+            retrieved_context=doc_result.get("retrieved_context", {}),
+            query_type=doc_result.get("query_type"),
+        )
     return {
         "answer": (
             f"### From Documents:\n{doc_result.get('answer', '')}\n\n"
@@ -74,6 +104,7 @@ def query_hybrid(question: str, user_context: Optional[UserContext] = None) -> d
         "data_sources": data_result.get("sources", []),
         "agent": "hybrid",
         "strategy": data_result.get("strategy", ""),
+        "presentation": presentation,
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
     }
 

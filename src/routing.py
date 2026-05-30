@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Callable, Optional
 
 from .auth.roles import UserContext
 from .config.prompts import load_prompt
-from .config.settings import CHAT_MODEL, MODEL_PROVIDER, OPENAI_API_KEY
+from .config.settings import CHAT_MODEL, FAST_ROUTE_QUERIES, MODEL_PROVIDER, OPENAI_API_KEY
 from .model_providers.factory import get_model_provider
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,32 @@ TOOL_TO_AGENT: dict[str, str] = {
     "query_hybrid": "hybrid",
 }
 
+_DATA_ROUTE = re.compile(
+    r"\b(?:products?|orders?|customers?|suppliers?|categories?|sales|revenue|sold|"
+    r"northwind|top\s+\d+|best\s+selling|most\s+(?:sold|popular)|cypher|neo4j|"
+    r"how\s+many|count|aggregate|schema|monthly|timeline|trend|volume|chronological)\b",
+    re.I,
+)
+_DOC_ROUTE = re.compile(
+    r"\b(?:policy|policies|document|documents|pdf|manual|protocol|section\s+\d|"
+    r"whistleblow|compliance\s+officer|procedure|page\s+\d+|figure|table\s+on)\b",
+    re.I,
+)
+
+
+def _fast_route_tool(question: str) -> Optional[str]:
+    if not FAST_ROUTE_QUERIES:
+        return None
+    doc = bool(_DOC_ROUTE.search(question))
+    data = bool(_DATA_ROUTE.search(question))
+    if data and doc:
+        return None
+    if data:
+        return "query_data"
+    if doc:
+        return "search_documents"
+    return None
+
 
 def select_mcp_tool(
     question: str,
@@ -88,6 +115,10 @@ def select_mcp_tool(
     """
     Ask the LLM which MCP tool to invoke. Returns tool name (e.g. search_documents).
     """
+    routed = _fast_route_tool(question)
+    if routed:
+        return routed
+
     if not api_key:
         return "search_documents"
 

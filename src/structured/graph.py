@@ -11,8 +11,9 @@ from langgraph.graph import StateGraph, END
 from .state import StructuredState
 from .retriever import StructuredRetriever
 from ..config.prompts import load_prompt
-from ..config.settings import CHAT_MODEL
+from ..config.settings import CHAT_MODEL, STRUCTURED_FAST_ANSWER
 from ..model_providers.factory import get_model_provider
+from .fast_answer import try_tabular_answer
 
 provider = get_model_provider()
 retriever = StructuredRetriever()
@@ -74,6 +75,11 @@ def generate_node(state: StructuredState):
 
     has_error = any(c.get("id") == "error" for c in chunks)
 
+    if STRUCTURED_FAST_ANSWER and not has_error and strategy == "text2cypher":
+        fast = try_tabular_answer(chunks)
+        if fast:
+            return {"answer": fast, "low_confidence": False}
+
     # Build context with explicit metadata so LLM knows what it is looking at
     context_lines = []
     for i, c in enumerate(chunks, 1):
@@ -112,7 +118,7 @@ def generate_node(state: StructuredState):
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": f"{question}"},
         ],
-        max_tokens=2000,
+        max_tokens=600,
     )
 
     return {

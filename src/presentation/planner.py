@@ -9,6 +9,7 @@ import re
 from typing import Any, Callable, Optional
 
 from ..assets.page_images import resolve_image_url
+from .structured_planner import build_structured_presentation
 
 # ── Intent detectors (extensible) ─────────────────────────────
 
@@ -161,16 +162,26 @@ def _markdown_block(answer: str, tables_found: bool) -> dict:
     return {"type": "markdown", "content": text or answer}
 
 
+def _has_tabular_sources(sources: list[dict]) -> bool:
+    return sum(1 for s in sources if isinstance(s.get("raw"), dict)) >= 2
+
+
 def build_presentation(
     question: str,
     answer: str,
     sources: list[dict],
     retrieved_context: Optional[dict] = None,
     query_type: Optional[str] = None,
+    agent: Optional[str] = None,
 ) -> dict:
     """
     Returns { kind, blocks } for the chat UI.
     """
+    if agent in ("structured",) or _has_tabular_sources(sources):
+        structured = build_structured_presentation(question, answer, sources)
+        if structured:
+            return structured
+
     ctx = retrieved_context or {}
     mode = ctx.get("mode") or ""
     blocks: list[dict] = []
@@ -196,9 +207,11 @@ def build_presentation(
     table_blocks = _table_blocks_from_answer(answer)
     blocks.extend(table_blocks)
 
-    chart_blocks = _chart_blocks_from_answer(answer)
-    if chart_blocks and not table_blocks:
-        blocks.extend(chart_blocks)
+    # Avoid generic "percent from prose" charts for structured/tabular answers.
+    if agent != "structured" and not _has_tabular_sources(sources):
+        chart_blocks = _chart_blocks_from_answer(answer)
+        if chart_blocks and not table_blocks:
+            blocks.extend(chart_blocks)
 
     blocks.append(_markdown_block(answer, bool(table_blocks)))
 

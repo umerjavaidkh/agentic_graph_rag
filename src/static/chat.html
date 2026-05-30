@@ -184,26 +184,79 @@
       text-align: left;
     }
     table.pres-table th{ background: rgba(96,165,250,0.15); }
+    table.pres-table.interactive th{
+      cursor: pointer;
+      user-select: none;
+    }
+    table.pres-table.interactive th:hover{ background: rgba(96,165,250,0.28); }
+    table.pres-table.interactive tbody tr:hover{ background: rgba(34,197,94,0.08); }
+    table.pres-table tr.row-highlight{ background: rgba(96,165,250,0.18); }
     .pres-chart{
       display: flex;
       align-items: flex-end;
-      gap: 8px;
-      height: 140px;
+      gap: 10px;
+      min-height: 200px;
       margin: 10px 0;
-      padding: 8px;
+      padding: 10px 12px 12px;
       border: 1px solid var(--border);
       border-radius: 12px;
       background: rgba(0,0,0,0.12);
+      overflow: hidden;
     }
-    .pres-bar-col{ flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 28px; }
-    .pres-bar{
+    .pres-bar-col{
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      min-width: 40px;
+      max-width: 80px;
+      min-height: 0;
+    }
+    .pres-bar-value{
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text);
+      text-align: center;
+      line-height: 1.25;
+      max-width: 100%;
+      padding: 0 2px;
+      flex-shrink: 0;
+    }
+    .pres-bar-track{
       width: 100%;
-      max-width: 48px;
-      background: linear-gradient(180deg, rgba(96,165,250,0.7), rgba(34,197,94,0.5));
-      border-radius: 6px 6px 0 0;
-      min-height: 4px;
+      height: 96px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding-top: 8px;
+      box-sizing: border-box;
+      flex-shrink: 0;
     }
-    .pres-bar-label{ font-size: 10px; color: var(--muted); text-align: center; }
+    .pres-bar{
+      width: 32px;
+      border-radius: 6px 6px 0 0;
+      min-height: 3px;
+      max-height: 100%;
+      transition: height 0.2s ease, filter 0.15s ease;
+      cursor: default;
+    }
+    .pres-bar-col:hover .pres-bar{ filter: brightness(1.15); }
+    .pres-bar-col.bar-active .pres-bar{ outline: 2px solid rgba(96,165,250,0.9); }
+    .pres-bar-label{
+      font-size: 10px;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.25;
+      max-width: 100%;
+      padding: 0 2px;
+      flex-shrink: 0;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
     .pres-md h1,.pres-md h2,.pres-md h3{ margin: 0.6em 0 0.3em; }
     .pres-md p{ margin: 0.4em 0; }
     .pres-md ul{ margin: 0.4em 0; padding-left: 1.2em; }
@@ -396,6 +449,28 @@
       el.innerHTML = '<div class="pres-md"><p>' + html + '</p></div>';
     }
 
+    function formatChartValue(v, block) {
+      const n = Number(v);
+      if (Number.isNaN(n)) return String(v);
+      if (block.valueFormat === 'percent') return n.toFixed(1) + '%';
+      if (Math.abs(n) >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+      if (Number.isInteger(n)) return String(n);
+      return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+
+    function sortTableRows(rows, colIdx, asc) {
+      return [...rows].sort((a, b) => {
+        const av = (a[colIdx] || '').replace(/,/g, '');
+        const bv = (b[colIdx] || '').replace(/,/g, '');
+        const an = parseFloat(av);
+        const bn = parseFloat(bv);
+        if (!Number.isNaN(an) && !Number.isNaN(bn)) return asc ? an - bn : bn - an;
+        return asc
+          ? String(a[colIdx]).localeCompare(String(b[colIdx]))
+          : String(b[colIdx]).localeCompare(String(a[colIdx]));
+      });
+    }
+
     const BLOCK_RENDERERS = {
       image(block, container) {
         const wrap = document.createElement('div');
@@ -424,27 +499,53 @@
           wrap.appendChild(t);
         }
         const table = document.createElement('table');
-        table.className = 'pres-table';
+        table.className = 'pres-table' + (block.interactive ? ' interactive' : '');
         const thead = document.createElement('thead');
         const hr = document.createElement('tr');
-        (block.headers || []).forEach(h => {
+        let sortState = { col: -1, asc: true };
+        let currentRows = block.rows || [];
+
+        function renderBody() {
+          tbody.innerHTML = '';
+          currentRows.forEach((row, rowIdx) => {
+            const tr = document.createElement('tr');
+            tr.dataset.rowIdx = String(rowIdx);
+            row.forEach(cell => {
+              const td = document.createElement('td');
+              td.textContent = cell;
+              tr.appendChild(td);
+            });
+            if (block.interactive) {
+              tr.addEventListener('mouseenter', () => {
+                wrap.dispatchEvent(new CustomEvent('pres-row-hover', {
+                  detail: { label: row[0] || '' },
+                  bubbles: true,
+                }));
+              });
+            }
+            tbody.appendChild(tr);
+          });
+        }
+
+        (block.headers || []).forEach((h, colIdx) => {
           const th = document.createElement('th');
           th.textContent = h;
+          if (block.interactive) {
+            th.title = 'Click to sort';
+            th.addEventListener('click', () => {
+              const asc = sortState.col === colIdx ? !sortState.asc : true;
+              sortState = { col: colIdx, asc };
+              currentRows = sortTableRows(currentRows, colIdx, asc);
+              renderBody();
+            });
+          }
           hr.appendChild(th);
         });
         thead.appendChild(hr);
         table.appendChild(thead);
         const tbody = document.createElement('tbody');
-        (block.rows || []).forEach(row => {
-          const tr = document.createElement('tr');
-          row.forEach(cell => {
-            const td = document.createElement('td');
-            td.textContent = cell;
-            tr.appendChild(td);
-          });
-          tbody.appendChild(tr);
-        });
         table.appendChild(tbody);
+        renderBody();
         wrap.appendChild(table);
         container.appendChild(wrap);
       },
@@ -459,19 +560,39 @@
         }
         const chart = document.createElement('div');
         chart.className = 'pres-chart';
-        const vals = block.values || [];
+        const vals = (block.values || []).map(v => Number(v)).filter(v => !Number.isNaN(v));
         const labels = block.labels || vals.map((_, i) => String(i + 1));
+        if (vals.length < 2) return;
+
         const max = Math.max(...vals, 1);
+        const trackInnerPx = 88;
+        const barHues = [210, 168, 132, 95, 48, 280, 320];
+
         vals.forEach((v, i) => {
           const col = document.createElement('div');
           col.className = 'pres-bar-col';
+
+          const valEl = document.createElement('div');
+          valEl.className = 'pres-bar-value';
+          valEl.textContent = formatChartValue(v, block);
+
+          const track = document.createElement('div');
+          track.className = 'pres-bar-track';
           const bar = document.createElement('div');
           bar.className = 'pres-bar';
-          bar.style.height = Math.round((v / max) * 100) + '%';
+          const px = Math.max(3, Math.round((v / max) * trackInnerPx));
+          bar.style.height = px + 'px';
+          const hue = barHues[i % barHues.length];
+          bar.style.background = `linear-gradient(180deg, hsl(${hue} 70% 58%), hsl(${hue} 65% 42%))`;
+          bar.title = (labels[i] || '') + ': ' + formatChartValue(v, block);
+          track.appendChild(bar);
+
           const lbl = document.createElement('div');
           lbl.className = 'pres-bar-label';
-          lbl.textContent = (labels[i] || '') + ' ' + v + (String(v).includes('%') ? '' : '%');
-          col.appendChild(bar);
+          lbl.textContent = labels[i] || '';
+
+          col.appendChild(valEl);
+          col.appendChild(track);
           col.appendChild(lbl);
           chart.appendChild(col);
         });
@@ -504,6 +625,20 @@
           bubble.appendChild(pre);
         }
       });
+      const hasInteractive = blocks.some(b => b.interactive);
+      if (hasInteractive) {
+        bubble.addEventListener('pres-row-hover', (e) => {
+          const label = (e.detail && e.detail.label) || '';
+          bubble.querySelectorAll('.pres-bar-col').forEach(col => {
+            const lbl = col.querySelector('.pres-bar-label');
+            col.classList.toggle('bar-active', lbl && lbl.textContent.trim() === label.trim());
+          });
+          bubble.querySelectorAll('table.pres-table tbody tr').forEach(tr => {
+            const first = tr.querySelector('td');
+            tr.classList.toggle('row-highlight', first && first.textContent.trim() === label.trim());
+          });
+        });
+      }
     }
 
     function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType) {

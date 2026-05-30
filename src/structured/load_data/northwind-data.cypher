@@ -46,11 +46,12 @@ LOAD CSV WITH HEADERS FROM "https://data.neo4j.com/northwind/orders.csv" AS row
 MERGE (o:Order {orderID:row.orderID})
 SET o.customerID = row.customerID,
     o.employeeID = row.employeeID,
-    o.orderDate = row.orderDate,
+    o.orderDate = CASE WHEN row.orderDate IS NOT NULL AND trim(row.orderDate) <> ''
+        THEN date(substring(row.orderDate, 0, 10)) ELSE null END,
     o.requiredDate = row.requiredDate,
     o.shippedDate = row.shippedDate,
     o.shipVia = row.shipVia,
-    o.freight = row.freight
+    o.freight = toFloat(row.freight)
 MERGE (a:Address {addressID: apoc.text.join([coalesce(row.shipName, ''), coalesce(row.shipAddress, ''),
     coalesce(row.shipCity, ''), coalesce(row.shipRegion, ''), coalesce(row.shipPostalCode, ''),
     coalesce(row.shipCountry, '')], ', ')})
