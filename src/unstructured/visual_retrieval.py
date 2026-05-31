@@ -314,12 +314,13 @@ def display_text_for_chunk(row: dict) -> str:
             raw = raw.split("[Extracted text]", 1)[-1].strip()
         else:
             raw = ""
-    noise = (
-        "[No section mapped to this PDF page.]",
-        "[Note: This PDF page had little extractable text",
-    )
-    for n in noise:
-        raw = raw.replace(n, "").strip()
+    raw = re.sub(r"\[No section mapped to this PDF page\.\]", "", raw).strip()
+    raw = re.sub(
+        r"\[Note: This PDF page had little extractable text[^\]]*\]",
+        "",
+        raw,
+        flags=re.I,
+    ).strip()
     parts = []
     if visual:
         parts.append(visual)

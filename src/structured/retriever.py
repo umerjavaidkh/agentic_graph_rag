@@ -63,39 +63,6 @@ class StructuredRetriever:
         self.user_context = user_context or DEFAULT_PUBLIC_CONTEXT
         self.rbac = GraphRBAC(uri, user, password)
 
-    # ─────────────────────────────────────────
-    # PUBLIC API  (end-to-end)
-    # ─────────────────────────────────────────
-
-    def ask(self, query: str, limit: int = 5, user_context: Optional[UserContext] = None) -> dict:
-        """
-        ONE call → natural language answer + sources.
-        Usage:
-            result = retriever.ask("Which products are most commonly bought together?")
-            print(result["answer"])   # human-readable insight
-            print(result["sources"])  # raw structured data for citations
-        """
-        ctx = user_context or self.user_context
-        
-        # 1. Retrieve
-        retrieval = self.retrieve(query, limit, user_context=ctx)
-        chunks = retrieval.get("chunks", [])
-
-        # 2. Synthesize (if we got data)
-        if chunks and chunks[0].get("id") != "error":
-            answer = self._synthesize(query, chunks)
-        else:
-            answer = "I couldn't find any relevant data to answer that question."
-
-        return {
-            "query": query,
-            "answer": answer,
-            "strategy": retrieval.get("strategy", "unknown"),
-            "sources": chunks,
-            "total_sources": len(chunks),
-            "_access_level": ctx.role.value,
-        }
-
     def retrieve(self, query: str, limit: int = 5, user_context: Optional[UserContext] = None) -> dict:
         """
         Raw retrieval entry point. Returns structured chunks.
@@ -158,43 +125,6 @@ class StructuredRetriever:
 
     def close(self):
         self.driver.close()
-
-    # ─────────────────────────────────────────
-    # LLM SYNTHESIS  (NEW)
-    # ─────────────────────────────────────────
-
-    def _synthesize(self, query: str, chunks: list[dict]) -> str:
-        """
-        Takes raw structured chunks and produces a natural language answer.
-        Handles product IDs gracefully by asking the LLM to interpret contextually.
-        """
-        context = self._build_context(chunks)
-
-        system_prompt = """You are a senior business analyst answering questions from a Neo4j graph database.
-Rules:
-- Answer ONLY using the provided data. If data is insufficient, say so.
-- When product IDs appear, describe them naturally (e.g., "the most frequently paired product").
-- Do NOT invent facts not present in the data.
-- Be concise but insightful. Mention specific numbers and rankings when relevant.
-- If the data shows duplicate symmetric pairs (e.g., 21+61 and 61+21), treat them as ONE pair."""
-
-        user_prompt = f"""Retrieved Data:
-{context}
-
-User Question: {query}
-
-Provide a clear, natural language answer. If products or entities have names available, use them. If only IDs are available, refer to them by their relationship patterns (e.g., "Product 21")."""
-
-        response = provider.chat_completion(
-            model=LLM_MODEL,
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_tokens=600,
-        )
-        return response.choices[0].message.content.strip()
 
     def _build_context(self, chunks: list[dict]) -> str:
         """Formats chunks into a clean text block for the LLM prompt."""

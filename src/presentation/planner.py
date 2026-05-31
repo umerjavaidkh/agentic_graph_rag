@@ -18,7 +18,9 @@ from ..unstructured.visual_retrieval import wants_page_text
 
 _IMAGE_QUERY = re.compile(
     r"\b(?:show|display|see|fetch|get)\s+(?:the\s+)?(?:image|picture|photo|figure|page|pdf)\b|"
-    r"\b(?:image|picture|photo|screenshot)\s+(?:of|from|on)\b|"
+    r"\b(?:show\s+all|all|every|list|each)\s+(?:\w+\s+){0,3}"
+    r"(?:images?|figures?|figs?\.?|photos?|pictures?|visuals?)\b|"
+    r"\b(?:image|picture|photo|screenshot|figure)\s+(?:of|from|on)\b|"
     r"\bshow\s+page\b|\bsee\s+page\b|\bdisplay\s+page\b|"
     r"\bwhole\s+page\b|\bfull\s+page\b|\bentire\s+page\b|"
     r"\bpdf\s+page\s+\d+"
@@ -108,10 +110,19 @@ def _image_blocks_from_sources(
     mode = ctx.get("mode") or ""
     page_text_mode = mode == "page_text"
     pin_pdf = ctx.get("pdf_page")
+    list_all_visuals = bool(
+        re.search(
+            r"\b(?:show\s+all|all|every|list|each)\s+(?:\w+\s+){0,3}"
+            r"(?:images?|figures?|figs?\.?|photos?|pictures?|visuals?)\b",
+            question,
+            re.I,
+        )
+    )
     single_page_image = (
         ctx.get("single_visual")
         or (
             mode != "page_visual_list"
+            and not list_all_visuals
             and (mode == "page_lookup" or query_type == "page")
             and wants_page_image(question)
             and not page_text_mode
@@ -132,7 +143,7 @@ def _image_blocks_from_sources(
         if not key or key in seen_keys:
             continue
         seen_keys.add(key)
-        url = resolve_image_url(key)
+        url = src.get("image_url") or resolve_image_url(key)
         if not url or url in seen_urls:
             continue
         seen_urls.add(url)
@@ -302,15 +313,8 @@ def build_presentation(
         "unified_visual", "page_lookup", "page_visual_list",
         "visual_scene", "caption_figure",
     )
-    force_image = (
-        not text_only
-        and not page_text_mode
-        and (
-            (visual_query_type and wants_page_image(question))
-            or (visual_mode and wants_page_image(question))
-            or wants_page_image(question)
-        )
-    )
+    wants_visual = wants_page_image(question)
+    force_image = not text_only and not page_text_mode and wants_visual
 
     image_blocks = _image_blocks_from_sources(
         sources,

@@ -11,12 +11,15 @@ from typing import Optional
 # NODE TYPES
 # ─────────────────────────────────────────
 class NodeType(str, Enum):
-    BOOK    = "Book"
+    DOCUMENT = "Document"
     CHAPTER = "Chapter"
     SECTION = "Section"
     PAGE    = "Page"
     REGION  = "Region"
     CONCEPT = "Concept"
+
+    # Deprecated alias — use DOCUMENT
+    BOOK = "Document"
 
 
 # ─────────────────────────────────────────
@@ -54,7 +57,7 @@ class DKGNode:
     order:      int                        # sequential position at this level
     page_start: int  = 0
     page_end:   int  = 0
-    depth:      int  = 0                   # 0=Book, 1=Chapter, 2=Section, 3=Page
+    depth:      int  = 0                   # 0=Document root, 1=Chapter, 2=Section, 3=Page
     embedding:  Optional[list] = field(default=None, repr=False)
     entities:   list = field(default_factory=list)   # NER results
     cluster_id: Optional[int] = None                 # for SAME_CATEGORY

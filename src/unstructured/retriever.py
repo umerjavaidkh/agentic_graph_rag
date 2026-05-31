@@ -31,6 +31,7 @@ from ..document.page_numbers import (
 )
 from ..document.page_vision import compact_visual_content
 from ..document.patterns import TABLE_REF_PATTERN
+from ..graph.constants import DOCUMENT_ROOT_CYPHER
 from ..model_providers.factory import get_model_provider
 from .visual_retrieval import (
     best_region_for_visual_focus,
@@ -62,7 +63,7 @@ def _cypher_needle_match(var: str = "n") -> str:
             )"""
 
 
-class ESGComplianceRetriever:
+class DocumentRAGRetriever:
     def __init__(
         self,
         uri=NEO4J_URI,
@@ -203,6 +204,12 @@ class ESGComplianceRetriever:
         if self._asks_for_subsections(query):
             return self._subsection_tree_retrieve(query, limit=limit, user_context=ctx)
 
+        focus, document_hint = self._section_query_focus(query)
+        with self.driver.session() as session:
+            parent = self._best_parent_section(session, focus, document_hint=document_hint)
+            if parent and not self._asks_for_subsections(query):
+                return self.section_content_retrieve(query, limit=limit, user_context=ctx)
+
         terms = self._extract_search_terms(query)
         with self.driver.session() as session:
             rows = self._structural_section_search(session, terms, query, child_limit=25)
@@ -219,6 +226,59 @@ class ESGComplianceRetriever:
             user_context=ctx,
             meta={"mode": "structural"},
         )
+
+    def section_content_retrieve(
+        self,
+        query: str,
+        limit: int = 8,
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
+        """
+        User wants the body/content of a named section (not a list of child headings).
+        e.g. "What can you tell me about 6 IMPLEMENTATION AT STRATEC?"
+        """
+        ctx = user_context or self.user_context
+        denied = self._access_denied_response(query, ctx)
+        if denied:
+            return denied
+
+        focus, document_hint = self._section_query_focus(query)
+        with self.driver.session() as session:
+            parent = self._best_parent_section(session, focus, document_hint=document_hint)
+            if parent:
+                rows = [parent]
+                body = (parent.get("text") or "").strip()
+                if len(body) < 400:
+                    rows.extend(
+                        self._fetch_section_subtree(
+                            session,
+                            parent["id"],
+                            parent.get("doc_order", 0),
+                            parent.get("title", ""),
+                            max_sections=max(limit, 12),
+                        )
+                    )
+                for row in rows:
+                    row.setdefault("score", 1.0)
+                    row["match_types"] = {row.get("match_type", "section_content")}
+                ranked = sorted(rows, key=lambda r: r.get("doc_order", 0))[:limit]
+                ranked = self._enrich_context_batch(session, ranked)
+                return self._format_response(
+                    query,
+                    ranked,
+                    user_context=ctx,
+                    meta={
+                        "mode": "section_content",
+                        "focus_section_id": parent["id"],
+                        "parent_title": parent.get("title"),
+                        "document_hint": document_hint,
+                    },
+                )
+
+        # Fallback: hybrid pool when title match fails
+        hybrid = self.hybrid_retrieve(query, limit=limit, user_context=ctx)
+        hybrid["mode"] = "section_content_fallback"
+        return hybrid
 
     _INTRO_TITLE_HINTS = (
         "introduction",
@@ -448,28 +508,281 @@ class ESGComplianceRetriever:
             },
         )
 
-    def get_all_sections(self, user_context: Optional[UserContext] = None) -> Dict:
+    def _extract_document_hint(self, query: str) -> Optional[str]:
+        """Parse document name from TOC/section queries (tolerates 'form' typo for 'from')."""
+        if not query:
+            return None
+        q = query.strip()
+        doc_m = re.search(
+            r"\b(?:from|form)\s+(?:the\s+)?(.+?)\s+document\b",
+            q,
+            re.I,
+        )
+        if doc_m:
+            hint = doc_m.group(1).strip(" ?.")
+            hint = re.sub(
+                r"^(?:give\s+me\s+)?(?:all\s+)?(?:the\s+)?(?:full\s+)?(?:list\s+of\s+)?"
+                r"(?:all\s+)?(?:table\s+of\s+contents?|toc)\s*",
+                "",
+                hint,
+                flags=re.I,
+            ).strip(" ?.")
+            if hint and hint.lower() not in ("document", "pdf", "report"):
+                return hint
+        of_m = re.search(r"\bof\s+(?:the\s+)?(.+?)\s+document\b", q, re.I)
+        if of_m:
+            return of_m.group(1).strip(" ?.")
+        q_compact = re.sub(r"[^a-z0-9]", "", q.lower())
+        named = (
+            ("setratec", "Stratec"),
+            ("stratec", "Stratec"),
+            ("godata", "Go.Data"),
+            ("godataannual", "Go.Data"),
+        )
+        for key, label in named:
+            if key in q_compact:
+                return label
+        if re.search(r"\bgo\.?\s*data\b", q, re.I):
+            return "Go.Data"
+        return None
+
+    def _query_requests_named_document(self, query: str) -> bool:
+        if self._extract_document_hint(query):
+            return True
+        q = query.lower()
+        return bool(
+            re.search(r"\b(?:from|form)\s+.+?\s+document\b", q)
+            or re.search(r"\bgo\.?\s*data\b", q)
+            or "stratec" in re.sub(r"[^a-z0-9]", "", q)
+        )
+
+    def _document_match_keys(self, hint: str) -> list[str]:
+        """Normalize document name from query (typos: Setratec → stratec)."""
+        compact = re.sub(r"[^a-z0-9]", "", (hint or "").lower())
+        if not compact:
+            return []
+        keys = [compact]
+        alias_map = {
+            "setratec": ["stratec"],
+            "stratec": ["stratec"],
+            "godata": ["godata", "go"],
+            "go": ["godata", "go"],
+        }
+        if compact in alias_map:
+            keys = alias_map[compact] + keys
+        if "godata" in compact or compact.startswith("go"):
+            keys.extend(["godata", "go"])
+        if "stratec" in compact:
+            keys.append("stratec")
+        return list(dict.fromkeys(k for k in keys if k))
+
+    def _documents_with_sections(self, session) -> list[dict]:
+        return [
+            r.data()
+            for r in session.run(
+                """
+                MATCH (b:Document|Book)-[:CONTAINS*1..20]->(s:Section)
+                WITH b, count(s) AS n
+                WHERE n > 0
+                RETURN b.id AS id, coalesce(b.title, b.id) AS title, n AS sections
+                ORDER BY title
+                """
+            )
+        ]
+
+    def _resolve_document_id(self, session, document_hint: str) -> Optional[str]:
+        """Pick one Book/Document id for a user hint — no cross-document mixing."""
+        keys = self._document_match_keys(document_hint)
+        if not keys:
+            return None
+
+        for key in keys:
+            row = session.run(
+                """
+                MATCH (b:Document|Book)
+                WHERE toLower(replace(b.id, '_', ' ')) CONTAINS $key
+                   OR toLower(coalesce(b.title, '')) CONTAINS $key
+                RETURN b.id AS id
+                ORDER BY size(coalesce(b.title, b.id)) ASC
+                LIMIT 1
+                """,
+                key=key,
+            ).single()
+            if row:
+                return row["id"]
+
+        row = session.run(
+            """
+            MATCH (b:Document|Book)-[:CONTAINS*1..20]->(s:Section)
+            WITH b,
+                 count(s) AS total,
+                 sum(
+                   CASE
+                     WHEN ANY(k IN $keys WHERE
+                       toLower(s.title) CONTAINS k
+                       OR toLower(coalesce(s.text, '')) CONTAINS k
+                       OR replace(toLower(coalesce(s.text, '')), '.', '') CONTAINS k
+                     ) THEN 1
+                     ELSE 0
+                   END
+                 ) AS hits
+            WHERE hits >= 2
+            RETURN b.id AS id, hits, total
+            ORDER BY hits DESC, total DESC
+            LIMIT 1
+            """,
+            keys=keys,
+        ).single()
+        if row:
+            return row["id"]
+        return None
+
+    def _filter_toc_rows_for_document_hint(
+        self, rows: list[dict], document_hint: str
+    ) -> list[dict]:
+        """
+        When multiple PDFs were ingested with legacy shared section ids (section_0_1),
+        strip obvious cross-document headings from a single-doc TOC.
+        """
+        keys = self._document_match_keys(document_hint)
+        if not keys:
+            return rows
+
+        godata_markers = (
+            "go.data", "godata", "epiet", "openwho", "dhis2", "outbreak",
+            "cox's bazar", "viet nam", "ukraine adaptation", "measles",
+            "github", "kpi", "field epidemiology", "who regional",
+        )
+        stratec_markers = (
+            "stratec", "compliance management", "whistle-blow", "corruption",
+            "mission statement", "preamble", "antitrust", "money laundering",
+            "ethics as an employer",
+        )
+
+        if any(k in keys for k in ("stratec", "setratec")):
+            filtered = [
+                r for r in rows
+                if not any(m in (r.get("title") or "").lower() for m in godata_markers)
+            ]
+            return filtered if filtered else rows
+
+        if any(k in keys for k in ("godata", "go")):
+            filtered = [
+                r for r in rows
+                if not any(m in (r.get("title") or "").lower() for m in stratec_markers)
+                or any(m in (r.get("title") or "").lower() for m in godata_markers)
+            ]
+            return filtered if filtered else rows
+
+        return rows
+
+    def _toc_sections_for_document(self, session, doc_id: str, document_hint: str = "") -> list[dict]:
+        rows = [
+            r.data()
+            for r in session.run(
+                """
+                MATCH (b:Document|Book {id: $doc_id})-[:CONTAINS*1..20]->(s:Section)
+                RETURN DISTINCT s.id AS id, s.title AS title, s.order AS order,
+                       s.page_start AS page, s.cluster_id AS cluster
+                ORDER BY s.order
+                """,
+                doc_id=doc_id,
+            )
+        ]
+        if document_hint:
+            rows = self._filter_toc_rows_for_document_hint(rows, document_hint)
+        return rows
+
+    def get_table_of_contents(
+        self,
+        query: str = "",
+        user_context: Optional[UserContext] = None,
+    ) -> Dict:
         ctx = user_context or self.user_context
         denied = self._access_denied_response(query="table_of_contents", ctx=ctx)
         if denied:
             return {**denied, "query": "table_of_contents", "chunks": []}
 
-        cypher = """
-        MATCH (b:Book)-[:CONTAINS*1..3]->(s:Section)
-        RETURN s.id AS id, s.title AS title, s.order AS order,
-               s.page_start AS page, s.cluster_id AS cluster
-        ORDER BY s.order
-        """
+        _, document_hint = self._section_query_focus(query) if query else (query, None)
+        document_hint = document_hint or self._extract_document_hint(query or "")
+        if not document_hint and query:
+            of_m = re.search(r"\bof\s+(?:the\s+)?(.+?)\s+document\b", query.strip(), re.I)
+            if of_m:
+                document_hint = of_m.group(1).strip()
+        anchor_title = self._toc_anchor_title(query, document_hint=document_hint)
+        wants_one_doc = bool(document_hint) or self._query_requests_named_document(query or "")
+
         with self.driver.session() as session:
-            rows = [r.data() for r in session.run(cypher)]
+            available = self._documents_with_sections(session)
+            doc_id: Optional[str] = None
+            resolved_title: Optional[str] = None
+
+            if document_hint:
+                doc_id = self._resolve_document_id(session, document_hint)
+                if doc_id:
+                    for d in available:
+                        if d["id"] == doc_id:
+                            resolved_title = d["title"]
+                            break
+                    if document_hint and (
+                        not resolved_title
+                        or resolved_title == doc_id
+                        or re.search(r"^[a-f0-9]{32}", resolved_title or "", re.I)
+                        or str(resolved_title).endswith("_rag_document")
+                    ):
+                        resolved_title = document_hint.strip().title()
+                rows = (
+                    self._toc_sections_for_document(session, doc_id, document_hint)
+                    if doc_id
+                    else []
+                )
+            elif wants_one_doc:
+                rows = []
+            else:
+                rows = [
+                    r.data()
+                    for r in session.run(
+                        """
+                        MATCH (b:Document|Book)-[:CONTAINS*1..20]->(s:Section)
+                        RETURN DISTINCT s.id AS id, s.title AS title, s.order AS order,
+                               s.page_start AS page, s.cluster_id AS cluster
+                        ORDER BY s.order
+                        """
+                    )
+                ]
+
+            if anchor_title and rows:
+                anchor = self._best_title_match(rows, anchor_title)
+                if anchor is not None:
+                    rows = [r for r in rows if r["order"] >= anchor["order"]]
+
+        meta: dict = {
+            "anchor": anchor_title,
+            "document_hint": document_hint,
+        }
+        if document_hint and not doc_id:
+            meta["document_not_found"] = True
+            meta["available_documents"] = [
+                f"{d['title']} ({d['sections']} sections)" for d in available
+            ]
+        elif wants_one_doc and not doc_id and not document_hint:
+            meta["document_not_found"] = True
+            meta["document_hint"] = "named document"
+            meta["available_documents"] = [
+                f"{d['title']} ({d['sections']} sections)" for d in available
+            ]
 
         return {
             "query": "table_of_contents",
+            "mode": "table_of_contents",
+            "document_id": doc_id,
+            "document_title": resolved_title,
             "chunks": [
                 {
                     "id": r["id"],
                     "title": r["title"],
-                    "text": f"{r['title']} (Page {r['page']})",
+                    "text": f"{r['title']} (Page {r['page']})" if r.get("page") else r["title"],
+                    "page": r.get("page"),
                     "cluster": r["cluster"],
                     "related": [],
                     "score": 1.0,
@@ -477,7 +790,61 @@ class ESGComplianceRetriever:
                 for r in rows
             ],
             "total_available": len(rows),
+            **meta,
         }
+
+    def get_all_sections(self, user_context: Optional[UserContext] = None) -> Dict:
+        """Backward-compatible wrapper — prefer get_table_of_contents(query=...)."""
+        return self.get_table_of_contents(query="", user_context=user_context)
+
+    def _toc_anchor_title(
+        self, query: str, document_hint: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Parse 'table of contents from MISSION STATEMENT' → section anchor title.
+        'from Stratec document' is a document scope (handled elsewhere), not an anchor.
+        """
+        q = query.strip()
+        if re.search(r"\b(?:from|form)\s+(?:the\s+)?.+?\s+document\b", q, re.I):
+            return None
+        if document_hint and re.search(
+            rf"\bfrom\s+(?:the\s+)?{re.escape(document_hint.strip())}\s*$",
+            q,
+            re.I,
+        ):
+            return None
+        for prefix in (r"\bfrom\s+", r"\bform\s+"):  # form = common typo
+            m = re.search(
+                prefix + r"(?:the\s+)?(.+?)(?:\s+of\s+[a-z0-9_\-\s]+)?\s*$",
+                q,
+                re.I,
+            )
+            if m:
+                anchor = m.group(1).strip(" ?.")
+                if anchor.lower() in ("document", "pdf", "report", "manual"):
+                    return None
+                return anchor or None
+        return None
+
+    def _best_title_match(self, rows: list, title: str) -> Optional[dict]:
+        q = title.lower().strip()
+        best: Optional[dict] = None
+        best_score = 0.0
+        for row in rows:
+            t = (row.get("title") or "").lower()
+            score = 0.0
+            if t == q:
+                score = 1.0
+            elif q in t or t in q:
+                score = 0.85
+            else:
+                q_words = [w for w in q.split() if len(w) > 2]
+                if q_words:
+                    score = sum(1 for w in q_words if w in t) / len(q_words)
+            if score > best_score:
+                best_score = score
+                best = row
+        return best if best_score >= 0.5 else None
 
     def multi_hop_retrieve(
         self,
@@ -1027,7 +1394,12 @@ class ESGComplianceRetriever:
             intent.pdf_page = pdf_page
         if document_page:
             intent.document_page = document_page
-        lim = 1 if intent.single_visual else 5
+        if intent.single_visual:
+            lim = 1
+        elif intent.list_all:
+            lim = 12
+        else:
+            lim = 5
         return self.unified_visual_retrieve(
             query, limit=lim, user_context=user_context, intent=intent
         )
@@ -1580,38 +1952,84 @@ class ESGComplianceRetriever:
 
         return rows
 
-    def _best_parent_section(self, session, query: str) -> Optional[dict]:
+    def _best_parent_section(
+        self,
+        session,
+        query: str,
+        document_hint: Optional[str] = None,
+    ) -> Optional[dict]:
         """Pick the section whose title best matches the user question (not loose term hits)."""
-        q = query.lower()
+        q = query.lower().strip()
         q_norm = re.sub(r"[^a-z0-9\s\.]", " ", q)
+        document_key = re.sub(r"[^a-z0-9]", "", (document_hint or "").lower())
 
-        candidates = session.run(
-            """
-            MATCH (s:Section)
-            WHERE size(s.title) >= 12
-            RETURN s.id AS id, s.title AS title, s.text AS text,
-                   s.cluster_id AS cluster, s.order AS doc_order
-            """
-        )
+        if document_key:
+            candidates = session.run(
+                """
+                MATCH (b:Document|Book)-[:CONTAINS*1..8]->(s:Section)
+                WHERE size(s.title) >= 8
+                  AND (
+                    toLower(replace(b.id, '_', ' ')) CONTAINS $document_key
+                    OR toLower(coalesce(b.title, '')) CONTAINS $document_key
+                  )
+                RETURN s.id AS id, s.title AS title, s.text AS text,
+                       s.cluster_id AS cluster, s.order AS doc_order
+                """,
+                document_key=document_key,
+            )
+            candidate_rows = list(candidates)
+            if not candidate_rows:
+                # Document id may be a hash; match sections that mention the document name.
+                candidates = session.run(
+                    """
+                    MATCH (s:Section)
+                    WHERE size(s.title) >= 8
+                      AND (
+                        toLower(s.title) CONTAINS $document_key
+                        OR toLower(coalesce(s.text, '')) CONTAINS $document_key
+                      )
+                    RETURN s.id AS id, s.title AS title, s.text AS text,
+                           s.cluster_id AS cluster, s.order AS doc_order
+                    """,
+                    document_key=document_key,
+                )
+                candidate_rows = list(candidates)
+        else:
+            candidate_rows = list(
+                session.run(
+                    """
+                    MATCH (s:Section)
+                    WHERE size(s.title) >= 8
+                    RETURN s.id AS id, s.title AS title, s.text AS text,
+                           s.cluster_id AS cluster, s.order AS doc_order
+                    """
+                )
+            )
+
         best: Optional[dict] = None
         best_score = 0.0
 
-        for record in candidates:
-            row = record.data()
+        for record in candidate_rows:
+            row = record.data() if hasattr(record, "data") else record
             title = (row.get("title") or "").lower()
             title_norm = re.sub(r"[^a-z0-9\s\.]", " ", title)
             words = [
                 w
                 for w in title_norm.split()
-                if w not in STOPWORDS and len(w) > 2
+                if w not in STOPWORDS and len(w) > 1
             ]
             if not words:
                 continue
 
-            hits = sum(1 for w in words if w in q_norm.split())
+            q_tokens = q_norm.split()
+            hits = sum(1 for w in words if w in q_tokens)
             score = hits / len(words)
             if title_norm in q_norm or q_norm in title_norm:
-                score += 0.4
+                score += 0.5
+            # Boost when numeric prefix matches (e.g. query "6 implementation" → title "6 IMPLEMENTATION...")
+            num_m = re.match(r"^(\d+)", title_norm.strip())
+            if num_m and num_m.group(1) in q_norm:
+                score += 0.25
             if "go.data" in title and "go.data" in q:
                 score += 0.1
 
@@ -1619,9 +2037,82 @@ class ESGComplianceRetriever:
                 best_score = score
                 best = {**row, "score": score, "match_type": "parent_match"}
 
-        if best_score < 0.45:
+        if best_score < 0.4:
             return None
         return best
+
+    def _section_query_focus(self, query: str) -> tuple[str, Optional[str]]:
+        """Strip document boilerplate; return (section focus text, optional book hint)."""
+        q = query.strip()
+        document_hint: Optional[str] = None
+        doc_m = re.search(
+            r"\b(?:from|form)\s+(?:the\s+)?(.+?)\s+document\b",
+            q,
+            re.I,
+        )
+        if doc_m:
+            document_hint = doc_m.group(1).strip()
+            q = q[: doc_m.start()].strip()
+        q = re.sub(
+            r"^(?:what\s+(?:can\s+you\s+)?tell\s+me\s+about|what\s+is|tell\s+me\s+about|"
+            r"explain|describe|summarize|summary\s+of)\s+",
+            "",
+            q,
+            flags=re.I,
+        )
+        q = re.sub(r"\s+", " ", q).strip(" ?.")
+        return (q or query.strip(), document_hint)
+
+    def _fetch_section_subtree(
+        self,
+        session,
+        parent_id: str,
+        parent_order: int,
+        parent_title: str,
+        max_sections: int = 12,
+    ) -> list:
+        """
+        Descendants of a section, stopping before the next top-level numbered heading
+        (e.g. don't pull in '7 SUMMARY' when querying section 6).
+        """
+        max_order = parent_order + 15
+        parent_num_m = re.match(r"^(\d+)", (parent_title or "").strip())
+        parent_num = int(parent_num_m.group(1)) if parent_num_m else None
+        if parent_num is not None:
+            for row in session.run(
+                """
+                MATCH (s:Section)
+                WHERE s.order > $porder AND s.title =~ '^\\d+\\s+.*'
+                RETURN s.order AS ord, s.title AS title
+                ORDER BY s.order ASC
+                LIMIT 30
+                """,
+                porder=parent_order,
+            ):
+                m = re.match(r"^(\d+)", (row["title"] or "").strip())
+                if m and int(m.group(1)) > parent_num:
+                    max_order = row["ord"]
+                    break
+
+        result = session.run(
+            """
+            MATCH (p:Section {id: $pid})-[:CONTAINS*1..6]->(c:Section)
+            WHERE c.order > $porder AND c.order < $max_order
+            RETURN c.id AS id, c.title AS title, c.text AS text,
+                   c.cluster_id AS cluster, c.order AS doc_order,
+                   1.0 AS score
+            ORDER BY c.order ASC
+            LIMIT $limit
+            """,
+            pid=parent_id,
+            porder=parent_order,
+            max_order=max_order,
+            limit=max_sections,
+        )
+        rows = [r.data() for r in result]
+        for row in rows:
+            row["match_type"] = "descendant_of_match"
+        return rows
 
     def _fetch_descendant_sections(
         self,
@@ -1843,7 +2334,7 @@ class ESGComplianceRetriever:
             OPTIONAL MATCH (s)-[:SAME_CATEGORY]-(cm:Section)
             OPTIONAL MATCH (s)-[:SHARES_ENTITY]-(em:Section)
             OPTIONAL MATCH (s)-[:PRECEDES|FOLLOWS]-(nb:Section)
-            OPTIONAL MATCH (b:Book)-[:CONTAINS*1..3]->(s)
+            OPTIONAL MATCH (b:Document|Book)-[:CONTAINS*1..3]->(s)
             RETURN s.id AS id,
                    collect(DISTINCT cm.title)[0..3] AS cluster_context,
                    collect(DISTINCT em.title)[0..3] AS entity_context,
@@ -1960,3 +2451,8 @@ class ESGComplianceRetriever:
         if meta:
             out.update(meta)
         return out
+
+
+# Backward-compatible aliases (deprecated)
+ESGComplianceRetriever = DocumentRAGRetriever
+RAGDataRetriever = DocumentRAGRetriever

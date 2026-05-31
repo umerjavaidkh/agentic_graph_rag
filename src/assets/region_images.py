@@ -55,7 +55,7 @@ def _crop_page_jpeg(
 
 def save_region_images(
     pdf_path: str | Path,
-    book_id: str,
+    document_id: str,
     nodes: list[DKGNode],
 ) -> int:
     if not ENABLE_REGION_IMAGES:
@@ -78,7 +78,7 @@ def save_region_images(
             if pdf_page < 1 or pdf_page > len(doc):
                 continue
             kind = rn.region_kind or "region"
-            key = region_image_key(book_id, pdf_page, kind, rn.order)
+            key = region_image_key(document_id, pdf_page, kind, rn.order)
             data = _crop_page_jpeg(
                 doc[pdf_page - 1],
                 rn.bbox or [],

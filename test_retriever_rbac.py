@@ -7,7 +7,7 @@ Tests that retrievers enforce access checks before querying.
 
 from src.auth.roles import UserContext, validate_role
 from src.structured.retriever import StructuredRetriever
-from src.unstructured.retriever import ESGComplianceRetriever
+from src.unstructured.retriever import DocumentRAGRetriever
 
 
 def test_structured_retriever_access():
@@ -63,7 +63,7 @@ def test_esg_retriever_access():
     print("TESTING AGENTIC GRAPH RAG RETRIEVER ACCESS CONTROL")
     print("="*60)
     
-    retriever = ESGComplianceRetriever()
+    retriever = DocumentRAGRetriever()
     
     # Test 1: Admin can access document graph
     print("\n[TEST 1] Admin accessing Agentic Graph RAG data")

@@ -10,8 +10,30 @@
     .card { border: 1px solid #d1d5db; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.5rem; background: #ffffff; }
     label { display: block; margin-top: 0.75rem; font-weight: 600; }
     input[type=file], textarea, input[type=text] { width: 100%; padding: 0.75rem; margin-top: 0.35rem; border: 1px solid #cbd5e1; border-radius: 8px; }
-    button { margin-top: 1rem; padding: 0.85rem 1.25rem; background: #2563eb; color: white; border: none; border-radius: 8px; cursor: pointer; }
+    button { margin-top: 1rem; padding: 0.85rem 1.25rem; background: #2563eb; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
     button:disabled { opacity: 0.65; cursor: not-allowed; }
+    button.loading { position: relative; padding-left: 2.5rem; }
+    button.loading::before {
+      content: '';
+      position: absolute; left: 0.85rem; top: 50%;
+      width: 1rem; height: 1rem; margin-top: -0.5rem;
+      border: 2px solid rgba(255,255,255,0.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .file-hint { font-size: 0.9rem; color: #64748b; margin-top: 0.35rem; }
+    .inline-status {
+      margin-top: 1rem; padding: 0.85rem 1rem;
+      border-radius: 10px; font-size: 0.95rem; line-height: 1.45;
+      border: 1px solid #cbd5e1; background: #f8fafc;
+    }
+    .inline-status.hidden { display: none; }
+    .inline-status.info { border-color: #93c5fd; background: #eff6ff; color: #1e40af; }
+    .inline-status.success { border-color: #86efac; background: #f0fdf4; color: #166534; }
+    .inline-status.error { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
+    .inline-status.running { border-color: #fcd34d; background: #fffbeb; color: #92400e; }
     .notice { background: #f8fafc; border: 1px solid #cbd5e1; padding: 1rem; border-radius: 10px; margin-top: 1rem; }
     .status { white-space: pre-wrap; background: #f8fafc; padding: 1rem; border-radius: 10px; margin-top: 1rem; font-family: Menlo, monospace; }
     .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
@@ -34,9 +56,11 @@
       <p>Upload a PDF/DOCX/PPTX/HTML. Ingestion will automatically build the document structure and enrich it with semantic relationships if configured.</p>
       <label>File</label>
       <input type="file" id="unstructured-file" accept=".pdf,.docx,.pptx,.html,.txt" />
+      <div class="file-hint" id="unstructured-file-hint">No file selected</div>
       <label>Job name (optional)</label>
       <input type="text" id="unstructured-job-name" placeholder="policy-manual" />
-      <button id="submit-unstructured">Submit ingestion</button>
+      <button type="button" id="submit-unstructured">Submit ingestion</button>
+      <div class="inline-status hidden" id="unstructured-inline-status" role="status" aria-live="polite"></div>
     </div>
 
     <div id="cypher-panel" class="hidden">
@@ -52,7 +76,8 @@
       <input type="text" id="cypher-user-id" placeholder="compliance_001" value="compliance_001" />
       <label>OpenAI API key (optional)</label>
       <input type="text" id="cypher-openai-key" placeholder="sk-..." />
-      <button id="submit-cypher">Submit cypher ingestion</button>
+      <button type="button" id="submit-cypher">Submit cypher ingestion</button>
+      <div class="inline-status hidden" id="cypher-inline-status" role="status" aria-live="polite"></div>
     </div>
   </div>
 
@@ -80,7 +105,7 @@
     <h2>Job status</h2>
     <label>Job ID</label>
     <input type="text" id="status-job-id" placeholder="Enter job ID" />
-    <button id="check-status">Check status</button>
+    <button type="button" id="check-status">Check status</button>
     <div class="status" id="status-output"></div>
   </div>
 
@@ -91,7 +116,7 @@
     <input type="text" id="reset-role" placeholder="admin" value="admin" />
     <label>User ID</label>
     <input type="text" id="reset-user-id" placeholder="admin_001" value="admin_001" />
-    <button id="reset-db" style="background:#dc2626;">Reset Neo4j DB</button>
+    <button type="button" id="reset-db" style="background:#dc2626;">Reset Neo4j DB</button>
   </div>
 
   <script>
@@ -121,6 +146,119 @@
       document.getElementById('status-output').innerText = message;
     }
 
+    function showInlineStatus(elId, message, kind) {
+      const el = document.getElementById(elId);
+      el.className = 'inline-status ' + (kind || 'info');
+      el.textContent = message;
+      el.classList.remove('hidden');
+    }
+
+    function hideInlineStatus(elId) {
+      const el = document.getElementById(elId);
+      el.classList.add('hidden');
+      el.textContent = '';
+    }
+
+    function setButtonLoading(btn, loading, loadingLabel) {
+      if (!btn) return;
+      btn.disabled = loading;
+      btn.classList.toggle('loading', loading);
+      if (loading) {
+        btn.dataset.originalLabel = btn.textContent;
+        btn.textContent = loadingLabel || 'Working…';
+      } else if (btn.dataset.originalLabel) {
+        btn.textContent = btn.dataset.originalLabel;
+      }
+    }
+
+    let pollTimer = null;
+
+    function stopPolling() {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    }
+
+    async function fetchJobStatus(jobId) {
+      let lastErr;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const res = await fetch('/ingest/jobs/' + encodeURIComponent(jobId), {
+            signal: AbortSignal.timeout(15000),
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || 'Status request failed');
+          }
+          return res.json();
+        } catch (err) {
+          lastErr = err;
+          if (attempt < 4) {
+            await new Promise(r => setTimeout(r, 3000));
+          }
+        }
+      }
+      throw new Error(
+        'Cannot reach the server (Failed to fetch). The app may be busy parsing a large PDF, '
+        + 'restarting after running out of memory, or stopped. '
+        + 'Wait 1–2 minutes, refresh the page, then click Check status again. '
+        + `(Job ID: ${jobId})`
+      );
+    }
+
+    function isJobInProgress(status) {
+      const st = (status || '').toLowerCase();
+      return st !== 'completed' && st !== 'failed';
+    }
+
+    async function pollJob(jobId, inlineElId) {
+      stopPolling();
+      document.getElementById('status-job-id').value = jobId;
+
+      const tick = async () => {
+        try {
+          const payload = await fetchJobStatus(jobId);
+          const text = formatJobStatus(payload);
+          showStatus(text);
+
+          const st = (payload.status || '').toLowerCase();
+          if (isJobInProgress(st)) {
+            showInlineStatus(
+              inlineElId,
+              `Job ${jobId.slice(0, 8)}… — ${payload.status.toUpperCase()}. Large PDFs can take 10–30+ minutes. Keep this tab open.`,
+              'running'
+            );
+            return;
+          }
+
+          stopPolling();
+          if (st === 'completed') {
+            showInlineStatus(inlineElId, `Done. Job ${jobId} completed successfully.`, 'success');
+          } else if (st === 'failed') {
+            showInlineStatus(inlineElId, `Failed: ${payload.error || 'See logs below.'}`, 'error');
+          } else {
+            showInlineStatus(inlineElId, `Job finished with status: ${payload.status}`, 'info');
+          }
+        } catch (err) {
+          showInlineStatus(inlineElId, err.message, 'error');
+          showStatus(err.message);
+          // Keep polling — server may come back after heavy parse or restart
+        }
+      };
+
+      await tick();
+      pollTimer = setInterval(tick, 2500);
+    }
+
+    document.getElementById('unstructured-file').addEventListener('change', (e) => {
+      const hint = document.getElementById('unstructured-file-hint');
+      const f = e.target.files && e.target.files[0];
+      hint.textContent = f
+        ? `Selected: ${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`
+        : 'No file selected';
+    });
+
     function formatJobStatus(payload) {
       const lines = [
         `Job ID: ${payload.job_id}`,
@@ -146,39 +284,73 @@
     async function postForm(url, formData) {
       const res = await fetch(url, { method: 'POST', body: formData });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Request failed');
+        let detail = await res.text();
+        try {
+          const j = JSON.parse(detail);
+          detail = j.detail || detail;
+        } catch (_) { /* plain text */ }
+        throw new Error(detail || 'Request failed');
       }
       return res.json();
     }
 
     document.getElementById('submit-unstructured').addEventListener('click', async () => {
+      const btn = document.getElementById('submit-unstructured');
       const fileElement = document.getElementById('unstructured-file');
       const jobName = document.getElementById('unstructured-job-name').value;
 
-      if (!fileElement.files.length) return showStatus('Please select a file.');
+      if (!fileElement.files.length) {
+        showInlineStatus('unstructured-inline-status', 'Please select a file first.', 'error');
+        return;
+      }
+
+      stopPolling();
+      setButtonLoading(btn, true, 'Uploading…');
+      showInlineStatus(
+        'unstructured-inline-status',
+        `Uploading ${fileElement.files[0].name}…`,
+        'running'
+      );
+      showStatus('Submitting unstructured ingestion…');
 
       const formData = new FormData();
       formData.append('file', fileElement.files[0]);
       if (jobName) formData.append('job_name', jobName);
 
       try {
-        showStatus('Submitting unstructured ingestion...');
         const result = await postForm('/ingest/unstructured', formData);
-        showStatus('Job submitted. Job ID: ' + result.job_id + '\nStatus: ' + result.status);
+        document.getElementById('status-job-id').value = result.job_id;
+        showInlineStatus(
+          'unstructured-inline-status',
+          `Upload received. Job ID: ${result.job_id}. Processing…`,
+          'running'
+        );
+        showStatus('Job submitted.\nJob ID: ' + result.job_id + '\nStatus: ' + result.status);
+        await pollJob(result.job_id, 'unstructured-inline-status');
       } catch (err) {
+        showInlineStatus('unstructured-inline-status', 'Error: ' + err.message, 'error');
         showStatus('Error: ' + err.message);
+      } finally {
+        setButtonLoading(btn, false);
       }
     });
 
     document.getElementById('submit-cypher').addEventListener('click', async () => {
+      const btn = document.getElementById('submit-cypher');
       const fileElement = document.getElementById('cypher-file');
       const jobName = document.getElementById('cypher-job-name').value;
       const role = document.getElementById('cypher-role').value;
       const userId = document.getElementById('cypher-user-id').value;
       const openaiKey = document.getElementById('cypher-openai-key').value;
 
-      if (!fileElement.files.length) return showStatus('Please select a Cypher file.');
+      if (!fileElement.files.length) {
+        showInlineStatus('cypher-inline-status', 'Please select a Cypher file first.', 'error');
+        return;
+      }
+
+      stopPolling();
+      setButtonLoading(btn, true, 'Uploading…');
+      showInlineStatus('cypher-inline-status', 'Uploading Cypher file…', 'running');
 
       const formData = new FormData();
       formData.append('file', fileElement.files[0]);
@@ -188,32 +360,41 @@
       if (openaiKey) formData.append('openai_key', openaiKey);
 
       try {
-        showStatus('Submitting cypher ingestion...');
+        showStatus('Submitting cypher ingestion…');
         const result = await postForm('/ingest/cypher', formData);
+        showInlineStatus(
+          'cypher-inline-status',
+          `Job submitted: ${result.job_id}. Processing…`,
+          'running'
+        );
         showStatus('Job submitted. Job ID: ' + result.job_id + '\nStatus: ' + result.status);
+        await pollJob(result.job_id, 'cypher-inline-status');
       } catch (err) {
+        showInlineStatus('cypher-inline-status', 'Error: ' + err.message, 'error');
         showStatus('Error: ' + err.message);
+      } finally {
+        setButtonLoading(btn, false);
       }
     });
 
     document.getElementById('check-status').addEventListener('click', async () => {
+      const btn = document.getElementById('check-status');
       const jobId = document.getElementById('status-job-id').value.trim();
       if (!jobId) return showStatus('Enter a job ID to query.');
+      setButtonLoading(btn, true, 'Checking…');
       try {
-        showStatus('Checking status...');
-        const res = await fetch('/ingest/jobs/' + encodeURIComponent(jobId));
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(text || 'Status request failed');
-        }
-        const payload = await res.json();
+        showStatus('Checking status…');
+        const payload = await fetchJobStatus(jobId);
         showStatus(formatJobStatus(payload));
       } catch (err) {
         showStatus('Error: ' + err.message);
+      } finally {
+        setButtonLoading(btn, false);
       }
     });
 
     document.getElementById('reset-db').addEventListener('click', async () => {
+      const btn = document.getElementById('reset-db');
       const role = document.getElementById('reset-role').value;
       const userId = document.getElementById('reset-user-id').value;
       const confirmed = confirm('This will WIPE Neo4j completely. Are you sure?');
@@ -224,11 +405,14 @@
       if (userId) formData.append('user_id', userId);
 
       try {
-        showStatus('Resetting Neo4j...');
+        setButtonLoading(btn, true, 'Resetting…');
+        showStatus('Resetting Neo4j…');
         const result = await postForm('/admin/reset-neo4j', formData);
         showStatus('Reset complete.\n' + JSON.stringify(result, null, 2));
       } catch (err) {
         showStatus('Error: ' + err.message);
+      } finally {
+        setButtonLoading(btn, false);
       }
     });
   </script>

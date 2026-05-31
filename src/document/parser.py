@@ -2,7 +2,7 @@
 parser.py — Structure-aware Docling → DKGNode tree.
 
 Builds a real hierarchy from Docling reading order and item levels:
-    Book → Chapter (TITLE) → Section (nested via SECTION_HEADER levels / numbering)
+    Document → Chapter (TITLE) → Section (nested via SECTION_HEADER levels / numbering)
          → Page
 
 Section → Section CONTAINS edges are created when Docling depth or numbered
@@ -95,10 +95,10 @@ class DoclingParser:
         nodes: list[DKGNode] = []
         edges: list[DKGEdge] = []
 
-        book_id = f"book_{slug(doc_name)}"
-        book_node = DKGNode(
-            id=book_id,
-            type=NodeType.BOOK,
+        document_id = f"doc_{slug(doc_name)}"
+        document_node = DKGNode(
+            id=document_id,
+            type=NodeType.DOCUMENT,
             title=doc_name,
             text=doc_name,
             order=0,
@@ -106,7 +106,7 @@ class DoclingParser:
             page_end=self._max_page(doc),
             depth=0,
         )
-        nodes.append(book_node)
+        nodes.append(document_node)
 
         raw_items = self._extract_raw_items(doc)
         items = self._resolve_number_prefixes(raw_items)
@@ -124,7 +124,7 @@ class DoclingParser:
         doc_order = 0
 
         # (structural_level, node_id) — parent = nearest entry with lower level
-        heading_stack: list[tuple[int, str]] = [(0, book_id)]
+        heading_stack: list[tuple[int, str]] = [(0, document_id)]
         number_map: dict[str, str] = {}
 
         def finalize_section() -> None:
@@ -202,7 +202,7 @@ class DoclingParser:
                 if label in CHAPTER_LABELS:
                     chapter_idx += 1
                     global_section_idx = 0
-                    node_id = f"chapter_{chapter_idx}"
+                    node_id = f"{document_id}_chapter_{chapter_idx}"
                     node = DKGNode(
                         id=node_id,
                         type=NodeType.CHAPTER,
@@ -217,11 +217,11 @@ class DoclingParser:
                     chapter_nodes.append(node)
                     current_chapter = node
                     current_section = None
-                    heading_stack = [(0, book_id), (level, node_id)]
-                    link_contains(book_id, node_id)
+                    heading_stack = [(0, document_id), (level, node_id)]
+                    link_contains(document_id, node_id)
                 else:
                     global_section_idx += 1
-                    node_id = f"section_{chapter_idx}_{global_section_idx}"
+                    node_id = f"{document_id}_section_{chapter_idx}_{global_section_idx}"
                     full_title = (
                         f"{section_number} {title}".strip()
                         if section_number
@@ -260,9 +260,9 @@ class DoclingParser:
                 if current_section is None:
                     doc_order += 1
                     global_section_idx += 1
-                    node_id = f"section_{chapter_idx}_{global_section_idx}"
+                    node_id = f"{document_id}_section_{chapter_idx}_{global_section_idx}"
                     parent_id = (
-                        current_chapter.id if current_chapter else book_id
+                        current_chapter.id if current_chapter else document_id
                     )
                     node = DKGNode(
                         id=node_id,
@@ -298,13 +298,13 @@ class DoclingParser:
             edges,
             chapter_nodes,
             section_nodes,
-            book_id,
+            document_id,
             all_page_numbers=all_page_numbers,
         )
         enrich_page_nodes(page_nodes, section_nodes)
         nodes.extend(page_nodes)
 
-        region_nodes = self._build_region_nodes(doc, page_nodes, edges)
+        region_nodes = self._build_region_nodes(doc, page_nodes, edges, document_id)
         nodes.extend(region_nodes)
 
         self._add_sequential_edges(chapter_nodes, edges)
@@ -325,6 +325,7 @@ class DoclingParser:
         doc: DoclingDocument,
         page_nodes: list[DKGNode],
         edges: list[DKGEdge],
+        document_id: str,
     ) -> list[DKGNode]:
         """TABLE / PICTURE items with Docling bboxes → Region nodes linked to Page."""
         page_by_pdf: dict[int, DKGNode] = {}
@@ -370,7 +371,7 @@ class DoclingParser:
             doc_page = page_node.document_page if page_node else None
             tags = build_region_tags(kind, text, page_no, idx, doc_page)
             title = region_title(kind, text, page_no, idx)
-            node_id = f"region_{page_no}_{idx}"
+            node_id = f"{document_id}_region_{page_no}_{idx}"
 
             node = DKGNode(
                 id=node_id,
@@ -390,7 +391,7 @@ class DoclingParser:
             )
             region_nodes.append(node)
 
-            page_id = page_node.id if page_node else f"page_{page_no}"
+            page_id = page_node.id if page_node else f"{document_id}_page_{page_no}"
             edges.append(DKGEdge(page_id, node_id, RelType.CONTAINS, axis=1))
             edges.append(DKGEdge(node_id, page_id, RelType.PART_OF, axis=1))
 
@@ -500,14 +501,14 @@ class DoclingParser:
         edges: list[DKGEdge],
         chapter_nodes: list[DKGNode],
         section_nodes: list[DKGNode],
-        book_id: str,
+        document_id: str,
         all_page_numbers: set[int] | None = None,
     ) -> list[DKGNode]:
         page_nodes: list[DKGNode] = []
         page_nos = sorted(set(page_buckets.keys()) | (all_page_numbers or set()))
         for page_no in page_nos:
             texts = page_buckets.get(page_no, [])
-            node_id = f"page_{page_no}"
+            node_id = f"{document_id}_page_{page_no}"
             node = DKGNode(
                 id=node_id,
                 type=NodeType.PAGE,
@@ -520,7 +521,7 @@ class DoclingParser:
             )
             page_nodes.append(node)
             parent_id = self._find_page_parent(
-                page_no, section_nodes, chapter_nodes, book_id
+                page_no, section_nodes, chapter_nodes, document_id
             )
             edges.append(DKGEdge(parent_id, node_id, RelType.CONTAINS, axis=1))
             edges.append(DKGEdge(node_id, parent_id, RelType.PART_OF, axis=1))
@@ -531,7 +532,7 @@ class DoclingParser:
         page_no: int,
         section_nodes: list[DKGNode],
         chapter_nodes: list[DKGNode],
-        book_id: str,
+        document_id: str,
     ) -> str:
         """Prefer deepest section spanning this page (nested structure)."""
         candidates = [
@@ -544,7 +545,7 @@ class DoclingParser:
         for c in reversed(chapter_nodes):
             if c.page_start <= page_no <= c.page_end:
                 return c.id
-        return book_id
+        return document_id
 
     def _add_sequential_edges(
         self, nodes: list[DKGNode], edges: list[DKGEdge]

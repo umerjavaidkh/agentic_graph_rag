@@ -1,9 +1,11 @@
 # PDF ingest — Docling + PyTorch (~8–10 GB app image).
-#   docker compose -f docker-compose.yml -f docker-compose.bundled-neo4j.yml -f docker-compose.full.yml up --build
+# Give Docker Desktop ≥ 8 GB RAM or large PDFs may OOM-kill the app (exit 137).
+#   docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile.full
+    mem_limit: 8g
     environment:
       ENABLE_PDF_INGEST: "true"

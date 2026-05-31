@@ -24,7 +24,7 @@ from ..config.settings import (
     OPENAI_API_KEY,
     STORE_INGESTION_ARTIFACTS,
 )
-from ..assets.cleanup import cleanup_book_assets
+from ..assets.cleanup import cleanup_document_assets
 from ..assets.page_images import save_document_page_images
 from ..assets.region_images import save_region_images
 from ..document.page_vision import PageVisionEnricher
@@ -97,6 +97,11 @@ class IngestionManager:
     def get_job(self, job_id: str) -> Optional[IngestionJob]:
         return self.jobs.get(job_id)
 
+    def has_active_job(self) -> bool:
+        """True while a job is queued or in progress (not completed/failed)."""
+        terminal = {IngestionStatus.completed, IngestionStatus.failed}
+        return any(j.status not in terminal for j in self.jobs.values())
+
     def run_job(self, job_id: str) -> None:
         job = self.jobs.get(job_id)
         if job is None:
@@ -165,32 +170,32 @@ class IngestionManager:
         nodes, edges = parser.parse(str(job.input_path))
         self._log(job, f"Parsed {len(nodes)} nodes and {len(edges)} edges")
 
-        book_id = next(
-            (n.id for n in nodes if n.type in (NodeType.BOOK, NodeType.BOOK.value)),
-            f"book_{job.id}",
+        document_id = next(
+            (n.id for n in nodes if n.type in (NodeType.DOCUMENT, NodeType.DOCUMENT.value, NodeType.BOOK, NodeType.BOOK.value)),
+            f"doc_{job.id}",
         )
         if CLEANUP_BOOK_ASSETS_ON_INGEST:
             try:
-                removed = cleanup_book_assets(book_id)
+                removed = cleanup_document_assets(document_id)
                 if removed:
                     self._log(
                         job,
-                        f"Removed {removed} stale asset file(s) for {book_id}",
+                        f"Removed {removed} stale asset file(s) for {document_id}",
                     )
             except Exception as exc:
-                self._log(job, f"Asset cleanup skipped for {book_id}: {exc}")
+                self._log(job, f"Asset cleanup skipped for {document_id}: {exc}")
 
         if job.input_path.suffix.lower() == ".pdf":
             try:
                 region_count = save_region_images(
-                    job.input_path, book_id, nodes
+                    job.input_path, document_id, nodes
                 )
                 self._log(job, f"Stored {region_count} region crop(s) (TABLE/FIGURE)")
             except Exception as exc:
                 self._log(job, f"Region image storage skipped: {exc}")
             try:
                 img_count = save_document_page_images(
-                    job.input_path, book_id, nodes
+                    job.input_path, document_id, nodes
                 )
                 self._log(job, f"Stored {img_count} full-page image(s) (JPEG fallback)")
             except Exception as exc:

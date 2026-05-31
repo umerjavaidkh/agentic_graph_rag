@@ -61,7 +61,7 @@ PAGE_IMAGE_MAX_PAGES = int(os.environ.get("PAGE_IMAGE_MAX_PAGES", "0"))  # 0 = n
 PAGE_IMAGE_SELECTIVE = os.environ.get("PAGE_IMAGE_SELECTIVE", "true").lower() in ("1", "true", "yes")
 PAGE_IMAGE_SKIP_WHEN_REGIONS = os.environ.get("PAGE_IMAGE_SKIP_WHEN_REGIONS", "true").lower() in ("1", "true", "yes")
 ENABLE_REGION_IMAGES = os.environ.get("ENABLE_REGION_IMAGES", "true").lower() in ("1", "true", "yes")
-# Remove prior JPEG crops for a book before re-ingesting the same book_id folder.
+# Remove prior JPEG crops for a document before re-ingesting the same document_id folder.
 CLEANUP_BOOK_ASSETS_ON_INGEST = os.environ.get(
     "CLEANUP_BOOK_ASSETS_ON_INGEST", "true"
 ).lower() in ("1", "true", "yes")

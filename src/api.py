@@ -1,4 +1,6 @@
+import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
 
@@ -12,7 +14,7 @@ from .bridge import ask
 from .conversation import clear_turn
 from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
-from .assets.cleanup import cleanup_all_book_assets
+from .assets.cleanup import cleanup_all_document_assets
 from .assets.factory import get_asset_store
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
@@ -31,6 +33,13 @@ app = FastAPI(title="Agentic Graph RAG API")
 
 # ingestion manager state
 ingestion_manager = IngestionManager()
+# One PDF at a time — Docling/PyTorch is CPU+RAM heavy; keeps /health responsive.
+_ingest_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ingest")
+
+
+async def _run_ingest_job(job_id: str) -> None:
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(_ingest_executor, ingestion_manager.run_job, job_id)
 
 @app.on_event("startup")
 async def _ensure_rbac_schema_initialized():
@@ -181,8 +190,13 @@ async def ingest_unstructured(
     file: UploadFile = File(...),
     job_name: Optional[str] = Form(None),
 ):
+    if ingestion_manager.has_active_job():
+        raise HTTPException(
+            status_code=409,
+            detail="Another ingestion job is already running. Wait for it to finish before uploading again.",
+        )
     job = ingestion_manager.submit_unstructured(file, job_name=job_name)
-    background_tasks.add_task(ingestion_manager.run_job, job.id)
+    background_tasks.add_task(_run_ingest_job, job.id)
     return IngestionResponse(
         job_id=job.id,
         status=job.status.value,
@@ -231,7 +245,7 @@ async def ingest_cypher(
         cypher_params["openAIKey"] = effective_openai_key
 
     job = ingestion_manager.submit_cypher(file, job_name=job_name, cypher_params=cypher_params or None)
-    background_tasks.add_task(ingestion_manager.run_job, job.id)
+    background_tasks.add_task(_run_ingest_job, job.id)
     return IngestionResponse(
         job_id=job.id,
         status=job.status.value,
@@ -311,7 +325,7 @@ async def reset_neo4j(
     assets_removed = 0
     if CLEANUP_ASSETS_ON_DB_RESET:
         try:
-            assets_removed = cleanup_all_book_assets()
+            assets_removed = cleanup_all_document_assets()
         except Exception:
             pass
 

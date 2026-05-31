@@ -59,7 +59,7 @@ def _render_page_jpeg(page: fitz.Page, quality: int) -> bytes:
 
 def save_document_page_images(
     pdf_path: str | Path,
-    book_id: str,
+    document_id: str,
     nodes: list[DKGNode],
 ) -> int:
     if not ENABLE_PAGE_IMAGES:
@@ -87,7 +87,7 @@ def save_document_page_images(
             pdf_page = pn.pdf_page or pn.page_start or pn.order
             if pdf_page < 1 or pdf_page > len(doc):
                 continue
-            key = page_full_image_key(book_id, pdf_page)
+            key = page_full_image_key(document_id, pdf_page)
             data = _render_page_jpeg(doc[pdf_page - 1], PAGE_IMAGE_JPEG_QUALITY)
             store.put(key, data)
             pn.image_key = key

@@ -350,11 +350,26 @@
     .pres-block{ margin: 14px 0; }
     .pres-block:first-child{ margin-top: 0; }
     .pres-block:last-child{ margin-bottom: 0; }
+    .pres-img-wrap{
+      display: inline-block;
+      max-width: min(320px, 85%);
+      vertical-align: top;
+    }
     .pres-img{
+      display: block;
+      width: auto;
+      height: auto;
       max-width: 100%;
+      max-height: 360px;
+      object-fit: contain;
       border-radius: var(--radius-sm);
       border: 1px solid var(--border);
       margin: 4px 0;
+      cursor: zoom-in;
+    }
+    .pres-img-wrap .pres-caption{
+      margin-top: 6px;
+      margin-bottom: 0;
     }
     .pres-caption{
       font-size: var(--font-size-sm);
@@ -819,12 +834,14 @@
     const BLOCK_RENDERERS = {
       image(block, container) {
         const wrap = document.createElement('div');
-        wrap.className = 'pres-block';
+        wrap.className = 'pres-block pres-img-wrap';
         const img = document.createElement('img');
         img.className = 'pres-img';
         img.src = block.url;
         img.alt = block.alt || 'Page image';
         img.loading = 'lazy';
+        img.title = 'Click to view full size';
+        img.addEventListener('click', () => window.open(block.url, '_blank', 'noopener'));
         wrap.appendChild(img);
         if (block.caption) {
           const cap = document.createElement('div');

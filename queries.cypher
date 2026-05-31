@@ -7,7 +7,7 @@
 // ── AXIS 1: STRUCTURAL QUERIES ─────────────────────────────────
 
 // 1. Full Table of Contents
-MATCH (b:Book)-[:CONTAINS]->(c:Chapter)
+MATCH (d:Document|Book)-[:CONTAINS]->(c:Chapter)
 RETURN c.order AS num, c.title AS chapter, c.page_start AS page
 ORDER BY c.order;
 
@@ -17,7 +17,7 @@ RETURN s.order AS num, s.title, s.page_start
 ORDER BY s.order;
 
 // 3. Full document tree (3 levels)
-MATCH path = (b:Book)-[:CONTAINS*1..3]->(n)
+MATCH path = (d:Document|Book)-[:CONTAINS*1..3]->(n)
 RETURN path;
 
 // 4. What page range does Chapter 3 cover?

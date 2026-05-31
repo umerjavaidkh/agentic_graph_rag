@@ -5,7 +5,7 @@ from ..document.page_numbers import (
     parse_page_number_from_query,
 )
 from ..document.page_vision import compact_visual_content
-from .retriever import ESGComplianceRetriever
+from .retriever import DocumentRAGRetriever
 from .visual_retrieval import display_text_for_chunk
 import re
 from typing import List, Optional
@@ -13,7 +13,7 @@ from ..config.prompts import load_prompt
 from ..config.settings import CHAT_MODEL
 from ..model_providers.factory import get_model_provider
 
-retriever = ESGComplianceRetriever()
+retriever = DocumentRAGRetriever()
 provider = get_model_provider()
 
 # ─────────────────────────────────────────
@@ -27,6 +27,7 @@ TOC_PHRASES = {
     "document structure", "show all sections", "all sections",
     "list sections", "what sections", "what chapters", "what topics",
     "overview of", "structure of",
+    "table of contents form",  # common typo for "from"
 }
 
 STRUCTURAL_PHRASES = {
@@ -37,10 +38,16 @@ STRUCTURAL_PHRASES = {
     "headings under", "under the section", "list the sections",
     "with headings", "give them with headings", "children of",
     "nested under", "what are the sub",
-    "tell me about", "explain section", "what does section",
+    "explain section", "what does section",
 }
 
 _NUMBERED_SECTION = re.compile(r"\b\d+(?:\.\d+)+\.?\s+[a-zA-Z]", re.I)
+# e.g. "6 IMPLEMENTATION AT STRATEC" (single-level heading without 6.1)
+_TOP_LEVEL_SECTION = re.compile(r"\b\d+\s+[A-Za-z]", re.I)
+_SECTION_CONTENT = re.compile(
+    r"\b(?:what\s+(?:can\s+you\s+)?tell\s+me\s+about|tell\s+me\s+about|explain|describe|summarize)\b",
+    re.I,
+)
 
 _OVERVIEW_ABOUT = re.compile(
     r"\bwhat\s+(?:is|'?s)\s+.+\s+about\b"
@@ -101,9 +108,22 @@ def classify_query(question: str) -> str:
     if _NUMBERED_SECTION.search(question):
         return "structural"
 
+    # Page # before bare-section heuristics ("page 1 Stratec" is not section "1 STRATEC")
     pdf_p, doc_p = parse_page_number_from_query(question)
     if pdf_p is not None or (doc_p is not None and is_valid_document_page_label(doc_p)):
         return "page"
+
+    if _TOP_LEVEL_SECTION.search(question) and _SECTION_CONTENT.search(question):
+        return "section_content"
+    if _SECTION_CONTENT.search(question) and len(question.strip()) < 200:
+        return "section_content"
+    # Bare section title: "6 IMPLEMENTATION AT STRATEC ?" (not "page 6 …")
+    if (
+        _TOP_LEVEL_SECTION.search(question)
+        and len(question.strip()) < 120
+        and not re.search(r"\b(?:pdf\s+)?(?:page|p\.?|pg\.?)\s+\d", q, re.I)
+    ):
+        return "section_content"
 
     if _is_figure_caption_query(question):
         return "figure_caption"
@@ -176,7 +196,7 @@ def retrieve_node(state: ESGState):
     query_type  = classify_query(question)
 
     if query_type == "toc":
-        context  = retriever.get_all_sections(user_context=user_context)
+        context  = retriever.get_table_of_contents(query=question, user_context=user_context)
         keywords = ["toc"]
 
     elif query_type == "overview":
@@ -194,6 +214,14 @@ def retrieve_node(state: ESGState):
             user_context=user_context,
         )
         keywords = ["structural"]
+
+    elif query_type == "section_content":
+        context = retriever.section_content_retrieve(
+            query=question,
+            limit=8,
+            user_context=user_context,
+        )
+        keywords = ["section_content"]
 
     elif query_type == "page":
         pdf_p, doc_p = parse_page_number_from_query(question)
@@ -433,18 +461,142 @@ def _format_subsection_listing(retrieved_context: dict) -> str | None:
     return "\n".join(lines)
 
 
+def _format_toc_listing(
+    chunks: list,
+    question: str = "",
+    retrieved: Optional[dict] = None,
+) -> str | None:
+    """Full TOC from graph — avoids LLM truncation at ~16 items."""
+    if not chunks or chunks[0].get("id") == "access_denied":
+        return None
+    title = "Table of Contents"
+    doc_title = (retrieved or {}).get("document_title")
+    hint = (retrieved or {}).get("document_hint")
+    if doc_title:
+        title = f"Table of Contents — {doc_title}"
+    elif hint:
+        title = f"Table of Contents — {hint.strip().title()}"
+    elif question and re.search(r"\b(?:from|form)\b", question, re.I):
+        anchor = re.search(
+            r"\b(?:from|form)\s+(?:the\s+)?(.+?)(?:\s+document)?(?:\s+of\s+|\?|$)",
+            question,
+            re.I,
+        )
+        if anchor:
+            raw = anchor.group(1).strip()
+            raw = re.sub(
+                r"^(?:all\s+)?(?:the\s+)?(?:list\s+of\s+)?(?:all\s+)?"
+                r"(?:table\s+of\s+contents?|toc)\s*",
+                "",
+                raw,
+                flags=re.I,
+            ).strip()
+            if raw and raw.lower() not in ("document", "pdf"):
+                title = f"Table of Contents — {raw.title()}"
+    lines = [title, ""]
+    for i, c in enumerate(chunks, 1):
+        entry = c.get("title") or "Section"
+        page = c.get("page")
+        if page is None and c.get("text"):
+            pm = re.search(r"\(Page\s+(\d+)\)", c.get("text", ""))
+            if pm:
+                page = pm.group(1)
+        lines.append(f"{i}. {entry}" + (f" (Page {page})" if page else ""))
+    return "\n".join(lines)
+
+
+def _section_content_context(retrieved: dict, chunks: list) -> str:
+    """Build LLM context: subsections first; parent heading may be empty."""
+    parent_title = retrieved.get("parent_title") or ""
+    subs = [
+        c for c in chunks
+        if (c.get("text") or "").strip()
+        and c.get("title") != parent_title
+        and len((c.get("text") or "").strip()) > len((c.get("title") or "")) + 15
+    ]
+    if not subs:
+        subs = [c for c in chunks if (c.get("text") or "").strip()]
+    heading = parent_title or (chunks[0].get("title") if chunks else "Section")
+    parts = [
+        f'Section: "{heading}"',
+        "Note: the main heading may have no body text; use the subsections below.",
+        "",
+    ]
+    for c in subs:
+        parts.append(f"### {c.get('title', 'Subsection')}\n{c.get('text', '')}")
+    return "\n\n".join(parts)
+
+
+def _format_section_content_answer(retrieved: dict, chunks: list) -> str | None:
+    """Deterministic summary when subsections carry the real content."""
+    mode = retrieved.get("mode")
+    if mode not in ("section_content", "section_content_fallback"):
+        return None
+
+    parent_title = retrieved.get("parent_title") or ""
+    subs = [
+        c for c in chunks
+        if c.get("title") != parent_title and len((c.get("text") or "").strip()) > 60
+    ]
+    if not subs:
+        return None
+
+    heading = parent_title or subs[0].get("title", "Section")
+    lines = [f"**{heading}** covers the following:", ""]
+    for c in subs:
+        text = (c.get("text") or "").strip()
+        title = (c.get("title") or "").strip()
+        paras = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+        body_paras = [
+            p for p in paras
+            if p.lower() != title.lower() and not p.lower().startswith(title.lower() + "\n")
+            and len(p) > 40
+        ]
+        lead = body_paras[0] if body_paras else (paras[-1] if paras else text)
+        lead = lead.replace("\n", " ").strip()
+        if len(lead) > 480:
+            lead = lead[:477] + "..."
+        lines.append(f"- **{title}**: {lead}")
+    return "\n".join(lines)
+
+
 def generate_node(state: ESGState):
     chunks     = state["retrieved_context"]["chunks"]
     query_type = state.get("query_type", "semantic")
     retrieved  = state["retrieved_context"]
 
     if not chunks:
+        if retrieved.get("mode") == "table_of_contents" and retrieved.get("document_not_found"):
+            hint = retrieved.get("document_hint") or "that document"
+            lines = [
+                f'No document matching **"{hint}"** is in the knowledge graph.',
+                "",
+                "The table of contents was **not** taken from another document.",
+            ]
+            avail = retrieved.get("available_documents") or []
+            if avail:
+                lines.append("")
+                lines.append("Documents with ingested sections:")
+                for name in avail:
+                    lines.append(f"- {name}")
+            lines.append("")
+            lines.append("Upload the missing PDF at **/upload** and wait until ingestion shows **Done**.")
+            return {"answer": "\n".join(lines), "low_confidence": False}
         return {"answer": "I couldn't find relevant information in the document knowledge graph."}
+
+    if state.get("query_type") == "toc" or retrieved.get("mode") == "table_of_contents":
+        toc = _format_toc_listing(chunks, state.get("question", ""), retrieved=retrieved)
+        if toc:
+            return {"answer": toc, "low_confidence": False}
 
     if retrieved.get("mode") != "section_detail":
         listing = _format_subsection_listing(retrieved)
         if listing is not None:
             return {"answer": listing, "low_confidence": False}
+
+    section_answer = _format_section_content_answer(retrieved, chunks)
+    if section_answer is not None:
+        return {"answer": section_answer, "low_confidence": False}
 
     visual_list = _format_page_visual_list_answer(retrieved, chunks)
     if visual_list is not None:
@@ -481,6 +633,8 @@ def generate_node(state: ESGState):
         ):
             context_parts.append(f"{i}. {c['title']}\n{c['text'][:1500]}")
         context_text = "\n\n".join(context_parts)
+    elif query_type == "section_content" or retrieved.get("mode") == "section_content":
+        context_text = _section_content_context(retrieved, chunks)
     else:
         context_parts = []
         for c in chunks:
@@ -495,8 +649,12 @@ def generate_node(state: ESGState):
         system_prompt = load_prompt("document_page", context=context_text, question=state["question"])
     elif visual_prompt_mode:
         system_prompt = load_prompt("document_visual", context=context_text, question=state["question"])
-    elif query_type in ("structural", "section_detail"):
+    elif query_type == "structural" or retrieved.get("mode") == "subsection_tree":
         system_prompt = load_prompt("document_structural", context=context_text, question=state["question"])
+    elif query_type == "section_content" or retrieved.get("mode") == "section_content":
+        system_prompt = load_prompt("document_section_content", context=context_text, question=state["question"])
+    elif query_type == "section_detail":
+        system_prompt = load_prompt("document_default", context=context_text, question=state["question"])
     elif query_type == "overview":
         n_pts = _requested_point_count(state["question"])
         q_user = state["question"]

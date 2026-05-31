@@ -171,6 +171,7 @@ class Neo4jExporter:
 // ─────────────────────────────────────────────────────────────
 
 // Unique constraints (also create indexes automatically)
+CREATE CONSTRAINT document_id IF NOT EXISTS FOR (n:Document) REQUIRE n.id IS UNIQUE;
 CREATE CONSTRAINT book_id    IF NOT EXISTS FOR (n:Book)    REQUIRE n.id IS UNIQUE;
 CREATE CONSTRAINT chapter_id IF NOT EXISTS FOR (n:Chapter) REQUIRE n.id IS UNIQUE;
 CREATE CONSTRAINT section_id IF NOT EXISTS FOR (n:Section) REQUIRE n.id IS UNIQUE;
@@ -179,7 +180,7 @@ CREATE CONSTRAINT concept_id IF NOT EXISTS FOR (n:Concept) REQUIRE n.id IS UNIQU
 
 // Full-text search index (for semantic query agent)
 CREATE FULLTEXT INDEX node_text_index IF NOT EXISTS
-FOR (n:Book|Chapter|Section|Page|Concept)
+FOR (n:Document|Book|Chapter|Section|Page|Concept)
 ON EACH [n.title, n.text];
 
 // Ordering indexes
