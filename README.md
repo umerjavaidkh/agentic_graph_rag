@@ -268,25 +268,180 @@ Interactive API docs: http://localhost:8000/docs
 
 ---
 
-## Architecture (high level)
+## Architecture
 
+### End-to-end overview
+
+```mermaid
+flowchart TB
+    subgraph Clients["Clients"]
+        CHAT["Chat UI / POST /query"]
+        UP["Upload UI / POST /ingest/*"]
+    end
+
+    subgraph Ingest["Ingestion (write path)"]
+        direction TB
+        UP --> IM["IngestionManager"]
+        IM --> U["Unstructured job<br/>(PDF / DOCX)"]
+        IM --> C["Cypher job<br/>(.cypher file)"]
+
+        U --> A1["Axis 1 — Document structure<br/>(DoclingParser, always)"]
+        A1 --> ASSETS["Page & region JPEGs<br/>data/assets/ or MinIO"]
+        A1 --> VISION["Page vision (optional)<br/>ENABLE_PAGE_VISION=true"]
+        A1 --> A2["Axis 2 — Semantic enrichment<br/>(if OPENAI_API_KEY set)"]
+        ASSETS --> EXP["Neo4jExporter"]
+        VISION --> EXP
+        A2 --> EXP
+        EXP --> ART["Artifacts<br/>output/ingestion/&lt;job_id&gt;"]
+        EXP --> NEO4J[("Neo4j")]
+
+        C --> NEO4J
+    end
+
+    subgraph Query["Querying (read path)"]
+        direction TB
+        CHAT --> API["FastAPI api.py"]
+        API --> ASK["bridge.ask()"]
+        ASK --> TM["Thread memory<br/>clarification + follow-ups"]
+        TM --> ROUTE["LLM MCP router<br/>(+ clarification override)"]
+
+        ROUTE --> SD["search_documents<br/>Unstructured LangGraph"]
+        ROUTE --> QD["query_data<br/>Structured LangGraph"]
+        ROUTE --> HY["query_hybrid<br/>Both agents"]
+
+        SD --> DR["DocumentRAGRetriever<br/>TOC · structural · page/visual · semantic"]
+        QD --> SR["StructuredRetriever<br/>Text2Cypher · templates · vector"]
+
+        DR --> NEO4J
+        SR --> NEO4J
+
+        DR --> PRES["Presentation planner<br/>markdown · tables · charts · images"]
+        SR --> PRES
+        PRES --> ANS["Answer + sources + UI blocks"]
+    end
+
+    NEO4J -.-> DR
+    NEO4J -.-> SR
 ```
-User question
-     │
-     ▼
-┌─────────────┐
-│ LLM Router  │  picks: search_documents | query_data | query_hybrid
-└──────┬──────┘
-       │
-   ┌───┴───┐
-   ▼       ▼
-Documents  Neo4j          ← Northwind demo + your uploads
-(PDF/DOCX) (structured)
-   │       │
-   └───┬───┘
-       ▼
-   Answer + sources + charts/tables
+
+### How ingestion works
+
+```mermaid
+flowchart LR
+    PDF["PDF / DOCX upload"] --> P["DoclingParser"]
+
+    subgraph A1["Axis 1 — Document structure (always)"]
+        P --> TREE["Document → Chapter → Section → Page → Region<br/>(TABLE / FIGURE crops)"]
+        TREE --> PN["Printed page labels<br/>document_page, page_tags"]
+        TREE --> IDS["Namespaced node IDs<br/>doc_&lt;job&gt;_section_* / _page_*"]
+    end
+
+    subgraph Media["Binary assets (Neo4j stores image_key only)"]
+        TREE --> PI["Full-page JPEGs<br/>~60% quality"]
+        TREE --> RI["Region JPEGs<br/>tables / figures"]
+        PI --> STORE["data/assets/ or MinIO"]
+        RI --> STORE
+        PI --> CLEAN1["Re-ingest: delete doc folder<br/>CLEANUP_BOOK_ASSETS_ON_INGEST"]
+        CLEAN1 --> STORE
+    end
+
+    subgraph OptVision["Optional — ENABLE_PAGE_VISION=true"]
+        PDF --> PV["PageVisionEnricher<br/>(cheap vision model)"]
+        PV --> VC["Page.visual_content<br/>tables, charts, diagrams, maps"]
+        VC --> TREE
+    end
+
+    subgraph A2["Axis 2 — Semantic enrichment (if API key)"]
+        TREE --> AX2["Axis2Builder"]
+        AX2 --> E1["Embeddings → SEMANTICALLY_SIMILAR"]
+        AX2 --> E2["NER → SHARES_ENTITY"]
+        AX2 --> E3["Clustering → SAME_CATEGORY"]
+        AX2 --> E4["LLM pass → CONTRADICTS / ELABORATES / PREREQUISITE_OF"]
+    end
+
+    A2 --> EXP["Neo4jExporter"]
+    A1 --> EXP
+    EXP --> OUT["output/ingestion/&lt;job_id&gt;<br/>(if STORE_INGESTION_ARTIFACTS)"]
+    EXP --> LOAD["AUTO_LOAD_TO_NEO4J → Neo4j MERGE"]
 ```
+
+**Axis 1 (document structure)** is always built first from the Docling parser:
+
+- Hierarchy: `Document → Chapter → Section → Page → Region` (tables/figures).
+- **Page vision** (optional): when `ENABLE_PAGE_VISION=true`, selected PDF pages are sent to a cheap vision model; tables, charts, diagrams, maps, and shapes are stored as `Page.visual_content` for retrieval when normal text is missing or incomplete.
+- **Page images**: JPEG (~60% quality) under `data/assets/` or MinIO; Neo4j stores `image_key` only. Re-ingest deletes that document’s asset folder first (`CLEANUP_BOOK_ASSETS_ON_INGEST`, default on). DB reset can wipe all assets (`CLEANUP_ASSETS_ON_DB_RESET`).
+
+**Axis 2 (semantic enrichment)** runs automatically when the server has an OpenAI key configured (embeddings, entity links, clustering, optional LLM relationship pass).
+
+The result is exported as Neo4j import artifacts in `output/ingestion/<job_id>` (when `STORE_INGESTION_ARTIFACTS=true`) and loaded into Neo4j automatically when `AUTO_LOAD_TO_NEO4J=true`.
+
+**Structured ingest (separate path):** upload a `.cypher` file → statements run directly in Neo4j (e.g. Northwind demo on first Docker start).
+
+### How querying works
+
+```mermaid
+flowchart TB
+    Q["User question + thread_id + role"] --> TM{"Thread memory"}
+
+    TM -->|pending / resolved clarification| CLARIFY["Match reply<br/>1 · document name · metric option"]
+    CLARIFY --> REWRITE["Rewrite question + document_id"]
+    REWRITE --> FORCE["Force correct MCP tool<br/>(documents vs structured data)"]
+
+    TM -->|normal turn| ROUTE["select_mcp_tool<br/>fast route + LLM tools"]
+
+    FORCE --> SD
+    ROUTE --> SD
+    ROUTE --> QD
+    ROUTE --> HY
+
+    subgraph SD["search_documents"]
+        CLASS["classify_query<br/>toc · page · structural · semantic…"]
+        CLASS --> RET["DocumentRAGRetriever"]
+        RET -->|ambiguous doc/page| ASK1["needs_clarification"]
+        RET -->|matched| CTX["chunks + image_key + meta"]
+        CTX --> GEN1["generate_node<br/>TOC list · visuals · LLM answer"]
+    end
+
+    subgraph QD["query_data"]
+        CL2{"Vague analytics query?"}
+        CL2 -->|yes| ASK2["needs_clarification"]
+        CL2 -->|no| T2C["Text2Cypher + schema templates"]
+        T2C --> GEN2["tabular fast answer or LLM synthesis"]
+    end
+
+    GEN1 --> UI["Presentation blocks"]
+    GEN2 --> UI
+    ASK1 --> UI
+    ASK2 --> UI
+    UI --> SAVE["save_turn → next follow-up"]
+```
+
+1. **Chat / API** receives the question, optional `thread_id`, and user role (RBAC).
+2. **Thread memory** resolves short follow-ups and clarification replies (e.g. pick a document for TOC, switch from Stratec to Go.Data, pick a sales metric).
+3. **LLM MCP router** picks `search_documents`, `query_data`, or `query_hybrid` — unless a clarification reply forces the correct tool.
+4. **Unstructured agent** classifies intent (TOC, page/images, structural, semantic), retrieves from Neo4j, and generates an answer (with clarification when multiple documents match).
+5. **Structured agent** runs Text2Cypher (or deterministic templates) against whatever graph schema is loaded — not hard-coded to Northwind.
+6. **Presentation planner** builds markdown, tables, charts, and image blocks for the chat UI.
+
+### Neo4j graph contents
+
+| Source | Main labels | Example relationships |
+|--------|-------------|------------------------|
+| Unstructured ingest | `Document`, `Chapter`, `Section`, `Page`, `Region` | `CONTAINS`, Axis-2 semantic edges |
+| Structured ingest | `Product`, `Order`, `Customer`, … (any schema) | Domain relationships from Cypher |
+| RBAC | `User`, `Role`, permissions | Document/data access control |
+
+### Ingestion ↔ query config
+
+| Variable | Effect |
+|----------|--------|
+| `ENABLE_PAGE_VISION` | Vision text on selected PDF pages |
+| `ENABLE_PAGE_IMAGES` | Full-page JPEG extraction |
+| `CLEANUP_BOOK_ASSETS_ON_INGEST` | Delete prior `data/assets/<doc>/` before re-ingest |
+| `CLEANUP_ASSETS_ON_DB_RESET` | Wipe all assets on DB reset |
+| `AUTO_LOAD_TO_NEO4J` | Load graph after export |
+| `STORE_INGESTION_ARTIFACTS` | Write `output/ingestion/<job_id>` |
+| `OPENAI_API_KEY` | Chat, routing, embeddings; enables Axis 2 and optional vision |
 
 ---
 

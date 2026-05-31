@@ -179,6 +179,7 @@ def retrieve_node(state: ESGState):
     question    = state["question"]
     user_context = state.get("user_context")
     focus_id = state.get("focus_section_id")
+    document_id = state.get("document_id")
 
     if focus_id:
         context = retriever.section_detail_retrieve(
@@ -196,7 +197,9 @@ def retrieve_node(state: ESGState):
     query_type  = classify_query(question)
 
     if query_type == "toc":
-        context  = retriever.get_table_of_contents(query=question, user_context=user_context)
+        context  = retriever.get_table_of_contents(
+            query=question, user_context=user_context, document_id=document_id
+        )
         keywords = ["toc"]
 
     elif query_type == "overview":
@@ -212,6 +215,7 @@ def retrieve_node(state: ESGState):
             query=question,
             limit=12,
             user_context=user_context,
+            document_id=document_id,
         )
         keywords = ["structural"]
 
@@ -220,6 +224,7 @@ def retrieve_node(state: ESGState):
             query=question,
             limit=8,
             user_context=user_context,
+            document_id=document_id,
         )
         keywords = ["section_content"]
 
@@ -230,6 +235,7 @@ def retrieve_node(state: ESGState):
             pdf_page=pdf_p,
             document_page=doc_p,
             user_context=user_context,
+            document_id=document_id,
         )
         keywords = ["page"]
 
@@ -564,6 +570,12 @@ def generate_node(state: ESGState):
     chunks     = state["retrieved_context"]["chunks"]
     query_type = state.get("query_type", "semantic")
     retrieved  = state["retrieved_context"]
+
+    if retrieved.get("mode") == "needs_clarification":
+        msg = retrieved.get("clarification_message") or (
+            "I need one more detail before I can answer. Please pick an option from the list."
+        )
+        return {"answer": msg, "low_confidence": False}
 
     if not chunks:
         if retrieved.get("mode") == "table_of_contents" and retrieved.get("document_not_found"):

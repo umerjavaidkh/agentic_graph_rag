@@ -86,7 +86,8 @@ _DATA_ROUTE = re.compile(
 )
 _DOC_ROUTE = re.compile(
     r"\b(?:policy|policies|document|documents|pdf|manual|protocol|section\s+\d|"
-    r"whistleblow|compliance\s+officer|procedure|page\s+\d+|figure|table\s+on)\b",
+    r"whistleblow|compliance\s+officer|procedure|page\s+\d+|figure|table\s+on|"
+    r"table\s+of\s+contents?|toc)\b",
     re.I,
 )
 

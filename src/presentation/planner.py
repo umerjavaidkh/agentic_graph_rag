@@ -336,6 +336,14 @@ def build_presentation(
 
     blocks.append(_markdown_block(answer, bool(table_blocks)))
 
+    # Drop empty markdown-only shells (e.g. missing answer before generate ran).
+    blocks = [
+        b for b in blocks
+        if not (b.get("type") == "markdown" and not (b.get("content") or "").strip())
+    ]
+    if not blocks and (answer or "").strip():
+        blocks.append(_markdown_block(answer, bool(table_blocks)))
+
     kinds = {b["type"] for b in blocks}
     if len(kinds) > 1:
         kind = "mixed"

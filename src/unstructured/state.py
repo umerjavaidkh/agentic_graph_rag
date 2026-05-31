@@ -11,4 +11,5 @@ class ESGState(TypedDict, total=False):
     user_context: Optional[UserContext]
     focus_section_id: Optional[str]
     parent_section_id: Optional[str]
+    document_id: Optional[str]
     prior_context: Optional[Dict]

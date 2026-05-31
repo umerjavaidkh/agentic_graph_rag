@@ -238,10 +238,11 @@ class StructuredRetriever:
         return [], cypher, last_err
 
     def _template_cypher(self, query: str, limit: int) -> Optional[str]:
-        """Known-good patterns for Northwind (sales revenue, order lines, time series)."""
+        """Known-good patterns for common analytics (demo Northwind + similar shapes)."""
         q = query.lower()
+        n = analytics_result_limit(query, limit)
+
         if _ORDER_TIME_SERIES.search(q):
-            # orderDate is often a string/datetime like "1996-07-04 00:00:00.000" — take YYYY-MM-DD only
             return (
                 "MATCH (o:Order)\n"
                 "WHERE o.orderDate IS NOT NULL AND toString(o.orderDate) <> ''\n"
@@ -250,10 +251,58 @@ class StructuredRetriever:
                 "RETURN date.truncate('month', orderDay) AS month, count(o) AS orderVolume\n"
                 "ORDER BY month"
             )
-        if _SALES_REVENUE_QUERY.search(q) and re.search(
-            r"\b(?:product|top|best|highest|most|leading|selling)\b", q, re.I
+
+        if re.search(r"\b(?:customer|customers|account|company)\b", q) and re.search(
+            r"\b(?:top|best|revenue|sales|spend|most|order)\b", q, re.I
         ):
-            n = analytics_result_limit(query, limit)
+            if re.search(r"\border\s+count\b|\bnumber\s+of\s+orders\b|\borders?\b", q) and not re.search(
+                r"\brevenue\b|\bspend\b", q
+            ):
+                return (
+                    "MATCH (c:Customer)-[:ORDERED]->(o:Order)\n"
+                    "RETURN c.customerID AS customerID, c.companyName AS companyName,\n"
+                    "       count(DISTINCT o) AS orderCount\n"
+                    "ORDER BY orderCount DESC\n"
+                    f"LIMIT {n}"
+                )
+            return (
+                "MATCH (c:Customer)-[:ORDERED]->(o:Order)-[d:ORDER_CONTAINS]->(p:Product)\n"
+                "RETURN c.customerID AS customerID, c.companyName AS companyName,\n"
+                "       SUM(toFloat(d.unitPrice) * toInteger(d.quantity) "
+                "* (1.0 - coalesce(toFloat(d.discount), 0.0))) AS totalRevenue,\n"
+                "       count(DISTINCT o) AS orderCount\n"
+                "ORDER BY totalRevenue DESC\n"
+                f"LIMIT {n}"
+            )
+
+        if re.search(r"\b(?:country|countries|region|geograph)\b", q) and _SALES_REVENUE_QUERY.search(q):
+            return (
+                "MATCH (o:Order)-[:SHIPPED_TO]->(a:Address)\n"
+                "MATCH (o)-[d:ORDER_CONTAINS]->(p:Product)\n"
+                "WHERE a.country IS NOT NULL AND trim(a.country) <> ''\n"
+                "RETURN a.country AS country,\n"
+                "       SUM(toFloat(d.unitPrice) * toInteger(d.quantity) "
+                "* (1.0 - coalesce(toFloat(d.discount), 0.0))) AS totalRevenue,\n"
+                "       SUM(toInteger(d.quantity)) AS unitsSold\n"
+                "ORDER BY totalRevenue DESC\n"
+                f"LIMIT {n}"
+            )
+
+        if re.search(r"\bcategor", q) and _SALES_REVENUE_QUERY.search(q):
+            return (
+                "MATCH (p:Product)-[:BELONGS_TO]->(c:Category)\n"
+                "MATCH (o:Order)-[d:ORDER_CONTAINS]->(p)\n"
+                "RETURN c.categoryName AS categoryName,\n"
+                "       count(DISTINCT p) AS productCount,\n"
+                "       SUM(toFloat(d.unitPrice) * toInteger(d.quantity) "
+                "* (1.0 - coalesce(toFloat(d.discount), 0.0))) AS totalRevenue\n"
+                "ORDER BY totalRevenue DESC\n"
+                f"LIMIT {n}"
+            )
+
+        if _SALES_REVENUE_QUERY.search(q) and re.search(
+            r"\b(?:product|top|best|highest|most|leading|selling|item)\b", q, re.I
+        ):
             return (
                 "MATCH (o:Order)-[d:ORDER_CONTAINS]->(p:Product)\n"
                 "RETURN p.productID AS productID, p.productName AS productName,\n"

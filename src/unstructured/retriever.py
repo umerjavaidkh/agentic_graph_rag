@@ -25,6 +25,7 @@ from ..config.settings import (
     NEO4J_PASSWORD,
 )
 from ..assets.page_images import resolve_image_url
+from ..conversation.clarification import document_option, format_clarification_answer
 from ..document.page_numbers import (
     is_valid_document_page_label,
     parse_page_number_from_query,
@@ -37,6 +38,7 @@ from .visual_retrieval import (
     best_region_for_visual_focus,
     display_text_for_chunk,
     is_strict_page_lookup,
+    normalize_visual_page_intent,
     parse_visual_intent,
     score_visual_candidate,
     wants_page_text,
@@ -192,6 +194,7 @@ class DocumentRAGRetriever:
         query: str,
         limit: int = 15,
         user_context: Optional[UserContext] = None,
+        document_id: Optional[str] = None,
     ) -> Dict:
         """
         Title / hierarchy focused retrieval for section listing and subsection questions.
@@ -202,13 +205,30 @@ class DocumentRAGRetriever:
             return denied
 
         if self._asks_for_subsections(query):
-            return self._subsection_tree_retrieve(query, limit=limit, user_context=ctx)
+            return self._subsection_tree_retrieve(
+                query, limit=limit, user_context=ctx, document_id=document_id
+            )
 
         focus, document_hint = self._section_query_focus(query)
         with self.driver.session() as session:
-            parent = self._best_parent_section(session, focus, document_hint=document_hint)
+            scope = self._ensure_document_scope(
+                session,
+                query,
+                "document_for_structural",
+                ctx,
+                document_hint=document_hint,
+                document_id=document_id,
+            )
+            if scope:
+                return scope
+
+            parent = self._best_parent_section(
+                session, focus, document_hint=document_hint, document_id=document_id
+            )
             if parent and not self._asks_for_subsections(query):
-                return self.section_content_retrieve(query, limit=limit, user_context=ctx)
+                return self.section_content_retrieve(
+                    query, limit=limit, user_context=ctx, document_id=document_id
+                )
 
         terms = self._extract_search_terms(query)
         with self.driver.session() as session:
@@ -232,6 +252,7 @@ class DocumentRAGRetriever:
         query: str,
         limit: int = 8,
         user_context: Optional[UserContext] = None,
+        document_id: Optional[str] = None,
     ) -> Dict:
         """
         User wants the body/content of a named section (not a list of child headings).
@@ -244,7 +265,20 @@ class DocumentRAGRetriever:
 
         focus, document_hint = self._section_query_focus(query)
         with self.driver.session() as session:
-            parent = self._best_parent_section(session, focus, document_hint=document_hint)
+            scope = self._ensure_document_scope(
+                session,
+                query,
+                "document_for_structural",
+                ctx,
+                document_hint=document_hint,
+                document_id=document_id,
+            )
+            if scope:
+                return scope
+
+            parent = self._best_parent_section(
+                session, focus, document_hint=document_hint, document_id=document_id
+            )
             if parent:
                 rows = [parent]
                 body = (parent.get("text") or "").strip()
@@ -469,14 +503,32 @@ class DocumentRAGRetriever:
         query: str,
         limit: int = 15,
         user_context: Optional[UserContext] = None,
+        document_id: Optional[str] = None,
     ) -> Dict:
         """
         Find the best-matching parent section by title overlap, then return it plus
         all descendant sections (CONTAINS*), in document order.
         """
         ctx = user_context or self.user_context
+        focus, document_hint = self._section_query_focus(query)
         with self.driver.session() as session:
-            parent = self._best_parent_section(session, query)
+            scope = self._ensure_document_scope(
+                session,
+                query,
+                "document_for_structural",
+                ctx,
+                document_hint=document_hint,
+                document_id=document_id,
+            )
+            if scope:
+                return scope
+
+            parent = self._best_parent_section(
+                session,
+                focus or query,
+                document_hint=document_hint,
+                document_id=document_id,
+            )
             if not parent:
                 terms = self._extract_search_terms(query)
                 rows = self._structural_section_search(session, terms, query, child_limit=25)
@@ -590,6 +642,264 @@ class DocumentRAGRetriever:
             )
         ]
 
+    def _looks_like_opaque_document_title(self, title: str, doc_id: str) -> bool:
+        t = (title or "").strip()
+        if not t or t == doc_id:
+            return True
+        if re.search(r"^[a-f0-9]{32}", t, re.I):
+            return True
+        if "_rag_document" in t:
+            return True
+        return False
+
+    def _infer_document_display_names(
+        self, session, doc_ids: list[str]
+    ) -> dict[str, str]:
+        """Human-readable names from section titles when book title is a job hash."""
+        brand_patterns = (
+            (re.compile(r"stratec", re.I), "Stratec"),
+            (re.compile(r"go\.?\s*data|godata", re.I), "Go.Data"),
+        )
+        names: dict[str, str] = {}
+        for doc_id in doc_ids:
+            row = session.run(
+                """
+                MATCH (b:Document|Book {id: $id})
+                RETURN coalesce(b.title, b.id) AS title
+                """,
+                id=doc_id,
+            ).single()
+            stored = (row["title"] if row else doc_id) or doc_id
+            if not self._looks_like_opaque_document_title(stored, doc_id):
+                names[doc_id] = stored.strip()
+                continue
+
+            sections = [
+                r["title"]
+                for r in session.run(
+                    """
+                    MATCH (b:Document|Book {id: $id})-[:CONTAINS*1..20]->(s:Section)
+                    WHERE s.title IS NOT NULL AND size(s.title) >= 4
+                    RETURN s.title AS title
+                    ORDER BY s.order
+                    LIMIT 60
+                    """,
+                    id=doc_id,
+                )
+                if r["title"]
+            ]
+            blob = " ".join(sections)
+            label: Optional[str] = None
+            for pat, friendly in brand_patterns:
+                if pat.search(blob):
+                    label = friendly
+                    break
+            if not label:
+                for title in sections:
+                    t = title.strip()
+                    if len(t) >= 10 and not re.match(r"^\d+\.?\s*$", t):
+                        label = t[:72]
+                        break
+            names[doc_id] = label or stored.replace("_", " ").strip()
+        return names
+
+    def _enrich_doc_rows_display_names(self, session, doc_rows: list[dict]) -> None:
+        if not doc_rows:
+            return
+        name_map = self._infer_document_display_names(
+            session, [d["id"] for d in doc_rows]
+        )
+        for d in doc_rows:
+            d["title"] = name_map.get(d["id"], d.get("title") or d["id"])
+
+    def _document_clarification_response(
+        self,
+        query: str,
+        kind: str,
+        prompt: str,
+        doc_rows: list[dict],
+        ctx: UserContext,
+        session=None,
+        extra: Optional[dict] = None,
+    ) -> Dict:
+        if session is not None:
+            self._enrich_doc_rows_display_names(session, doc_rows)
+        options = [
+            document_option(
+                d["id"],
+                d.get("title") or d["id"],
+                detail=self._document_option_detail(d),
+            )
+            for d in doc_rows
+        ]
+        message = format_clarification_answer(prompt, options)
+        meta: dict = {
+            "mode": "needs_clarification",
+            "clarification_kind": kind,
+            "clarification_message": message,
+            "clarification_options": options,
+            "original_question": query,
+        }
+        if extra:
+            meta.update(extra)
+        return self._format_response(query, [], user_context=ctx, meta=meta)
+
+    def _document_option_detail(self, row: dict) -> str:
+        if row.get("figure_count") is not None:
+            n = int(row["figure_count"])
+            return f"{n} figure(s) on this page" if n else "No figures indexed on this page"
+        sections = row.get("sections")
+        if sections is not None:
+            return f"{sections} sections"
+        return ""
+
+    def _structural_needs_document_clarification(self, query: str) -> bool:
+        if self._query_requests_named_document(query):
+            return False
+        q = query.lower()
+        if re.search(
+            r"\b(?:section|chapter|subsection|heading)s?\s+(?:under|in|for|of)\b", q
+        ):
+            return True
+        if re.search(r"\b(?:section|chapter)\s+\d+\b", q):
+            return True
+        if re.search(r"\b\d+(?:\.\d+)+\.?\s+\w", query):
+            return True
+        if re.search(r"\b(?:list|show)\s+(?:all\s+)?(?:sections?|subsections?|headings?)\b", q):
+            return True
+        if re.search(r"\b(?:what\s+is\s+in|contents\s+of)\s+(?:section|chapter)\b", q):
+            return True
+        if re.search(
+            r"\b(?:what\s+(?:can\s+you\s+)?tell\s+me\s+about|explain|describe|summarize)\b",
+            q,
+        ) and re.search(r"\b\d+\s+[a-z]", query, re.I):
+            return True
+        return False
+
+    def _ensure_document_scope(
+        self,
+        session,
+        query: str,
+        kind: str,
+        ctx: UserContext,
+        *,
+        document_hint: Optional[str] = None,
+        document_id: Optional[str] = None,
+        extra: Optional[dict] = None,
+    ) -> Optional[Dict]:
+        if document_id or document_hint or self._extract_document_hint(query):
+            return None
+        available = self._documents_with_sections(session)
+        if len(available) <= 1:
+            return None
+        if kind == "document_for_structural" and not self._structural_needs_document_clarification(
+            query
+        ):
+            return None
+        prompts = {
+            "document_for_toc": (
+                "Multiple documents are ingested. Which **table of contents** do you want?"
+            ),
+            "document_for_structural": (
+                "Multiple documents are ingested. Which **document** should I use for that section query?"
+            ),
+            "document_for_page": (
+                "That page number appears in more than one document. Which document do you mean?"
+            ),
+        }
+        return self._document_clarification_response(
+            query,
+            kind,
+            prompts.get(kind, "Which document do you mean?"),
+            available,
+            ctx,
+            session=session,
+            extra=extra,
+        )
+
+    def _page_document_candidates(self, session, intent) -> list[dict]:
+        if intent.pdf_page is not None:
+            rows = session.run(
+                """
+                MATCH (b:Document|Book)-[:CONTAINS*1..20]->(p:Page)
+                WHERE p.pdf_page = $pdf OR (p.pdf_page IS NULL AND p.order = $pdf)
+                OPTIONAL MATCH (p)-[:CONTAINS*1..5]->(r:Region)
+                WHERE r.image_key IS NOT NULL
+                WITH b, p, count(DISTINCT r) AS figs, p.image_key IS NOT NULL AS page_img
+                RETURN DISTINCT b.id AS id, coalesce(b.title, b.id) AS title,
+                       figs + CASE WHEN page_img THEN 1 ELSE 0 END AS figure_count
+                ORDER BY title
+                """,
+                pdf=intent.pdf_page,
+            )
+        elif intent.document_page:
+            rows = session.run(
+                """
+                MATCH (b:Document|Book)-[:CONTAINS*1..20]->(p:Page)
+                WHERE p.document_page IS NOT NULL
+                  AND toLower(trim(p.document_page)) = toLower(trim($label))
+                OPTIONAL MATCH (p)-[:CONTAINS*1..5]->(r:Region)
+                WHERE r.image_key IS NOT NULL
+                WITH b, p, count(DISTINCT r) AS figs, p.image_key IS NOT NULL AS page_img
+                RETURN DISTINCT b.id AS id, coalesce(b.title, b.id) AS title,
+                       figs + CASE WHEN page_img THEN 1 ELSE 0 END AS figure_count
+                ORDER BY title
+                """,
+                label=intent.document_page,
+            )
+        else:
+            return []
+        return [r.data() for r in rows]
+
+    def _resolve_scoped_document_id(
+        self,
+        session,
+        query: str,
+        intent,
+        ctx: UserContext,
+        document_id: Optional[str] = None,
+    ) -> tuple[Optional[str], Optional[Dict]]:
+        """Return (document_id, clarification_response)."""
+        if document_id:
+            return document_id, None
+
+        document_hint = self._extract_document_hint(query)
+        if document_hint:
+            resolved = self._resolve_document_id(session, document_hint)
+            if resolved:
+                return resolved, None
+
+        if intent.pdf_page is None and not intent.document_page:
+            return None, None
+
+        candidates = self._page_document_candidates(session, intent)
+        if len(candidates) > 1:
+            page_label = (
+                f"PDF page **{intent.pdf_page}**"
+                if intent.pdf_page is not None
+                else f"page **{intent.document_page}**"
+            )
+            prompt = (
+                f"{page_label} exists in multiple documents. "
+                "Which document should I use for images and content?"
+            )
+            extra = {
+                "pdf_page": intent.pdf_page,
+                "document_page": intent.document_page,
+            }
+            return None, self._document_clarification_response(
+                query,
+                "document_for_page",
+                prompt,
+                candidates,
+                ctx,
+                session=session,
+                extra=extra,
+            )
+        if len(candidates) == 1:
+            return candidates[0]["id"], None
+        return None, None
+
     def _resolve_document_id(self, session, document_hint: str) -> Optional[str]:
         """Pick one Book/Document id for a user hint — no cross-document mixing."""
         keys = self._document_match_keys(document_hint)
@@ -697,6 +1007,7 @@ class DocumentRAGRetriever:
         self,
         query: str = "",
         user_context: Optional[UserContext] = None,
+        document_id: Optional[str] = None,
     ) -> Dict:
         ctx = user_context or self.user_context
         denied = self._access_denied_response(query="table_of_contents", ctx=ctx)
@@ -714,10 +1025,29 @@ class DocumentRAGRetriever:
 
         with self.driver.session() as session:
             available = self._documents_with_sections(session)
-            doc_id: Optional[str] = None
+            doc_id: Optional[str] = document_id
             resolved_title: Optional[str] = None
+            rows: list[dict] = []
 
-            if document_hint:
+            if doc_id:
+                for d in available:
+                    if d["id"] == doc_id:
+                        resolved_title = d["title"]
+                        break
+                if document_hint and (
+                    not resolved_title
+                    or resolved_title == doc_id
+                    or self._looks_like_opaque_document_title(resolved_title, doc_id)
+                ):
+                    resolved_title = document_hint.strip().title()
+                elif not resolved_title or self._looks_like_opaque_document_title(
+                    resolved_title or "", doc_id
+                ):
+                    resolved_title = self._infer_document_display_names(
+                        session, [doc_id]
+                    ).get(doc_id, resolved_title)
+                rows = self._toc_sections_for_document(session, doc_id, document_hint)
+            elif document_hint:
                 doc_id = self._resolve_document_id(session, document_hint)
                 if doc_id:
                     for d in available:
@@ -727,8 +1057,7 @@ class DocumentRAGRetriever:
                     if document_hint and (
                         not resolved_title
                         or resolved_title == doc_id
-                        or re.search(r"^[a-f0-9]{32}", resolved_title or "", re.I)
-                        or str(resolved_title).endswith("_rag_document")
+                        or self._looks_like_opaque_document_title(resolved_title, doc_id)
                     ):
                         resolved_title = document_hint.strip().title()
                 rows = (
@@ -739,6 +1068,14 @@ class DocumentRAGRetriever:
             elif wants_one_doc:
                 rows = []
             else:
+                scope = self._ensure_document_scope(
+                    session,
+                    query or "table of contents",
+                    "document_for_toc",
+                    ctx,
+                )
+                if scope:
+                    return scope
                 rows = [
                     r.data()
                     for r in session.run(
@@ -908,6 +1245,7 @@ class DocumentRAGRetriever:
         limit: int = 5,
         user_context: Optional[UserContext] = None,
         intent=None,
+        document_id: Optional[str] = None,
     ) -> Dict:
         """
         Single path: page #, caption, scene, list-all figures.
@@ -919,10 +1257,20 @@ class DocumentRAGRetriever:
             return denied
 
         intent = intent or parse_visual_intent(query, self._extract_search_terms)
+        normalize_visual_page_intent(intent)
+
+        scoped_doc_id = document_id
+        with self.driver.session() as session:
+            resolved_id, clarify = self._resolve_scoped_document_id(
+                session, query, intent, ctx, document_id=scoped_doc_id
+            )
+            if clarify:
+                return clarify
+            scoped_doc_id = resolved_id
 
         if wants_page_text(query):
             with self.driver.session() as session:
-                chunks = self._page_text_chunks(session, intent)
+                chunks = self._page_text_chunks(session, intent, document_id=scoped_doc_id)
             top = chunks[0] if chunks else {}
             return self._format_response(
                 query,
@@ -938,7 +1286,9 @@ class DocumentRAGRetriever:
 
         if is_strict_page_lookup(intent):
             with self.driver.session() as session:
-                chunks = self._strict_page_visual_chunks(session, intent, query)
+                chunks = self._strict_page_visual_chunks(
+                    session, intent, query, document_id=scoped_doc_id
+                )
             top = chunks[0] if chunks else {}
             return self._format_response(
                 query,
@@ -961,7 +1311,7 @@ class DocumentRAGRetriever:
             )
 
         with self.driver.session() as session:
-            page_row = self._resolve_page_row(session, intent)
+            page_row = self._resolve_page_row(session, intent, document_id=scoped_doc_id)
             candidates: dict[str, dict] = {}
 
             if page_row:
@@ -1065,9 +1415,11 @@ class DocumentRAGRetriever:
             },
         )
 
-    def _page_text_chunks(self, session, intent) -> list[dict]:
+    def _page_text_chunks(
+        self, session, intent, document_id: Optional[str] = None
+    ) -> list[dict]:
         """Full page text for 'all text from page N' queries — no figure crop."""
-        page_row = self._resolve_page_row(session, intent)
+        page_row = self._resolve_page_row(session, intent, document_id=document_id)
         if not page_row:
             return []
 
@@ -1123,9 +1475,10 @@ class DocumentRAGRetriever:
         session,
         intent,
         query: str,
+        document_id: Optional[str] = None,
     ) -> list[dict]:
         """One page only: no document-wide region scan or cross-page rerank."""
-        page_row = self._resolve_page_row(session, intent)
+        page_row = self._resolve_page_row(session, intent, document_id=document_id)
         if not page_row:
             return []
 
@@ -1188,42 +1541,67 @@ class DocumentRAGRetriever:
 
         return []
 
-    def _resolve_page_row(self, session, intent) -> Optional[dict]:
+    def _resolve_page_row(
+        self, session, intent, document_id: Optional[str] = None
+    ) -> Optional[dict]:
+        page_fields = """
+            p.id AS id, p.title AS title, p.text AS text,
+            p.visual_content AS visual_content,
+            p.pdf_page AS pdf_page, p.document_page AS document_page,
+            p.page_tags AS page_tags, p.image_key AS image_key,
+            p.order AS doc_order
+        """
         if intent.document_page:
-            row = session.run(
-                """
-                MATCH (p:Page)
-                WHERE p.document_page IS NOT NULL
-                  AND toLower(trim(p.document_page)) = toLower(trim($label))
-                RETURN p.id AS id, p.title AS title, p.text AS text,
-                       p.visual_content AS visual_content,
-                       p.pdf_page AS pdf_page, p.document_page AS document_page,
-                       p.page_tags AS page_tags, p.image_key AS image_key,
-                       p.order AS doc_order
-                LIMIT 1
-                """,
-                label=intent.document_page,
-            ).single()
+            if document_id:
+                row = session.run(
+                    f"""
+                    MATCH (b:Document|Book {{id: $doc_id}})-[:CONTAINS*1..20]->(p:Page)
+                    WHERE p.document_page IS NOT NULL
+                      AND toLower(trim(p.document_page)) = toLower(trim($label))
+                    RETURN {page_fields}
+                    LIMIT 1
+                    """,
+                    doc_id=document_id,
+                    label=intent.document_page,
+                ).single()
+            else:
+                row = session.run(
+                    f"""
+                    MATCH (p:Page)
+                    WHERE p.document_page IS NOT NULL
+                      AND toLower(trim(p.document_page)) = toLower(trim($label))
+                    RETURN {page_fields}
+                    LIMIT 1
+                    """,
+                    label=intent.document_page,
+                ).single()
             if row:
                 return row.data()
-            # Printed label missing in graph — try same number as PDF index
             if str(intent.document_page).strip().isdigit():
                 intent.pdf_page = int(str(intent.document_page).strip())
                 intent.document_page = None
         if intent.pdf_page is not None:
-            row = session.run(
-                """
-                MATCH (p:Page)
-                WHERE p.pdf_page = $pdf OR (p.pdf_page IS NULL AND p.order = $pdf)
-                RETURN p.id AS id, p.title AS title, p.text AS text,
-                       p.visual_content AS visual_content,
-                       p.pdf_page AS pdf_page, p.document_page AS document_page,
-                       p.page_tags AS page_tags, p.image_key AS image_key,
-                       p.order AS doc_order
-                LIMIT 1
-                """,
-                pdf=intent.pdf_page,
-            ).single()
+            if document_id:
+                row = session.run(
+                    f"""
+                    MATCH (b:Document|Book {{id: $doc_id}})-[:CONTAINS*1..20]->(p:Page)
+                    WHERE p.pdf_page = $pdf OR (p.pdf_page IS NULL AND p.order = $pdf)
+                    RETURN {page_fields}
+                    LIMIT 1
+                    """,
+                    doc_id=document_id,
+                    pdf=intent.pdf_page,
+                ).single()
+            else:
+                row = session.run(
+                    f"""
+                    MATCH (p:Page)
+                    WHERE p.pdf_page = $pdf OR (p.pdf_page IS NULL AND p.order = $pdf)
+                    RETURN {page_fields}
+                    LIMIT 1
+                    """,
+                    pdf=intent.pdf_page,
+                ).single()
             if row:
                 return row.data()
         return None
@@ -1387,6 +1765,7 @@ class DocumentRAGRetriever:
         pdf_page: Optional[int] = None,
         document_page: Optional[str] = None,
         user_context: Optional[UserContext] = None,
+        document_id: Optional[str] = None,
     ) -> Dict:
         """Delegates to unified_visual_retrieve (page # + image + caption)."""
         intent = parse_visual_intent(query, self._extract_search_terms)
@@ -1394,6 +1773,7 @@ class DocumentRAGRetriever:
             intent.pdf_page = pdf_page
         if document_page:
             intent.document_page = document_page
+        normalize_visual_page_intent(intent)
         if intent.single_visual:
             lim = 1
         elif intent.list_all:
@@ -1401,7 +1781,11 @@ class DocumentRAGRetriever:
         else:
             lim = 5
         return self.unified_visual_retrieve(
-            query, limit=lim, user_context=user_context, intent=intent
+            query,
+            limit=lim,
+            user_context=user_context,
+            intent=intent,
+            document_id=document_id,
         )
 
     def caption_figure_retrieve(
@@ -1957,13 +2341,26 @@ class DocumentRAGRetriever:
         session,
         query: str,
         document_hint: Optional[str] = None,
+        document_id: Optional[str] = None,
     ) -> Optional[dict]:
         """Pick the section whose title best matches the user question (not loose term hits)."""
         q = query.lower().strip()
         q_norm = re.sub(r"[^a-z0-9\s\.]", " ", q)
         document_key = re.sub(r"[^a-z0-9]", "", (document_hint or "").lower())
 
-        if document_key:
+        if document_id:
+            candidate_rows = list(
+                session.run(
+                    """
+                    MATCH (b:Document|Book {id: $doc_id})-[:CONTAINS*1..20]->(s:Section)
+                    WHERE size(s.title) >= 8
+                    RETURN s.id AS id, s.title AS title, s.text AS text,
+                           s.cluster_id AS cluster, s.order AS doc_order
+                    """,
+                    doc_id=document_id,
+                )
+            )
+        elif document_key:
             candidates = session.run(
                 """
                 MATCH (b:Document|Book)-[:CONTAINS*1..8]->(s:Section)

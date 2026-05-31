@@ -1,0 +1,17 @@
+---
+description: Structured query path must stay schema-agnostic (not Northwind-only)
+globs: src/structured/**/*
+alwaysApply: false
+---
+
+# Structured data is not always Northwind
+
+The structured / `query_data` agent targets **whatever graph schema is loaded** in Neo4j — Northwind is the current demo, not a hard-coded assumption.
+
+When adding or changing structured features (clarification, intent, Cypher templates, prompts, UI copy):
+
+- Do **not** hard-code "Northwind", product/order/customer shapes, or demo-specific node labels unless behind a demo-only loader or fixture.
+- Prefer **dynamic schema discovery** (`get_schema`, live labels/relationships) over fixed Cypher for new behavior.
+- Clarification prompts and rewrites should be **domain-neutral** (e.g. "by product / item", "structured database") and let text2cypher map to the actual graph.
+- User-facing errors and chat copy should say **structured data / graph** unless the user explicitly asked about Northwind.
+- Northwind-specific Cypher shortcuts are acceptable only in clearly marked demo paths (e.g. `northwind-data.cypher`, deterministic analytics fallbacks) and should degrade gracefully when those labels are absent.

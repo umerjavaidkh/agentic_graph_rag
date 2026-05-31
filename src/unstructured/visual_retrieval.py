@@ -108,6 +108,25 @@ def is_strict_page_lookup(intent: VisualIntent) -> bool:
     return True
 
 
+def normalize_visual_page_intent(intent: VisualIntent) -> None:
+    """
+    Bare 'page N' in image/figure queries means PDF page index, not printed label.
+
+    Must run after pdf_page / document_page are set on the intent (including from
+    retrieve_node), otherwise multi-document clarification never sees pdf_page=N.
+    """
+    if intent.pdf_page is not None or not intent.document_page:
+        return
+    label = str(intent.document_page).strip()
+    if not label.isdigit():
+        return
+    q = intent.query.lower()
+    if not (intent.wants_image or intent.list_all or _VISUAL_KIND.search(q)):
+        return
+    intent.pdf_page = int(label)
+    intent.document_page = None
+
+
 def parse_visual_intent(
     query: str,
     extract_terms: Optional[Callable[[str], list[str]]] = None,
@@ -146,7 +165,7 @@ def parse_visual_intent(
             if ft not in terms:
                 terms.append(ft)
 
-    return VisualIntent(
+    intent = VisualIntent(
         query=query,
         pdf_page=pdf_p,
         document_page=doc_p,
@@ -158,6 +177,8 @@ def parse_visual_intent(
         visual_focus=visual_focus,
         single_visual=single_visual,
     )
+    normalize_visual_page_intent(intent)
+    return intent
 
 
 def extract_visual_focus_terms(query: str) -> list[str]:

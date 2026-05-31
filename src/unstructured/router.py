@@ -11,7 +11,7 @@ from ..structured.graph import structured_agent
 from ..auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
 from ..presentation import build_presentation
 from ..routing import select_mcp_tool, run_via_mcp_tool
-from ..conversation import clear_turn, get_turn, resolve_follow_up, save_turn
+from ..conversation import clear_turn, get_turn, resolve_follow_up, route_tool_for_clarification_reply, save_turn
 
 
 # ─────────────────────────────────────────
@@ -31,6 +31,8 @@ def search_documents(
     if resolved.get("focus_section_id"):
         state["focus_section_id"] = resolved["focus_section_id"]
         state["parent_section_id"] = resolved.get("parent_section_id")
+    if resolved.get("document_id"):
+        state["document_id"] = resolved["document_id"]
     if prior:
         state["prior_context"] = prior
 
@@ -54,12 +56,19 @@ def search_documents(
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
         "_follow_up": resolved.get("follow_up_kind") if resolved.get("use_prior") else None,
     }
+    if resolved.get("follow_up_kind") in ("clarification_document", "structured_clarification") and prior:
+        pending = prior.get("pending_clarification")
+        if pending:
+            out["_resolved_clarification"] = pending
     save_turn(thread_id, question, out)
     return out
 
 
 def query_data(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
-    state = {"question": question}
+    prior = get_turn(thread_id)
+    resolved = resolve_follow_up(question, prior)
+
+    state = {"question": resolved["question"]}
     if user_context is not None:
         state["user_context"] = user_context
 
@@ -68,16 +77,25 @@ def query_data(question: str, user_context: Optional[UserContext] = None, thread
         question=question,
         answer=result.get("answer", ""),
         sources=result.get("sources", []),
+        retrieved_context=result.get("retrieved_context", {}),
         agent="structured",
     )
-    return {
+    out = {
         "answer": result.get("answer", ""),
         "sources": result.get("sources", []),
         "strategy": result.get("strategy", ""),
         "agent": "structured",
         "presentation": presentation,
+        "retrieved_context": result.get("retrieved_context", {}),
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
+        "_follow_up": resolved.get("follow_up_kind") if resolved.get("use_prior") else None,
     }
+    if resolved.get("follow_up_kind") in ("clarification_document", "structured_clarification") and prior:
+        pending = prior.get("pending_clarification")
+        if pending:
+            out["_resolved_clarification"] = pending
+    save_turn(thread_id, question, out)
+    return out
 
 
 def query_hybrid(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
@@ -154,7 +172,23 @@ MCP_TOOLS = [
 
 
 def ask(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
-    tool_name = select_mcp_tool(question)
+    prior = get_turn(thread_id)
+    tool_name = route_tool_for_clarification_reply(question, prior)
+    if not tool_name and prior:
+        resolved = resolve_follow_up(question, prior)
+        if resolved.get("use_prior"):
+            fk = resolved.get("follow_up_kind") or ""
+            if fk in (
+                "clarification_document",
+                "subsection_detail",
+                "page",
+                "page_visual_focus",
+            ):
+                tool_name = "search_documents"
+            elif fk == "structured_clarification":
+                tool_name = "query_data"
+    if not tool_name:
+        tool_name = select_mcp_tool(question)
     return run_via_mcp_tool(
         question,
         tool_name,

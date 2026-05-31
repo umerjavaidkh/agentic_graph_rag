@@ -15,6 +15,8 @@ from ..config.settings import CHAT_MODEL, STRUCTURED_FAST_ANSWER
 from ..model_providers.factory import get_model_provider
 from .fast_answer import try_tabular_answer
 from .query_intent import analytics_result_limit
+from .clarification import needs_structured_clarification
+from ..conversation.clarification import format_clarification_answer
 
 provider = get_model_provider()
 retriever = StructuredRetriever()
@@ -46,6 +48,30 @@ def retrieve_node(state: StructuredState):
         context  = retriever.get_schema()
         strategy = "schema"
     else:
+        spec = needs_structured_clarification(question)
+        if spec:
+            message = format_clarification_answer(
+                spec["prompt"],
+                spec["options"],
+                footer="Reply with an option name or number (e.g. **By product**).",
+            )
+            context = {
+                "mode": "needs_clarification",
+                "clarification_kind": spec["kind"],
+                "clarification_message": message,
+                "clarification_options": spec["options"],
+                "original_question": question,
+                "chunks": [],
+                "strategy": "clarification",
+            }
+            return {
+                "retrieved_context": context,
+                "sources": [],
+                "strategy": "clarification",
+                "cypher_generated": None,
+                "keywords": [],
+            }
+
         lim = analytics_result_limit(question, 5)
         context  = retriever.retrieve(question, limit=lim, user_context=user_context)
         strategy = context.get("strategy", "text2cypher")
@@ -68,6 +94,13 @@ def generate_node(state: StructuredState):
     chunks   = state["retrieved_context"]["chunks"]
     strategy = state.get("strategy", "text2cypher")
     question = state["question"]
+    retrieved = state["retrieved_context"]
+
+    if strategy == "clarification" or retrieved.get("mode") == "needs_clarification":
+        msg = retrieved.get("clarification_message") or (
+            "I need one more detail before I can query the structured database. Please pick an option."
+        )
+        return {"answer": msg, "low_confidence": False}
 
     if not chunks:
         return {
@@ -130,8 +163,7 @@ def generate_node(state: StructuredState):
 
 
 def should_continue(state: StructuredState):
-    if not state["retrieved_context"]["chunks"]:
-        return "no_context"
+    # Always run generate_node — clarification and empty retrieval still need a reply.
     return "generate"
 
 
@@ -145,7 +177,7 @@ workflow.set_entry_point("retrieve")
 workflow.add_conditional_edges(
     "retrieve",
     should_continue,
-    {"no_context": END, "generate": "generate"},
+    {"generate": "generate"},
 )
 workflow.add_edge("generate", END)
 
