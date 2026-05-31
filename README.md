@@ -112,8 +112,24 @@ The app automatically routes your question to the right agent (`query_data`, `se
 
 ## Uploading documents
 
+Sample files for testing live in **`sample_data_to_test/`**:
+
+```
+sample_data_to_test/
+├── unstructured/
+│   ├── rag_document.pdf      # PDF for document RAG (full Docker image)
+│   └── rag_document_2.pdf    # second PDF for multi-document / clarification tests
+└── structured/
+    └── northwind-data.cypher # structured graph load (products, orders, customers)
+```
+
+| File | Upload tab | Use for |
+|------|------------|---------|
+| `unstructured/*.pdf` | **Unstructured** | TOC, sections, page images, semantic search |
+| `structured/northwind-data.cypher` | **Cypher** | Structured analytics (`query_data`) — requires `ALLOW_CYPHER_INGEST=true` and compliance/admin role |
+
 1. Go to http://localhost:8000/upload
-2. Choose a file (PDF requires the **full** Docker image)
+2. Choose a file from `sample_data_to_test/` (PDF requires the **full** Docker image)
 3. Submit and wait for the ingestion job to finish
 4. Ask questions about the document in **Chat**
 
@@ -121,6 +137,19 @@ Check job status via the API:
 
 ```bash
 curl http://localhost:8000/ingest/jobs/{job_id}
+```
+
+Example upload from the repo root:
+
+```bash
+# Unstructured PDF (full stack)
+curl -X POST http://localhost:8000/ingest/unstructured \
+  -F "file=@sample_data_to_test/unstructured/rag_document.pdf"
+
+# Structured Cypher (when ALLOW_CYPHER_INGEST=true)
+curl -X POST http://localhost:8000/ingest/cypher \
+  -F "file=@sample_data_to_test/structured/northwind-data.cypher" \
+  -F "role=compliance_officer"
 ```
 
 ---
@@ -261,8 +290,10 @@ curl http://localhost:8000/health
 
 ```bash
 curl -X POST http://localhost:8000/ingest/unstructured \
-  -F "file=@your-document.pdf"
+  -F "file=@sample_data_to_test/unstructured/rag_document.pdf"
 ```
+
+See **`sample_data_to_test/`** for all sample PDFs and Cypher scripts.
 
 Interactive API docs: http://localhost:8000/docs
 
@@ -449,6 +480,9 @@ flowchart TB
 
 ```
 agentic_graph_rag/
+├── sample_data_to_test/    # Sample PDFs + Cypher for upload/ingest tests
+│   ├── unstructured/       # rag_document.pdf, rag_document_2.pdf
+│   └── structured/         # northwind-data.cypher
 ├── src/
 │   ├── api.py              # FastAPI app + web UI routes
 │   ├── routing.py          # LLM query router
