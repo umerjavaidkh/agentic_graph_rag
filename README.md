@@ -1,10 +1,10 @@
 # Agentic Graph RAG
 
-Ask questions over **documents** and **structured graph data** in one place. The app uses an LLM router to pick the right path:
+Ask questions over **documents** and **structured graph data** in one place. An **MCP-style router** (`routing.py`) picks the path using fast signals plus LLM tool choice, with **RBAC** per user:
 
-- **Documents** — policies, PDFs, manuals (semantic + graph retrieval)
-- **Structured data** — products, orders, customers (Text-to-Cypher on Neo4j)
-- **Hybrid** — both when needed
+- **Documents** — policies, PDFs, manuals (`retrieval/unstructured`: vector + full-text + graph expansion + lexical + structural TOC/page/visual)
+- **Structured data** — products, orders, customers (`retrieval/structured`: schema-driven Text-to-Cypher on Neo4j)
+- **Hybrid** — both agents when the question needs document text and business metrics
 
 Built with **FastAPI**, **Neo4j**, **LangGraph**, and **OpenAI**.
 
@@ -332,21 +332,27 @@ flowchart TB
     subgraph Query["Querying (read path)"]
         direction TB
         CHAT --> API["FastAPI api.py"]
-        API --> ASK["bridge.ask()"]
+        API --> ASK["bridge.ask() → router.ask()"]
         ASK --> TM["Thread memory<br/>clarification + follow-ups"]
-        TM --> ROUTE["LLM MCP router<br/>(+ clarification override)"]
+        TM --> ROUTE["routing.select_mcp_tool<br/>fast signals + LLM MCP tools"]
+        ROUTE --> RBAC{"RBAC<br/>structured vs esg"}
 
-        ROUTE --> SD["search_documents<br/>Unstructured LangGraph"]
-        ROUTE --> QD["query_data<br/>Structured LangGraph"]
-        ROUTE --> HY["query_hybrid<br/>Both agents"]
+        RBAC -->|no structured access| DENY["Clear access message<br/>(no PDF fallback)"]
+        RBAC --> SD
+        ROUTE --> SD["search_documents"]
+        ROUTE --> QD["query_data"]
+        ROUTE --> HY["query_hybrid"]
 
-        SD --> DR["DocumentRAGRetriever<br/>TOC · structural · page/visual · semantic"]
-        QD --> SR["StructuredRetriever<br/>Text2Cypher · templates · vector"]
+        SD --> LGU["retrieval/unstructured/graph.py<br/>LangGraph: retrieve → generate"]
+        QD --> LGS["retrieval/structured/graph.py<br/>LangGraph: retrieve → generate"]
+
+        LGU --> DR["DocumentRAGRetriever<br/>hybrid_retrieve()"]
+        LGS --> SR["StructuredRetriever<br/>schema + Text2Cypher + repair"]
 
         DR --> NEO4J
         SR --> NEO4J
 
-        DR --> PRES["Presentation planner<br/>markdown · tables · charts · images"]
+        DR --> PRES["presentation/planner.py"]
         SR --> PRES
         PRES --> ANS["Answer + sources + UI blocks"]
     end
@@ -414,45 +420,64 @@ The result is exported as Neo4j import artifacts in `output/ingestion/<job_id>` 
 flowchart TB
     Q["User question + thread_id + role"] --> TM{"Thread memory"}
 
-    TM -->|pending / resolved clarification| CLARIFY["Match reply<br/>1 · document name · metric option"]
-    CLARIFY --> REWRITE["Rewrite question + document_id"]
-    REWRITE --> FORCE["Force correct MCP tool<br/>(documents vs structured data)"]
+    TM -->|clarification reply| CLARIFY["Resolve document / metric choice"]
+    CLARIFY --> FORCE["Force MCP tool"]
 
-    TM -->|normal turn| ROUTE["select_mcp_tool<br/>fast route + LLM tools"]
+    TM -->|normal turn| ROUTE["select_mcp_tool()"]
 
-    FORCE --> SD
-    ROUTE --> SD
-    ROUTE --> QD
-    ROUTE --> HY
-
-    subgraph SD["search_documents"]
-        CLASS["classify_query<br/>toc · page · structural · semantic…"]
-        CLASS --> RET["DocumentRAGRetriever"]
-        RET -->|ambiguous doc/page| ASK1["needs_clarification"]
-        RET -->|matched| CTX["chunks + image_key + meta"]
-        CTX --> GEN1["generate_node<br/>TOC list · visuals · LLM answer"]
+    subgraph Route["routing.py — MCP tool selection"]
+        ROUTE --> FAST{"Fast route?<br/>_DOC_ROUTE / _DATA_ROUTE"}
+        FAST -->|products · orders · categories| QD2["query_data"]
+        FAST -->|godata · photo · page · toc| SD2["search_documents"]
+        FAST -->|no match| LLM["LLM tool_choice<br/>search_documents · query_data · query_hybrid"]
+        LLM --> PICK["Chosen tool"]
     end
 
-    subgraph QD["query_data"]
-        CL2{"Vague analytics query?"}
-        CL2 -->|yes| ASK2["needs_clarification"]
-        CL2 -->|no| T2C["Text2Cypher + schema templates"]
-        T2C --> GEN2["tabular fast answer or LLM synthesis"]
+    PICK --> RBAC2{"Structured question +<br/>no structured RBAC?"}
+    RBAC2 -->|yes| DENY2["Permission message<br/>(regular_001 / compliance_001)"]
+    RBAC2 --> RUN["run_via_mcp_tool()"]
+
+    RUN --> SD["search_documents → esg_agent"]
+    RUN --> QD["query_data → structured_agent"]
+    RUN --> HY["query_hybrid → both agents"]
+
+    subgraph SD["retrieval/unstructured — DocumentRAGRetriever"]
+        direction TB
+        RET{"Early structural path?"}
+        RET -->|TOC| T1["Section tree via CONTAINS"]
+        RET -->|page / visual page| T2["Page + Region nodes<br/>on-demand vision for figures"]
+        RET -->|default| HYB["hybrid_retrieve()"]
+        HYB --> LEX["Phrase CONTAINS + keyword overlap"]
+        HYB --> SEM["Vector seed → section_embedding"]
+        HYB --> FT["Full-text node_text_index"]
+        HYB --> GEX["Graph expand 1–2 hops<br/>SEMANTICALLY_SIMILAR · CONTAINS · …"]
+        LEX --> MERGE["_merge_and_rank()"]
+        SEM --> MERGE
+        FT --> MERGE
+        GEX --> MERGE
+        MERGE --> GEN1["generate_node<br/>prompt: default · toc · page · visual · synthesis"]
     end
 
-    GEN1 --> UI["Presentation blocks"]
+    subgraph QD["retrieval/structured — StructuredRetriever"]
+        T2C["Schema introspection"]
+        T2C --> CY["LLM Text-to-Cypher"]
+        CY --> FIX["Direction repair + empty-row retries"]
+        FIX --> GEN2["generate_node · structured_synthesis"]
+    end
+
+    GEN1 --> UI["presentation/planner.py"]
     GEN2 --> UI
-    ASK1 --> UI
-    ASK2 --> UI
-    UI --> SAVE["save_turn → next follow-up"]
+    DENY2 --> UI
+    UI --> SAVE["save_turn"]
 ```
 
-1. **Chat / API** receives the question, optional `thread_id`, and user role (RBAC).
-2. **Thread memory** resolves short follow-ups and clarification replies (e.g. pick a document for TOC, switch from Stratec to Go.Data, pick a sales metric).
-3. **LLM MCP router** picks `search_documents`, `query_data`, or `query_hybrid` — unless a clarification reply forces the correct tool.
-4. **Unstructured agent** classifies intent (TOC, page/images, structural, semantic), retrieves from Neo4j, and generates an answer (with clarification when multiple documents match).
-5. **Structured agent** runs Text2Cypher (or deterministic templates) against whatever graph schema is loaded — not hard-coded to Northwind.
-6. **Presentation planner** builds markdown, tables, charts, and image blocks for the chat UI.
+1. **Chat / API** receives the question, `thread_id`, and user role (`public_001`, `regular_001`, etc.).
+2. **Thread memory** (`conversation/`) resolves follow-ups and clarification replies (document name, metric choice).
+3. **MCP routing** (`routing.py`): fast keyword signals for document vs business-graph questions, then LLM tool choice if needed. Mis-routed document questions (e.g. photo credits) can fall back from denied structured access; business questions do **not** fall back to PDF search.
+4. **RBAC** (`auth/`): `public_001` → documents only; `regular_001` → structured only; `compliance_001` / `admin_001` → both.
+5. **Unstructured agent** (`retrieval/unstructured/graph.py`): `DocumentRAGRetriever.hybrid_retrieve()` uses structural shortcuts (TOC, page text, page visuals) or the full hybrid stack (lexical + semantic + full-text + graph expansion), then LLM synthesis with task-specific prompts.
+6. **Structured agent** (`retrieval/structured/graph.py`): schema-driven **Text-to-Cypher** with relationship-direction repair and empty-result retries — works on any loaded graph schema (Northwind demo by default).
+7. **Presentation** (`presentation/planner.py`) builds markdown, tables, charts, and image blocks for the chat UI.
 
 ### Neo4j graph contents
 
@@ -460,7 +485,16 @@ flowchart TB
 |--------|-------------|------------------------|
 | Unstructured ingest | `Document`, `Chapter`, `Section`, `Page`, `Region` | `CONTAINS`, Axis-2 semantic edges |
 | Structured ingest | `Product`, `Order`, `Customer`, … (any schema) | Domain relationships from Cypher |
-| RBAC | `User`, `Role`, permissions | Document/data access control |
+| RBAC | `User`, `Role`, `KnowledgeArea` | `esg` (documents) · `structured` (business graph) |
+
+### RBAC and routing (demo users)
+
+| User | Documents (`esg`) | Structured DB | Typical questions |
+|------|-------------------|-----------------|-------------------|
+| `public_001` | Yes | No | Go.Data report, policies, photo credits, page 29 |
+| `regular_001` | No | Yes | Beverages products, orders, customers |
+| `compliance_001` | Yes | Yes | Both corpora |
+| `admin_001` | Yes | Yes | Both corpora |
 
 ### Ingestion ↔ query config
 
@@ -480,21 +514,35 @@ flowchart TB
 
 ```
 agentic_graph_rag/
-├── sample_data_to_test/    # Sample PDFs + Cypher for upload/ingest tests
-│   ├── unstructured/       # rag_document.pdf, rag_document_2.pdf
-│   └── structured/         # northwind-data.cypher
+├── sample_data_to_test/       # Sample PDFs + Cypher for upload/ingest tests
+│   ├── unstructured/         # rag_document.pdf, rag_document_2.pdf
+│   └── structured/           # northwind-data.cypher
 ├── src/
-│   ├── api.py              # FastAPI app + web UI routes
-│   ├── routing.py          # LLM query router
-│   ├── structured/         # Text-to-Cypher + Northwind queries
-│   ├── unstructured/       # Document retrieval + RAG
-│   ├── ingestion/          # Upload pipeline
-│   └── auth/               # Role-based access control
-├── docker-compose.yml      # App + Neo4j
-├── Dockerfile              # Slim image
-├── Dockerfile.full         # Full image (PDF)
-├── scripts/                # Docker entrypoint + demo data
-└── .env.example            # Environment template
+│   ├── api.py                # FastAPI app + web UI routes
+│   ├── bridge.py             # ask() entry point for API
+│   ├── router.py             # MCP handlers: search_documents, query_data, query_hybrid
+│   ├── routing.py            # MCP tool selection (fast route + LLM + RBAC fallback)
+│   ├── retrieval/
+│   │   ├── unstructured/
+│   │   │   ├── graph.py      # LangGraph agent (retrieve → generate)
+│   │   │   ├── retriever.py  # DocumentRAGRetriever (hybrid + structural paths)
+│   │   │   └── visual_retrieval.py  # Visual intent helpers
+│   │   └── structured/
+│   │       ├── graph.py      # LangGraph agent
+│   │       └── retriever.py  # Schema-driven Text-to-Cypher + repair
+│   ├── presentation/         # UI blocks (markdown, tables, charts, images)
+│   ├── conversation/       # Thread memory + clarification
+│   ├── ingestion/            # Upload pipeline (PDF / Cypher jobs)
+│   ├── document/             # Docling parser, page vision, page numbers
+│   ├── exporter/             # Neo4j export from DKG nodes
+│   ├── semantic/             # Axis 2 enrichment (embeddings, entities)
+│   ├── auth/                 # RBAC (roles, knowledge areas)
+│   └── prompts/              # LLM prompts (route_query, document_*, structured_synthesis)
+├── docker-compose.yml
+├── Dockerfile                # Slim image
+├── Dockerfile.full           # Full image (PDF ingest)
+├── scripts/
+└── .env.example
 ```
 
 ---
@@ -550,7 +598,14 @@ Requirements/Dockerfile changes trigger a full pip install again.
 
 ### Access denied on structured queries
 
-The demo uses role-based access. In Chat, try role `admin` in the sidebar, or check RBAC setup in Neo4j (`src/auth/rbac_schema.cypher`).
+Roles are enforced per knowledge area:
+
+- **Products / orders / categories** → needs structured access (`regular_001`, `compliance_001`, `admin_001`).
+- **PDF / policy / Go.Data questions** → needs document access (`public_001`, `compliance_001`, `admin_001`).
+
+If you see a permission message for the business database, switch the chat user to `regular_001` or `compliance_001`. If document answers mention “business database,” you asked a Northwind-style question while using a documents-only role.
+
+Check RBAC in Neo4j: `src/auth/rbac_schema.cypher`.
 
 ---
 
