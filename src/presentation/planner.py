@@ -12,7 +12,7 @@ from ..assets.page_images import resolve_image_url
 from ..document.page_numbers import parse_page_number_from_query
 from .structured_planner import build_structured_presentation
 from ..document.page_vision import compact_visual_content
-from ..unstructured.visual_retrieval import wants_page_text
+from ..retrieval.unstructured.visual_retrieval import wants_page_text
 
 # ── Intent detectors (extensible) ─────────────────────────────
 

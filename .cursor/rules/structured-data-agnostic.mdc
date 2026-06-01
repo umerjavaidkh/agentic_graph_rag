@@ -1,6 +1,6 @@
 ---
 description: Structured query path must stay schema-agnostic (not Northwind-only)
-globs: src/structured/**/*
+globs: src/retrieval/structured/**/*
 alwaysApply: false
 ---
 

@@ -9,8 +9,8 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from ..structured.clarification import apply_structured_clarification
-from ..unstructured.visual_retrieval import extract_visual_focus_terms
+from ..retrieval.structured.clarification import apply_structured_clarification
+from ..retrieval.unstructured.visual_retrieval import extract_visual_focus_terms
 from .clarification import match_clarification_choice, normalize_clarification_reply
 
 # thread_id -> last critical turn snapshot
@@ -142,7 +142,7 @@ def _resolve_clarification_choice(
         q = candidate.strip()
         if not q or len(q) > 80:
             continue
-        from ..unstructured.retriever import DocumentRAGRetriever
+        from ..retrieval.unstructured.retriever import DocumentRAGRetriever
 
         retriever = DocumentRAGRetriever()
         with retriever.driver.session() as session:

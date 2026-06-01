@@ -1,9 +1,8 @@
 """
-structured/state.py — State for structured graph queries.
-Compatible with ESGState shape so both can flow through same graph.
+retrieval/structured/state.py — State for structured graph queries.
 """
 from typing import TypedDict, Optional
-from ..auth.roles import UserContext
+from ...auth.roles import UserContext
 
 
 class StructuredState(TypedDict, total=False):

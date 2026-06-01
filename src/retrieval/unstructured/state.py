@@ -1,5 +1,5 @@
 from typing import TypedDict, List, Dict, Optional
-from ..auth.roles import UserContext
+from ...auth.roles import UserContext
 
 class ESGState(TypedDict, total=False):
     question: str

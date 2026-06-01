@@ -10,12 +10,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from ..document.page_numbers import (
+from ...document.page_numbers import (
     is_valid_document_page_label,
     parse_page_number_from_query,
 )
-from ..document.page_vision import compact_visual_content
-from ..document.patterns import TABLE_REF_PATTERN
+from ...document.page_vision import compact_visual_content
+from ...document.patterns import TABLE_REF_PATTERN
 
 # Boilerplate stripped from queries before phrase extraction
 _QUERY_TAIL = re.compile(

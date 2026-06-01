@@ -1,17 +1,17 @@
 """
-unstructured/router.py — Internal router for unstructured / structured systems.
+router.py — Query router for structured and unstructured retrieval.
 
 Exposes ask() and MCP tool registry via src.bridge.
 Routing uses LLM MCP tool selection (no keyword lists).
 """
 from typing import Optional
 
-from .graph import esg_agent
-from ..structured.graph import structured_agent
-from ..auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
-from ..presentation import build_presentation
-from ..routing import select_mcp_tool, run_via_mcp_tool
-from ..conversation import clear_turn, get_turn, resolve_follow_up, route_tool_for_clarification_reply, save_turn
+from .retrieval.unstructured.graph import esg_agent
+from .retrieval.structured.graph import structured_agent
+from .auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
+from .presentation import build_presentation
+from .routing import select_mcp_tool, run_via_mcp_tool
+from .conversation import get_turn, resolve_follow_up, route_tool_for_clarification_reply, save_turn
 
 
 # ─────────────────────────────────────────

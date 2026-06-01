@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from ..structured.query_intent import is_singular_best_query
+from ..retrieval.structured.query_intent import is_singular_best_query
 
 _ANALYTICS = re.compile(
     r"\b(top|bottom|best|worst|highest|lowest|most|least|ranking|rank|"
