@@ -1,15 +1,21 @@
 """
-retrieval/unstructured/graph.py — simplified unstructured agent.
+retrieval/unstructured/graph.py — Neo4j Graph RAG agent.
 
-Does semantic retrieval over embedded Sections and synthesizes an answer using
-the `document_default` prompt.
+Vector seed + graph expansion + LLM synthesis.
 """
 
 from langgraph.graph import END, StateGraph
 
-from .retriever import DocumentRAGRetriever
+from ...routing import is_structured_data_question
+from .retriever import (
+    DocumentRAGRetriever,
+    is_page_question,
+    is_synthesis_question,
+    is_toc_question,
+    is_visual_page_question,
+)
 from ...config.prompts import load_prompt
-from ...config.settings import CHAT_MODEL
+from ...config.settings import CHAT_MODEL, RETRIEVAL_FINAL_LIMIT
 from ...model_providers.factory import get_model_provider
 from .state import ESGState
 
@@ -21,22 +27,39 @@ def retrieve_node(state: ESGState):
     question = state["question"]
     user_context = state.get("user_context")
 
-    context = retriever.hybrid_retrieve(query=question, limit=8, user_context=user_context)
+    limit = max(RETRIEVAL_FINAL_LIMIT, 12) if is_synthesis_question(question) else RETRIEVAL_FINAL_LIMIT
+    context = retriever.hybrid_retrieve(
+        query=question,
+        limit=limit,
+        user_context=user_context,
+    )
+    strategy = context.get("strategy", "graph_rag")
     return {
         "retrieved_context": context,
         "keywords": [],
         "sources": context.get("chunks", []),
-        "query_type": "semantic",
+        "query_type": strategy,
     }
 
 
 def generate_node(state: ESGState):
+    question = state["question"]
     retrieved = state.get("retrieved_context", {}) or {}
     chunks = retrieved.get("chunks", []) or []
 
+    if is_structured_data_question(question):
+        return {
+            "answer": (
+                "This question is about the business database (products, orders, customers), "
+                "not ingested PDF documents. Re-run with structured access (e.g. regular_001 or "
+                "compliance_001) so the system can query product and category data."
+            ),
+            "low_confidence": False,
+        }
+
     if not chunks:
         return {
-            "answer": "I couldn't find relevant information in the document knowledge graph.",
+            "answer": "I could not find relevant information in the ingested documents.",
             "low_confidence": False,
         }
 
@@ -46,10 +69,22 @@ def generate_node(state: ESGState):
         text = (c.get("text") or "").strip()
         if not text:
             continue
-        context_lines.append(f"[Chunk {i}] {title}\n{text}")
+        rel = c.get("related") or []
+        rel_note = f" (graph: {', '.join(rel)})" if rel else ""
+        context_lines.append(f"[Chunk {i}] {title}{rel_note}\n{text}")
     context_text = "\n\n".join(context_lines)
 
-    system_prompt = load_prompt("document_default", context=context_text, question=state["question"])
+    if is_toc_question(state["question"]):
+        prompt_name = "document_toc"
+    elif is_visual_page_question(state["question"]):
+        prompt_name = "document_visual"
+    elif is_page_question(state["question"]):
+        prompt_name = "document_page"
+    elif is_synthesis_question(state["question"]):
+        prompt_name = "document_synthesis"
+    else:
+        prompt_name = "document_default"
+    system_prompt = load_prompt(prompt_name, context=context_text, question=state["question"])
     response = provider.chat_completion(
         model=CHAT_MODEL,
         messages=[
@@ -57,8 +92,13 @@ def generate_node(state: ESGState):
             {"role": "user", "content": str(state["question"])},
         ],
         temperature=0.1,
+        max_tokens=1400 if (
+            is_toc_question(state["question"])
+            or is_page_question(state["question"])
+            or is_visual_page_question(state["question"])
+        ) else 600,
     )
-    return {"answer": response.choices[0].message.content, "low_confidence": False}
+    return {"answer": response.choices[0].message.content.strip(), "low_confidence": False}
 
 
 def should_continue(state: ESGState):

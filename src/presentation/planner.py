@@ -17,6 +17,7 @@ from ..retrieval.unstructured.visual_retrieval import wants_page_text
 # ── Intent detectors (extensible) ─────────────────────────────
 
 _IMAGE_QUERY = re.compile(
+    r"\bvisual\s+content\b|"
     r"\b(?:show|display|see|fetch|get)\s+(?:the\s+)?(?:image|picture|photo|figure|page|pdf)\b|"
     r"\b(?:show\s+all|all|every|list|each)\s+(?:\w+\s+){0,3}"
     r"(?:images?|figures?|figs?\.?|photos?|pictures?|visuals?)\b|"
@@ -311,7 +312,7 @@ def build_presentation(
     visual_query_type = query_type in ("page", "visual_scene", "figure_caption")
     visual_mode = mode in (
         "unified_visual", "page_lookup", "page_visual_list",
-        "visual_scene", "caption_figure",
+        "visual_scene", "caption_figure", "structural_page_visual",
     )
     wants_visual = wants_page_image(question)
     force_image = not text_only and not page_text_mode and wants_visual

@@ -24,9 +24,10 @@ MCP_ROUTE_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "search_documents",
             "description": (
-                "Search ingested policy/compliance documents (PDFs, manuals). "
-                "Use for procedures, protocols, sections, whistleblowing, officer duties, "
-                "reporting obligations, and any answer that should come from document text."
+                "Search ingested PDF/DOCX documents: policies, annual reports, manuals, "
+                "photo credits, appendices, WHO publications, Go.Data report text, sections, "
+                "tables in documents, and any factual answer that comes from document content—not "
+                "the Northwind product/order database."
             ),
             "parameters": {
                 "type": "object",
@@ -42,8 +43,9 @@ MCP_ROUTE_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "query_data",
             "description": (
-                "Query structured Neo4j graph data (products, orders, customers, suppliers). "
-                "Use for analytics, counts, aggregations, schema questions—not policy documents."
+                "Query the Northwind-style business graph ONLY: products, orders, customers, "
+                "suppliers, sales analytics, Cypher/schema. Never use for PDF text, photo credits, "
+                "photographers, or WHO/Go.Data report content."
             ),
             "parameters": {
                 "type": "object",
@@ -79,17 +81,45 @@ TOOL_TO_AGENT: dict[str, str] = {
 }
 
 _DATA_ROUTE = re.compile(
-    r"\b(?:products?|orders?|customers?|suppliers?|categories?|sales|revenue|profit|sold|"
-    r"northwind|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|cypher|neo4j|"
-    r"how\s+many|count|aggregate|schema|monthly|timeline|trend|volume|chronological)\b",
+    r"\b(?:products?|orders?|customers?|suppliers?|categories?|category|beverages?|sales|"
+    r"revenue|profit|sold|northwind|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|"
+    r"cypher|neo4j|how\s+many\s+(?:orders?|products?|customers?|suppliers?|units?)|"
+    r"count\s+of\s+(?:orders?|products?|customers?|suppliers?)|"
+    r"belong\s+to\s+(?:the\s+)?\w+\s+categor|aggregate|schema|monthly|timeline|trend|"
+    r"volume|chronological)\b",
     re.I,
 )
+
+
+def is_structured_data_question(question: str) -> bool:
+    """Northwind-style business graph (products, orders, …) — not PDF documents."""
+    return bool(_DATA_ROUTE.search(question or ""))
 _DOC_ROUTE = re.compile(
     r"\b(?:policy|policies|document|documents|pdf|manual|protocol|section\s+\d|"
     r"whistleblow|compliance\s+officer|procedure|page\s+\d+|figure|table\s+on|"
-    r"table\s+of\s+contents?|toc)\b",
+    r"table\s+of\s+contents?|toc|annex|"
+    r"godata|go\.?\s*data|openwho|workshop|translated|translation|languages?|"
+    r"annual\s+report|community\s+of\s+practice|dhis2|who\s+github|"
+    r"goarn|institution|hosted|"
+    r"case[\s-]control|hospital|health\s*care\s*workers?|healthcare|sars[\s-]?cov|"
+    r"infection\s+risk|hcw\s*study|member\s+state|pandemic|outbreak|"
+    r"photo|photograph|credit|noor|photographer|illustration|attribution|"
+    r"identify\s+all|list\s+all|enumerate|appendix|acknowledgement|preface|"
+    r"\bwho\s*/|annual\s+report)\b",
     re.I,
 )
+
+
+def _result_has_structured_access_denied(result: dict) -> bool:
+    ctx = result.get("retrieved_context") or {}
+    for c in ctx.get("chunks") or []:
+        if c.get("id") == "access_denied":
+            return True
+    for s in result.get("sources") or []:
+        if s.get("id") == "access_denied":
+            return True
+    answer = (result.get("answer") or "").lower()
+    return "permission to query structured" in answer or "access denied" in answer
 
 
 def _fast_route_tool(question: str) -> Optional[str]:
@@ -119,6 +149,14 @@ def select_mcp_tool(
     routed = _fast_route_tool(question)
     if routed:
         return routed
+
+    # Business-graph signals without document cues → structured (before LLM mis-routes).
+    if is_structured_data_question(question) and not _DOC_ROUTE.search(question):
+        return "query_data"
+
+    # Document signals without Northwind analytics → documents (before LLM mis-routes).
+    if _DOC_ROUTE.search(question) and not is_structured_data_question(question):
+        return "search_documents"
 
     if not api_key:
         return "search_documents"
@@ -164,6 +202,50 @@ def run_via_mcp_tool(
     """Execute the chosen MCP tool handler."""
     fn = handlers.get(tool_name) or handlers["search_documents"]
     result = fn(question, user_context=user_context, thread_id=thread_id)
+    route_method = "fast" if _fast_route_tool(question) else "llm_mcp"
+
+    if tool_name == "query_data" and _result_has_structured_access_denied(result):
+        if is_structured_data_question(question):
+            result = make_structured_access_denied_result(
+                question, user_context, routed_tool="query_data"
+            )
+            tool_name = "query_data"
+            route_method = "structured_access_denied"
+        else:
+            logger.info("Routing fallback: query_data access denied → search_documents")
+            doc_fn = handlers.get("search_documents") or fn
+            result = doc_fn(question, user_context=user_context, thread_id=thread_id)
+            tool_name = "search_documents"
+            route_method = "fallback_structured_denied"
+
     result["_route_tool"] = tool_name
-    result["_route_method"] = "llm_mcp"
+    result["_route_method"] = route_method
     return result
+
+
+def make_structured_access_denied_result(
+    question: str,
+    user_context: Optional[UserContext],
+    *,
+    routed_tool: str = "query_data",
+) -> dict:
+    """Clear response when the user lacks RBAC for the business database."""
+    uid = user_context.user_id if user_context else "unknown"
+    answer = (
+        "This question requires the business database (products, orders, customers, suppliers). "
+        f"Your account ({uid}) does not have permission to query that data. "
+        "Use a user with structured access, for example: regular_001, compliance_001, or admin_001."
+    )
+    return {
+        "answer": answer,
+        "sources": [],
+        "keywords": [],
+        "agent": "structured",
+        "strategy": "access_denied",
+        "query_type": "access_denied",
+        "presentation": {"kind": "plain", "blocks": [{"type": "markdown", "content": answer}]},
+        "retrieved_context": {"chunks": [], "query": question},
+        "_route_tool": routed_tool,
+        "_route_method": "structured_access_denied",
+        "_access_level": user_context.role.value if user_context else None,
+    }

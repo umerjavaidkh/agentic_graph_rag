@@ -10,7 +10,23 @@ from .retrieval.unstructured.graph import esg_agent
 from .retrieval.structured.graph import structured_agent
 from .auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
 from .presentation import build_presentation
-from .routing import select_mcp_tool, run_via_mcp_tool
+from .auth.rbac_setup import GraphRBAC
+from .config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from .routing import (
+    is_structured_data_question,
+    make_structured_access_denied_result,
+    select_mcp_tool,
+    run_via_mcp_tool,
+)
+
+_rbac: GraphRBAC | None = None
+
+
+def _rbac_check() -> GraphRBAC:
+    global _rbac
+    if _rbac is None:
+        _rbac = GraphRBAC(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    return _rbac
 from .conversation import get_turn, resolve_follow_up, route_tool_for_clarification_reply, save_turn
 
 
@@ -189,6 +205,17 @@ def ask(question: str, user_context: Optional[UserContext] = None, thread_id: st
                 tool_name = "query_data"
     if not tool_name:
         tool_name = select_mcp_tool(question)
+
+    ctx = user_context or DEFAULT_PUBLIC_CONTEXT
+    if (
+        tool_name == "query_data"
+        and is_structured_data_question(question)
+        and not _rbac_check().can_query_knowledge_area(ctx.user_id, "structured")
+    ):
+        out = make_structured_access_denied_result(question, ctx)
+        save_turn(thread_id, question, out)
+        return out
+
     return run_via_mcp_tool(
         question,
         tool_name,

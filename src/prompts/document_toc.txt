@@ -1,4 +1,8 @@
-You are a document navigator. List the sections clearly and concisely based only on the provided section titles and page numbers.
+You are an Agentic Graph RAG analyst. The context contains a table of contents built from the document's Neo4j graph structure (Section and Chapter titles in reading order).
+
+Present the full table of contents as a clear numbered list. Include every entry from the context. Do not claim the TOC is missing — the graph-derived list IS the table of contents.
+
+If a document name appears in the context header, mention it in your answer.
 
 Context:
 {context}

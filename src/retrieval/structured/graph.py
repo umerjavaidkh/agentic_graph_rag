@@ -59,7 +59,17 @@ def generate_node(state: StructuredState):
     question = state["question"]
 
     if not chunks:
-        return {"answer": "I couldn't find relevant data for that query.", "low_confidence": False}
+        return {
+            "answer": "No matching records were found in the business database for that query.",
+            "low_confidence": False,
+        }
+
+    denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
+    if denied:
+        return {
+            "answer": (denied.get("text") or "Access denied for structured data.").strip(),
+            "low_confidence": False,
+        }
 
     has_error = any(c.get("id") == "error" for c in chunks)
     if has_error:

@@ -1,14 +1,17 @@
 """
-retrieval/unstructured/retriever.py — Unstructured document retriever (simple).
+retrieval/unstructured/retriever.py — Neo4j Graph RAG for documents.
 
-Flow:
-- RBAC gate (KnowledgeArea: esg)
-- embed(query)
-- Neo4j vector search on `Section.embedding` using `section_embedding` index
-- return top-k chunks
+Flow (document-agnostic — works for any ingested PDF):
+1. Vector seed — embed query, find entry Section nodes
+2. Full-text seed — keyword lookup on node_text_index
+3. Graph expand — 1–2 hop traversal via structural + semantic edges
+4. Merge, rank, return top-k chunks for LLM synthesis
 """
 
-from typing import Any, Dict, Optional
+from __future__ import annotations
+
+import re
+from typing import Any, Optional
 
 from neo4j import GraphDatabase
 
@@ -21,11 +24,152 @@ from ...config.settings import (
     NEO4J_URI,
     NEO4J_USER,
     OPENAI_API_KEY,
+    RETRIEVAL_CANDIDATE_POOL,
     RETRIEVAL_FINAL_LIMIT,
 )
+from ...assets.factory import get_asset_store
+from ...document.page_numbers import parse_page_number_from_query
+from ...document.page_vision import PageVisionEnricher, compact_visual_content
+from ...graph.constants import DOCUMENT_ROOT_CYPHER
+from .visual_retrieval import parse_visual_intent
 from ...model_providers.factory import get_model_provider
 
 provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+
+# Structural + semantic edges created at ingest (Axis 1 & Axis 2).
+_GRAPH_REL_TYPES = (
+    "SEMANTICALLY_SIMILAR",
+    "SHARES_ENTITY",
+    "REFERENCES",
+    "ELABORATES",
+    "SAME_CATEGORY",
+    "FOLLOWS",
+    "PRECEDES",
+    "CONTAINS",
+    "PART_OF",
+)
+
+# Node labels that carry answer text during graph expansion.
+_TEXT_NODE_LABELS = ("Section", "Page", "Chapter", "Region")
+
+_VECTOR_SEED_LIMIT = min(RETRIEVAL_CANDIDATE_POOL, 12)
+_FULLTEXT_LIMIT = 8
+_GRAPH_1HOP_LIMIT = 24
+_GRAPH_2HOP_LIMIT = 16
+
+_SYNTHESIS_RE = re.compile(
+    r"\b(synthesi[sz]|structural map|escalat|pathway|flowchart|flow chart|"
+    r"compare|contrast|relationship between|trace how|build a .{0,20}map|"
+    r"how .{0,40} connect|map showing)\b",
+    re.I,
+)
+
+_KEYWORD_STOP = frozenset({
+    "what", "which", "where", "when", "that", "this", "with", "from", "into",
+    "have", "been", "were", "they", "their", "there", "about", "under", "based",
+    "specific", "according", "should", "would", "could", "document", "text",
+    "showing", "single", "show", "build", "does", "explicitly", "detailed",
+})
+
+
+def is_synthesis_question(query: str) -> bool:
+    return bool(_SYNTHESIS_RE.search(query or ""))
+
+
+_TOC_RE = re.compile(
+    r"\b(table\s+of\s+contents?|\btoc\b|list\s+(?:all\s+)?(?:the\s+)?contents?|"
+    r"show\s+(?:me\s+)?(?:the\s+)?contents?|provide\s+(?:me\s+)?(?:all\s+)?(?:the\s+)?toc)\b",
+    re.I,
+)
+
+
+def is_toc_question(query: str) -> bool:
+    return bool(_TOC_RE.search(query or ""))
+
+
+_PAGE_QUERY_RE = re.compile(
+    r"\b(?:fetch|get|show|retrieve|read|content|text|everything|all)\b.{0,50}\bpage\b|"
+    r"\bpage\s+[\wivxlcdm\-]+\s+(?:of|from|in)\b|"
+    r"\bcontent\s+(?:from|on|of)\s+(?:pdf\s+)?page\b|"
+    r"\bwhat\s+(?:is|does)\s+(?:pdf\s+)?page\s+",
+    re.I,
+)
+
+
+def is_page_question(query: str) -> bool:
+    pdf_page, doc_page = parse_page_number_from_query(query)
+    if pdf_page is not None or doc_page:
+        return True
+    return bool(_PAGE_QUERY_RE.search(query or ""))
+
+
+_VISUAL_PAGE_RE = re.compile(
+    r"\bvisual\s+content\b|"
+    r"\b(?:all\s+)?(?:the\s+)?(?:images?|figures?|figs?\.?|diagrams?|charts?|photos?|pictures?|visuals?)\b.{0,40}\bpage\b|"
+    r"\bpage\b.{0,40}\b(?:images?|figures?|visual|diagram)\b|"
+    r"\b(?:tell\s+me|describe|explain).{0,60}\b(?:image|figure|diagram)\b|"
+    r"\babout\s+(?:that|the)\s+(?:image|figure|diagram)\b",
+    re.I,
+)
+
+_FIG_CAPTION_RE = re.compile(
+    r"(?:Fig\.?|Figure)\s*(\d+(?:\.\d+)?)\s*[:.]\s*([^\n]+)",
+    re.I,
+)
+
+
+_FACT_LOOKUP_RE = re.compile(
+    r"\b(?:url|link|website|web\s*site|portal|email|e-mail|hyperlink)\b|"
+    r"\bwhat\s+is\s+the\s+(?:url|link|website|address|portal)\b|"
+    r"\b(?:which|into\s+which|how\s+many|when\s+did|who\s+hosted)\b|"
+    r"\b(?:translated|translation|languages?|hosted|host|workshop|openwho)\b",
+    re.I,
+)
+
+_PHRASE_STOP = _KEYWORD_STOP | frozenset({
+    "url", "link", "website", "portal", "email", "address", "http", "https",
+    "into", "which", "what", "when", "who", "how", "many", "much",
+    "the", "for", "has", "been", "was", "were", "does", "did", "are", "any",
+    "whose", "that", "this", "with", "from", "than", "then", "also", "only",
+    "name", "list", "give", "tell", "say", "ask",
+})
+
+_MONTH_YEAR_RE = re.compile(
+    r"\b(january|february|march|april|may|june|july|august|september|october|"
+    r"november|december)\s+(20\d{2}|19\d{2})\b",
+    re.I,
+)
+
+_BROKEN_URL_RE = re.compile(r"https?://[^\s\)\]>\"']+(?:\s+[^\s\)\]>\"']+)+", re.I)
+
+
+def is_fact_lookup_question(query: str) -> bool:
+    return bool(_FACT_LOOKUP_RE.search(query or ""))
+
+
+def _normalize_broken_urls(text: str) -> str:
+    """Fix PDF line-breaks/spaces inside URLs (e.g. 'https://community-godata. who.int/')."""
+
+    def _fix(match: re.Match) -> str:
+        return re.sub(r"\s+", "", match.group(0))
+
+    return _BROKEN_URL_RE.sub(_fix, text or "")
+
+
+def _extract_urls(text: str) -> list[str]:
+    normalized = _normalize_broken_urls(text)
+    return list(dict.fromkeys(re.findall(r"https?://[^\s\)\]>\"']+", normalized)))
+
+
+def is_visual_page_question(query: str) -> bool:
+    """Page-scoped question focused on figures/images, not plain page text."""
+    if not _VISUAL_PAGE_RE.search(query or ""):
+        return False
+    pdf_page, doc_page = parse_page_number_from_query(query)
+    if pdf_page is not None or doc_page:
+        return True
+    intent = parse_visual_intent(query)
+    return intent.wants_image or intent.pdf_page is not None
 
 
 class DocumentRAGRetriever:
@@ -39,6 +183,8 @@ class DocumentRAGRetriever:
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
         self.user_context = user_context or DEFAULT_PUBLIC_CONTEXT
         self.rbac = GraphRBAC(uri, user, password)
+        self._vision_cache: dict[str, str] = {}
+        self._vision_enricher: Optional[PageVisionEnricher] = None
 
     def close(self) -> None:
         self.driver.close()
@@ -48,7 +194,7 @@ class DocumentRAGRetriever:
         query: str,
         limit: int = RETRIEVAL_FINAL_LIMIT,
         user_context: Optional[UserContext] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return self.hybrid_retrieve(query, limit=limit, user_context=user_context)
 
     def hybrid_retrieve(
@@ -56,48 +202,956 @@ class DocumentRAGRetriever:
         query: str,
         limit: int = RETRIEVAL_FINAL_LIMIT,
         user_context: Optional[UserContext] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
+        """
+        Neo4j Graph RAG (all run together for normal queries):
+        1. Semantic — embed query, vector search on Section embeddings
+        2. Full-text — Lucene on node_text_index
+        3. Graph — 1–2 hop expand from vector seeds via structural/semantic edges
+        4. Lexical — phrase CONTAINS + keyword overlap (merged in ranker, not a bypass)
+
+        Early exit (no semantic): TOC, PDF page, page visual lookups only.
+        """
         ctx = user_context or self.user_context
         denied = self._access_denied_response(query, ctx)
         if denied:
             return denied
 
+        if is_toc_question(query):
+            with self.driver.session() as session:
+                toc_items = self._structural_toc_retrieve(session, query)
+            if toc_items:
+                response = self._format_response(query, toc_items, user_context=ctx)
+                response["mode"] = "structural_toc"
+                response["strategy"] = "graph_rag"
+                response["vector_seeds"] = 0
+                response["fulltext_hits"] = 0
+                response["graph_expanded"] = len(toc_items)
+                return response
+
+        if is_visual_page_question(query):
+            with self.driver.session() as session:
+                visual_items = self._structural_page_visual_retrieve(session, query)
+            if visual_items:
+                pdf_page, _ = self._parse_page_targets(query)
+                response = self._format_response(query, visual_items, user_context=ctx)
+                response["mode"] = "structural_page_visual"
+                response["pdf_page"] = pdf_page
+                response["strategy"] = "graph_rag"
+                response["vector_seeds"] = 0
+                response["fulltext_hits"] = 0
+                response["graph_expanded"] = len(visual_items)
+                return response
+
+        if is_page_question(query):
+            with self.driver.session() as session:
+                page_items = self._structural_page_retrieve(session, query)
+            if page_items:
+                response = self._format_response(query, page_items, user_context=ctx)
+                response["mode"] = "structural_page"
+                response["strategy"] = "graph_rag"
+                response["vector_seeds"] = 0
+                response["fulltext_hits"] = 0
+                response["graph_expanded"] = len(page_items)
+                return response
+
+        synthesis = is_synthesis_question(query)
+        fetch_limit = max(limit, 16) if synthesis else limit
+        vector_limit = min(RETRIEVAL_CANDIDATE_POOL, 16) if synthesis else _VECTOR_SEED_LIMIT
+        graph_1hop = 32 if synthesis else _GRAPH_1HOP_LIMIT
+        graph_2hop = 24 if synthesis else _GRAPH_2HOP_LIMIT
+
         embedding = self._get_embedding(query)
         with self.driver.session() as session:
+            lexical_hits = self._merge_retrieval_chunks(
+                self._structural_phrase_retrieve(session, query),
+                self._structural_keyword_retrieve(session, query),
+            )
+            vector_hits = self._vector_seed(session, embedding, vector_limit)
+            fulltext_hits = self._fulltext_seed(session, query, _FULLTEXT_LIMIT)
+            seed_ids = [h["id"] for h in vector_hits if h.get("id")]
+            seed_scores = {h["id"]: float(h["score"]) for h in vector_hits if h.get("id")}
+
+            graph_hits: list[dict] = []
+            if seed_ids:
+                graph_hits.extend(
+                    self._graph_expand(session, seed_ids, hops=1, limit=graph_1hop)
+                )
+                graph_hits.extend(
+                    self._graph_expand(session, seed_ids, hops=2, limit=graph_2hop)
+                )
+
+            items = self._merge_and_rank(
+                query,
+                vector_hits,
+                fulltext_hits,
+                graph_hits,
+                seed_scores,
+                lexical_hits=lexical_hits,
+                synthesis=synthesis,
+                limit=max(1, int(fetch_limit)),
+            )
+
+        response = self._format_response(query, items, user_context=ctx)
+        response["mode"] = "graph_rag"
+        if lexical_hits and vector_hits:
+            response["mode"] = "graph_rag_hybrid"
+        elif lexical_hits:
+            response["mode"] = "graph_rag_lexical"
+        response["strategy"] = "graph_rag"
+        response["vector_seeds"] = len(vector_hits)
+        response["fulltext_hits"] = len(fulltext_hits)
+        response["graph_expanded"] = len(graph_hits)
+        return response
+
+    def _vector_seed(self, session, embedding: list[float], limit: int) -> list[dict]:
+        try:
             rows = session.run(
                 """
                 CALL db.index.vector.queryNodes('section_embedding', $limit, $embedding)
                 YIELD node AS n, score
+                WHERE coalesce(n.text, '') <> ''
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
                   coalesce(n.text, '') AS text,
+                  coalesce(labels(n)[0], '') AS node_label,
                   score
                 ORDER BY score DESC
                 """,
-                limit=max(1, int(limit)),
+                limit=max(1, limit),
                 embedding=embedding,
             )
-            items = []
-            for r in rows:
-                items.append(
-                    {
-                        "id": r["id"],
-                        "title": r["title"] or r["id"],
-                        "text": r["text"],
-                        "score": float(r["score"] or 0.0),
-                        "related": [],
-                    }
-                )
-        return self._format_response(query, items, user_context=ctx)
+            return [
+                {
+                    "id": r["id"],
+                    "title": r["title"] or r["id"],
+                    "text": r["text"],
+                    "node_label": r.get("node_label") or "",
+                    "score": float(r["score"] or 0.0),
+                    "related": [],
+                }
+                for r in rows
+                if r["id"]
+            ]
+        except Exception:
+            return []
 
-    # Minimal helper still used by follow-up machinery
+    def _fulltext_seed(self, session, query: str, limit: int) -> list[dict]:
+        lucene_q = self._fulltext_query(query)
+        if not lucene_q:
+            return []
+        try:
+            rows = session.run(
+                """
+                CALL db.index.fulltext.queryNodes('node_text_index', $q, {limit: $limit})
+                YIELD node AS n, score
+                WHERE coalesce(n.text, '') <> ''
+                  AND any(l IN labels(n) WHERE l IN $labels)
+                RETURN
+                  coalesce(n.id, '') AS id,
+                  coalesce(n.title, '') AS title,
+                  coalesce(n.text, '') AS text,
+                  coalesce(labels(n)[0], '') AS node_label,
+                  score
+                ORDER BY score DESC
+                """,
+                q=lucene_q,
+                limit=max(1, limit),
+                labels=list(_TEXT_NODE_LABELS),
+            )
+            return [
+                {
+                    "id": r["id"],
+                    "title": r["title"] or r["id"],
+                    "text": r["text"],
+                    "node_label": r.get("node_label") or "",
+                    "score": float(r["score"] or 0.0),
+                    "related": [],
+                }
+                for r in rows
+                if r["id"]
+            ]
+        except Exception:
+            return []
+
+    def _graph_expand(
+        self,
+        session,
+        seed_ids: list[str],
+        *,
+        hops: int,
+        limit: int,
+    ) -> list[dict]:
+        if hops == 1:
+            cypher = """
+                UNWIND $seed_ids AS sid
+                MATCH (seed:Section {id: sid})
+                MATCH (seed)-[r]-(related)
+                WHERE type(r) IN $rel_types
+                  AND any(l IN labels(related) WHERE l IN $node_labels)
+                  AND coalesce(related.text, '') <> ''
+                RETURN DISTINCT
+                  coalesce(related.id, '') AS id,
+                  coalesce(related.title, '') AS title,
+                  coalesce(related.text, '') AS text,
+                  coalesce(labels(related)[0], '') AS node_label,
+                  type(r) AS rel_type,
+                  coalesce(r.weight, 0.75) AS edge_weight,
+                  sid AS seed_id,
+                  1 AS hops
+                LIMIT $limit
+            """
+        else:
+            cypher = """
+                UNWIND $seed_ids AS sid
+                MATCH (seed:Section {id: sid})
+                MATCH (seed)-[r1]-(mid)-[r2]-(related)
+                WHERE type(r1) IN $rel_types
+                  AND type(r2) IN $rel_types
+                  AND any(l IN labels(related) WHERE l IN $node_labels)
+                  AND coalesce(related.text, '') <> ''
+                  AND related.id <> sid
+                RETURN DISTINCT
+                  coalesce(related.id, '') AS id,
+                  coalesce(related.title, '') AS title,
+                  coalesce(related.text, '') AS text,
+                  coalesce(labels(related)[0], '') AS node_label,
+                  type(r1) + '->' + type(r2) AS rel_type,
+                  coalesce(r2.weight, 0.75) AS edge_weight,
+                  sid AS seed_id,
+                  2 AS hops
+                LIMIT $limit
+            """
+        try:
+            rows = session.run(
+                cypher,
+                seed_ids=seed_ids,
+                rel_types=list(_GRAPH_REL_TYPES),
+                node_labels=list(_TEXT_NODE_LABELS),
+                limit=max(1, limit),
+            )
+            return [
+                {
+                    "id": r["id"],
+                    "title": r["title"] or r["id"],
+                    "text": r["text"],
+                    "node_label": r.get("node_label") or "",
+                    "rel_type": r["rel_type"],
+                    "edge_weight": float(r["edge_weight"] or 0.75),
+                    "seed_id": r["seed_id"],
+                    "hops": int(r["hops"] or hops),
+                    "related": [r["rel_type"]] if r.get("rel_type") else [],
+                }
+                for r in rows
+                if r["id"]
+            ]
+        except Exception:
+            return []
+
+    def _merge_and_rank(
+        self,
+        query: str,
+        vector_hits: list[dict],
+        fulltext_hits: list[dict],
+        graph_hits: list[dict],
+        seed_scores: dict[str, float],
+        limit: int,
+        *,
+        lexical_hits: Optional[list[dict]] = None,
+        synthesis: bool = False,
+    ) -> list[dict]:
+        merged: dict[str, dict] = {}
+
+        def _upsert(item: dict, score: float, source: str, related: Optional[list] = None) -> None:
+            cid = item.get("id") or ""
+            if not cid:
+                return
+            rel = related or item.get("related") or []
+            if cid in merged:
+                merged[cid]["score"] = max(float(merged[cid]["score"]), score)
+                merged[cid]["sources"].add(source)
+                for r in rel:
+                    if r and r not in merged[cid]["related"]:
+                        merged[cid]["related"].append(r)
+            else:
+                merged[cid] = {
+                    "id": cid,
+                    "title": item.get("title") or cid,
+                    "text": item.get("text") or "",
+                    "score": score,
+                    "related": list(rel),
+                    "sources": {source},
+                }
+
+        vector_weight = 1.15 if synthesis else 1.0
+        graph_weight = 1.2 if synthesis else 1.0
+        lexical_weight = 0.82 if synthesis else 1.0
+
+        for item in vector_hits:
+            _upsert(item, float(item.get("score", 0.0)) * vector_weight, "vector")
+
+        max_ft = max((float(h.get("score", 0.0)) for h in fulltext_hits), default=1.0) or 1.0
+        for item in fulltext_hits:
+            norm = float(item.get("score", 0.0)) / max_ft
+            _upsert(item, norm * 0.92, "fulltext")
+
+        for item in graph_hits:
+            seed_id = item.get("seed_id") or ""
+            base = seed_scores.get(seed_id, 0.55)
+            hop_decay = 0.88 ** int(item.get("hops", 1))
+            edge_w = float(item.get("edge_weight", 0.75))
+            rel = item.get("rel_type")
+            _upsert(
+                item,
+                base * hop_decay * edge_w * graph_weight,
+                "graph",
+                [rel] if rel else [],
+            )
+
+        for item in lexical_hits or []:
+            src = "phrase" if "phrase_search" in (item.get("related") or []) else "keyword"
+            _upsert(item, float(item.get("score", 0.85)) * lexical_weight, src)
+
+        keywords = self._query_keywords(query)
+        for item in merged.values():
+            item["score"] = float(item["score"]) * self._relevance_boost(
+                item.get("title") or "",
+                item.get("text") or "",
+                keywords,
+            )
+
+        ranked = sorted(merged.values(), key=lambda x: x["score"], reverse=True)
+        out: list[dict] = []
+        for item in ranked[:limit]:
+            sources = sorted(item.pop("sources", {"graph"}))
+            item["related"] = item.get("related") or []
+            if sources:
+                item["related"] = list(dict.fromkeys([*item["related"], f"via:{','.join(sources)}"]))
+            out.append(item)
+        return out
+
+    def _search_phrases_from_query(self, query: str) -> list[str]:
+        """
+        Build document-agnostic search phrases from the question (dates + word n-grams).
+        Keeps light stopwords (of, the, at) so phrases align with PDF sentence wording.
+        """
+        q = (query or "").lower()
+        phrases: list[str] = []
+
+        for m in _MONTH_YEAR_RE.finditer(q):
+            phrases.append(f"{m.group(1).lower()} {m.group(2)}")
+
+        _light_stop = _PHRASE_STOP - frozenset({
+            "of", "at", "in", "on", "to", "and", "or", "for", "by", "with", "from",
+        })
+        tokens: list[str] = []
+        if re.search(r"\bg[o\s]*\.?\s*data\b", q) or "godata" in q.replace(" ", "").replace(".", ""):
+            tokens.extend(["go", "data"])
+        for w in re.findall(r"[\w']+", q):
+            if len(w) <= 2 or w in _light_stop:
+                continue
+            if w not in tokens:
+                tokens.append(w)
+
+        for n in range(min(7, len(tokens)), 2, -1):
+            for i in range(len(tokens) - n + 1):
+                phrase = " ".join(tokens[i : i + n])
+                if len(phrase) >= 8:
+                    phrases.append(phrase)
+
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for p in sorted(phrases, key=len, reverse=True):
+            pl = p.lower().strip()
+            if pl and pl not in seen:
+                seen.add(pl)
+                ordered.append(pl)
+        return ordered[:14]
+
+    def _content_keywords_from_query(self, query: str) -> list[str]:
+        """Distinct content terms for AND-style overlap scoring (any document)."""
+        q = (query or "").lower()
+        keywords: list[str] = []
+        if re.search(r"\bg[o\s]*\.?\s*data\b", q) or "godata" in q.replace(" ", "").replace(".", ""):
+            keywords.extend(["godata", "go.data"])
+        for m in _MONTH_YEAR_RE.finditer(q):
+            keywords.append(f"{m.group(1).lower()} {m.group(2)}")
+            keywords.append(m.group(2))
+        for w in re.findall(r"[\w']+", q):
+            if len(w) <= 2 or w in _PHRASE_STOP:
+                continue
+            if w not in keywords:
+                keywords.append(w)
+        if re.search(r"case[\s-]?control", q):
+            keywords.extend(["case control", "case-control"])
+        if re.search(r"sars[\s-]?cov", q):
+            keywords.extend(["sarscov-2", "sars-cov-2"])
+        if re.search(r"health\s*care\s*workers?|healthcare\s*workers?", q):
+            keywords.append("health care workers")
+        if "hospital" in keywords and "site" in keywords:
+            keywords.append("hospital sites")
+        if re.search(r"noor|photo\s+credit", q):
+            keywords.extend(["photo credits", "noor images"])
+        return keywords[:18]
+
+    @staticmethod
+    def _merge_retrieval_chunks(primary: list[dict], extra: list[dict]) -> list[dict]:
+        merged = list(primary)
+        seen = {c["id"] for c in merged if c.get("id")}
+        for item in extra:
+            cid = item.get("id")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            merged.append(item)
+        merged.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
+        return merged[:8]
+
+    def _structural_keyword_retrieve(self, session, query: str) -> list[dict]:
+        """
+        Rank nodes by how many distinct query keywords appear in text (robust to PDF spacing).
+        """
+        keywords = self._content_keywords_from_query(query)
+        if len(keywords) < 2:
+            return []
+
+        min_hits = max(2, min(4, len(keywords) // 3))
+        doc_id, _ = self._resolve_document_for_query(session, query)
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            MATCH (n)
+            WHERE any(l IN labels(n) WHERE l IN $labels)
+              AND coalesce(n.text, '') <> ''
+              AND (
+                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
+                OR n.id STARTS WITH d.id + '_'
+              )
+            WITH n,
+              [k IN $keywords WHERE toLower(n.text) CONTAINS k] AS matched
+            WHERE size(matched) >= $min_hits
+            RETURN
+              coalesce(n.id, '') AS id,
+              coalesce(n.title, '') AS title,
+              coalesce(n.text, '') AS text,
+              size(matched) AS keyword_hits
+            ORDER BY keyword_hits DESC, size(coalesce(n.text, '')) ASC
+            LIMIT 6
+            """,
+            doc_id=doc_id,
+            keywords=[k.lower() for k in keywords],
+            min_hits=min_hits,
+            labels=list(_TEXT_NODE_LABELS),
+        )
+
+        items: list[dict] = []
+        for r in rows:
+            if not r.get("id"):
+                continue
+            title = r.get("title") or r["id"]
+            items.append({
+                "id": r["id"],
+                "title": title,
+                "text": self._enrich_chunk_text_for_facts(title, r.get("text") or ""),
+                "score": 0.88 + 0.06 * int(r.get("keyword_hits") or 0),
+                "related": ["via:keyword_search"],
+            })
+        return items
+
+    def _enrich_chunk_text_for_facts(self, title: str, text: str) -> str:
+        body = (text or "").strip()
+        urls = _extract_urls(body)
+        if not urls:
+            return body
+        url_block = "\n".join(f"- {u}" for u in urls)
+        return f"{body}\n\n[Extracted URLs]\n{url_block}".strip()
+
+    def _structural_phrase_retrieve(self, session, query: str) -> list[dict]:
+        """
+        Direct phrase CONTAINS search for fact/URL questions vector search often misses.
+        """
+        phrases = self._search_phrases_from_query(query)
+        if not phrases:
+            return []
+
+        doc_id, _ = self._resolve_document_for_query(session, query)
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            MATCH (n)
+            WHERE any(l IN labels(n) WHERE l IN $labels)
+              AND coalesce(n.text, '') <> ''
+              AND (
+                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
+                OR n.id STARTS WITH d.id + '_'
+              )
+              AND any(phrase IN $phrases WHERE toLower(n.text) CONTAINS phrase)
+            WITH n, d,
+              size([p IN $phrases WHERE toLower(n.text) CONTAINS p]) AS phrase_hits
+            RETURN
+              coalesce(n.id, '') AS id,
+              coalesce(n.title, '') AS title,
+              coalesce(n.text, '') AS text,
+              phrase_hits,
+              coalesce(d.title, d.id) AS doc_title
+            ORDER BY phrase_hits DESC, size(coalesce(n.text, '')) ASC
+            LIMIT 6
+            """,
+            doc_id=doc_id,
+            phrases=[p.lower() for p in phrases],
+            labels=list(_TEXT_NODE_LABELS),
+        )
+
+        items: list[dict] = []
+        for r in rows:
+            if not r.get("id"):
+                continue
+            title = r.get("title") or r["id"]
+            text = self._enrich_chunk_text_for_facts(title, r.get("text") or "")
+            items.append({
+                "id": r["id"],
+                "title": title,
+                "text": text,
+                "score": 0.9 + 0.08 * int(r.get("phrase_hits") or 0),
+                "related": ["via:phrase_search"],
+            })
+        return items
+
+    def _structural_toc_retrieve(self, session, query: str) -> list[dict]:
+        """
+        Build TOC from the document graph (Section/Chapter nodes via CONTAINS).
+        Works when the PDF TOC page has no extractable text but structure was ingested.
+        """
+        doc_id, doc_title = self._resolve_document_for_query(session, query)
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            MATCH (s:Section)
+            WHERE s.id STARTS WITH d.id + '_'
+               OR EXISTS {{ MATCH (d)-[:CONTAINS*1..5]->(s) }}
+               OR EXISTS {{ MATCH (s)-[:PART_OF*1..5]->(d) }}
+            WITH d, trim(s.title) AS title, min(s.order) AS ord, min(s.depth) AS depth
+            WHERE title <> '' AND NOT toLower(title) IN ['contents', 'content']
+            RETURN title, ord, depth, coalesce(d.title, d.id) AS doc_title
+            ORDER BY ord, depth, title
+            """,
+            doc_id=doc_id,
+        )
+        seen: set[str] = set()
+        entries: list[dict] = []
+        resolved_title = doc_title
+        for r in rows:
+            title = (r.get("title") or "").strip()
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            if not resolved_title and r.get("doc_title"):
+                resolved_title = str(r["doc_title"])
+            entries.append(dict(r))
+        if not entries:
+            return []
+
+        lines = [
+            f"Document: {resolved_title or doc_id or 'ingested document'}",
+            "Table of contents (from graph structure — Section/Chapter nodes in reading order):",
+            "",
+        ]
+        for i, e in enumerate(entries, 1):
+            lines.append(f"{i}. {e['title']}")
+
+        toc_text = "\n".join(lines)
+        return [{
+            "id": "structural_toc",
+            "title": f"Table of contents — {resolved_title or 'document'}",
+            "text": toc_text,
+            "score": 1.0,
+            "related": ["via:structural_graph"],
+        }]
+
+    def _vision_enricher_instance(self) -> PageVisionEnricher:
+        if self._vision_enricher is None:
+            self._vision_enricher = PageVisionEnricher()
+        return self._vision_enricher
+
+    def _describe_region_image(self, image_key: str, caption_hint: str = "") -> str:
+        if image_key in self._vision_cache:
+            return self._vision_cache[image_key]
+        store = get_asset_store()
+        data = store.get_bytes(image_key)
+        if not data:
+            return ""
+        hint = caption_hint or "Describe this figure, diagram, or table from the document."
+        raw = self._vision_enricher_instance().describe_image_bytes(
+            data,
+            user_hint=hint,
+        )
+        desc = compact_visual_content(raw)
+        if desc:
+            self._vision_cache[image_key] = desc
+        return desc
+
+    @staticmethod
+    def _extract_figure_captions(page_text: str) -> dict[str, str]:
+        """Map document figure number → caption line from page OCR text."""
+        caps: dict[str, str] = {}
+        for m in _FIG_CAPTION_RE.finditer(page_text or ""):
+            num, title = m.group(1), m.group(2).strip()
+            caps[num] = title
+            caps[num.lstrip("0") or num] = title
+        return caps
+
+    @staticmethod
+    def _figure_number_from_query(query: str) -> Optional[str]:
+        for pat in (
+            r"\b(?:fig\.?|figure)\s*(\d+(?:\.\d+)?)\b",
+            r"\b(?:image|diagram)\s+(?:of|for|showing)?\s*(?:fig\.?|figure)?\s*(\d+)\b",
+        ):
+            m = re.search(pat, query, re.I)
+            if m:
+                return m.group(1)
+        return None
+
+    def _structural_page_visual_retrieve(self, session, query: str) -> list[dict]:
+        """
+        Page figures: Region crops + captions from page text + on-demand vision when needed.
+        """
+        pdf_page, doc_page = self._parse_page_targets(query)
+        if pdf_page is None and not doc_page:
+            return []
+
+        doc_id, doc_title = self._resolve_document_for_query(session, query)
+        row = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            MATCH (p:Page)
+            WHERE p.id STARTS WITH d.id + '_page_'
+              AND (
+                ($pdf_page IS NOT NULL AND p.pdf_page = $pdf_page)
+                OR (
+                  $doc_page IS NOT NULL
+                  AND toLower(coalesce(p.document_page, '')) = toLower($doc_page)
+                )
+              )
+            WITH p, d
+            ORDER BY
+              CASE WHEN $pdf_page IS NOT NULL AND p.pdf_page = $pdf_page THEN 0 ELSE 1 END,
+              p.order
+            LIMIT 1
+            OPTIONAL MATCH (p)-[:CONTAINS]->(r:Region)
+            RETURN
+              p.id AS page_id,
+              coalesce(p.title, '') AS page_title,
+              coalesce(p.text, '') AS page_text,
+              coalesce(p.visual_content, '') AS page_visual,
+              p.pdf_page AS pdf_page,
+              p.document_page AS document_page,
+              coalesce(d.title, d.id) AS doc_title,
+              collect(DISTINCT {{
+                id: r.id,
+                title: coalesce(r.title, ''),
+                text: coalesce(r.text, ''),
+                kind: coalesce(r.region_kind, ''),
+                image_key: r.image_key,
+                visual_content: coalesce(r.visual_content, ''),
+                order: coalesce(r.order, 0)
+              }}) AS regions
+            """,
+            doc_id=doc_id,
+            pdf_page=pdf_page,
+            doc_page=doc_page,
+        ).single()
+
+        if not row or not row.get("page_id"):
+            return []
+
+        page_text = (row.get("page_text") or "").strip()
+        captions = self._extract_figure_captions(page_text)
+        want_fig = self._figure_number_from_query(query)
+        regions = [
+            r for r in (row.get("regions") or [])
+            if r and (r.get("image_key") or (r.get("visual_content") or "").strip())
+        ]
+        regions.sort(key=lambda r: r.get("order") or 0)
+
+        if not regions and (row.get("page_visual") or "").strip():
+            regions = [{
+                "id": row["page_id"],
+                "title": row.get("page_title") or f"Page {pdf_page}",
+                "text": "",
+                "kind": "page",
+                "image_key": None,
+                "visual_content": row.get("page_visual") or "",
+                "order": 0,
+            }]
+
+        if not regions:
+            return []
+
+        chunks: list[dict] = []
+        doc_label = row.get("doc_title") or doc_title or doc_id or "ingested document"
+
+        for idx, reg in enumerate(regions):
+            image_key = reg.get("image_key")
+            stored_visual = compact_visual_content((reg.get("visual_content") or "").strip())
+            page_visual = compact_visual_content((row.get("page_visual") or "").strip())
+
+            cap_num = want_fig
+            if not cap_num and len(captions) == 1:
+                cap_num = next(iter(captions))
+            elif not cap_num and captions:
+                cap_num = sorted(captions.keys(), key=lambda x: float(x) if x.replace(".", "").isdigit() else x)[-1]
+
+            caption_title = ""
+            if cap_num and cap_num in captions:
+                caption_title = f"Fig. {cap_num}: {captions[cap_num]}"
+            elif captions:
+                first_num = sorted(captions.keys(), key=lambda x: float(x) if x.replace(".", "").isdigit() else x)[0]
+                caption_title = f"Fig. {first_num}: {captions[first_num]}"
+
+            reg_title = (reg.get("title") or "").strip()
+            display_title = caption_title or reg_title or f"Figure on PDF page {pdf_page}"
+
+            vision_desc = stored_visual or page_visual
+            if image_key and not vision_desc:
+                vision_desc = self._describe_region_image(
+                    image_key,
+                    caption_hint=f"Document figure. Caption: {display_title}. Describe all boxes, arrows, labels, and data flows.",
+                )
+
+            parts = [
+                f"Document: {doc_label}",
+                f"PDF page {row.get('pdf_page') or pdf_page}",
+                "",
+                f"## {display_title}",
+            ]
+            if vision_desc:
+                parts.extend(["", "[Visual description]", vision_desc])
+            elif page_text:
+                parts.extend([
+                    "",
+                    "[Caption from page text only — vision description unavailable]",
+                    display_title,
+                ])
+
+            snippet = page_text[:1200] if page_text else ""
+            if snippet:
+                parts.extend(["", "## Surrounding page text", snippet])
+
+            body = "\n".join(parts).strip()
+            if not body:
+                continue
+
+            chunk: dict[str, Any] = {
+                "id": reg.get("id") or row["page_id"],
+                "title": display_title,
+                "text": body,
+                "score": 1.0 - idx * 0.01,
+                "related": ["via:structural_page_visual"],
+                "pdf_page": row.get("pdf_page") or pdf_page,
+                "document_page": row.get("document_page"),
+                "region_kind": reg.get("kind") or "figure",
+                "visual_content": vision_desc,
+            }
+            if image_key:
+                chunk["image_key"] = image_key
+            chunks.append(chunk)
+
+        return chunks
+
+    def _parse_page_targets(self, query: str) -> tuple[Optional[int], Optional[str]]:
+        """Resolve PDF page index vs printed document page label from the question."""
+        pdf_page, doc_page = parse_page_number_from_query(query)
+        if doc_page and str(doc_page).isdigit() and pdf_page is None:
+            pdf_page = int(doc_page)
+        return pdf_page, doc_page
+
+    def _structural_page_retrieve(self, session, query: str) -> list[dict]:
+        """
+        Fetch Page node content by pdf_page / document_page for a resolved document.
+        Works for any ingested PDF with Page nodes in the graph.
+        """
+        pdf_page, doc_page = self._parse_page_targets(query)
+        if pdf_page is None and not doc_page:
+            return []
+
+        doc_id, doc_title = self._resolve_document_for_query(session, query)
+        row = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            MATCH (p:Page)
+            WHERE p.id STARTS WITH d.id + '_page_'
+              AND (
+                ($pdf_page IS NOT NULL AND p.pdf_page = $pdf_page)
+                OR (
+                  $doc_page IS NOT NULL
+                  AND toLower(coalesce(p.document_page, '')) = toLower($doc_page)
+                )
+              )
+            WITH p, d
+            ORDER BY
+              CASE WHEN $pdf_page IS NOT NULL AND p.pdf_page = $pdf_page THEN 0 ELSE 1 END,
+              p.order
+            LIMIT 1
+            OPTIONAL MATCH (p)-[:CONTAINS]->(r:Region)
+            OPTIONAL MATCH (s:Section)-[:CONTAINS]->(p)
+            RETURN
+              p.id AS id,
+              coalesce(p.title, '') AS title,
+              coalesce(p.text, '') AS text,
+              coalesce(p.visual_content, '') AS visual_content,
+              p.pdf_page AS pdf_page,
+              p.document_page AS document_page,
+              coalesce(d.title, d.id) AS doc_title,
+              collect(DISTINCT {{
+                title: coalesce(r.title, ''),
+                text: coalesce(r.text, ''),
+                kind: coalesce(r.region_kind, '')
+              }}) AS regions,
+              collect(DISTINCT {{
+                title: coalesce(s.title, ''),
+                text: coalesce(s.text, '')
+              }}) AS sections
+            """,
+            doc_id=doc_id,
+            pdf_page=pdf_page,
+            doc_page=doc_page,
+        ).single()
+
+        if not row or not row.get("id"):
+            return []
+
+        parts: list[str] = [
+            f"Document: {row.get('doc_title') or doc_title or doc_id or 'ingested document'}",
+            f"Page: {row.get('title') or 'Page'} (PDF page {row.get('pdf_page')}, "
+            f"printed label {row.get('document_page') or 'n/a'})",
+            "",
+            "## Page text",
+            (row.get("text") or "").strip(),
+        ]
+        visual = (row.get("visual_content") or "").strip()
+        if visual:
+            parts.extend(["", "## Visual content (tables/figures)", visual])
+
+        for sec in row.get("sections") or []:
+            if not sec or not sec.get("title"):
+                continue
+            body = (sec.get("text") or "").strip()
+            if body:
+                parts.extend(["", f"## Related section: {sec['title']}", body[:2500]])
+
+        for reg in row.get("regions") or []:
+            if not reg or not reg.get("text"):
+                continue
+            label = reg.get("title") or reg.get("kind") or "Region"
+            parts.extend(["", f"## Region: {label}", (reg.get("text") or "")[:1500]])
+
+        page_text = "\n".join(parts).strip()
+        if not page_text:
+            return []
+
+        return [{
+            "id": row["id"],
+            "title": row.get("title") or f"Page {pdf_page or doc_page}",
+            "text": page_text,
+            "score": 1.0,
+            "related": ["via:structural_page"],
+        }]
+
+    def _resolve_document_for_query(self, session, query: str) -> tuple[Optional[str], Optional[str]]:
+        """Pick the document root best matching the question (name / content terms)."""
+        terms = self._document_match_terms(query)
+        if terms:
+            row = session.run(
+                f"""
+                UNWIND $terms AS term
+                MATCH (d:{DOCUMENT_ROOT_CYPHER})
+                WHERE toLower(d.title) CONTAINS term
+                   OR EXISTS {{
+                     MATCH (d)-[:CONTAINS*1..5]->(n)
+                     WHERE toLower(coalesce(n.title, '')) CONTAINS term
+                        OR toLower(coalesce(n.text, '')) CONTAINS term
+                   }}
+                RETURN d.id AS id, coalesce(d.title, d.id) AS title, count(*) AS hits
+                ORDER BY hits DESC
+                LIMIT 1
+                """,
+                terms=terms,
+            ).single()
+            if row and row.get("id"):
+                return str(row["id"]), str(row.get("title") or row["id"])
+
+        row = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})-[:CONTAINS*1..4]->(s:Section)
+            WITH d, count(s) AS n
+            ORDER BY n DESC
+            LIMIT 1
+            RETURN d.id AS id, coalesce(d.title, d.id) AS title
+            """
+        ).single()
+        if row and row.get("id"):
+            return str(row["id"]), str(row.get("title") or row["id"])
+        return None, None
+
+    def _document_match_terms(self, query: str) -> list[str]:
+        q = (query or "").lower()
+        terms: list[str] = []
+        if re.search(r"\bg[o\s]*\.?\s*data\b", q) or "godata" in q.replace(" ", "").replace(".", ""):
+            terms.append("godata")
+        if "stratec" in q:
+            terms.append("stratec")
+        for t in re.findall(r"[\w'-]{3,}", q):
+            if t in _KEYWORD_STOP:
+                continue
+            if t in {"table", "contents", "content", "provide", "list", "show", "give", "from", "form", "page", "fetch", "document"}:
+                continue
+            if t not in terms:
+                terms.append(t)
+        return terms[:6]
+
+    def _query_keywords(self, question: str) -> list[str]:
+        terms = re.findall(r"[\w'-]{3,}", (question or "").lower())
+        return [t for t in terms if t not in _KEYWORD_STOP][:18]
+
+    def _relevance_boost(self, title: str, text: str, keywords: list[str]) -> float:
+        """Boost named sections and chunks that match more query terms."""
+        boost = 1.0
+        if title.strip() and not re.match(r"^Page\s+\d+$", title.strip(), re.I):
+            boost *= 1.08
+        hay = f"{title} {text}".lower()
+        if keywords:
+            hits = sum(1 for k in keywords if k in hay)
+            boost *= 1.0 + min(0.45, 0.07 * hits)
+        return boost
+
+    def _fulltext_query(self, question: str) -> str:
+        """Build a Lucene query from question terms (document-agnostic)."""
+        phrases = self._search_phrases_from_query(question)
+        if phrases:
+            quoted = [f'"{p}"' for p in phrases[:5] if " " in p]
+            terms = self._query_keywords(question)[:6]
+            parts = quoted + terms
+            if parts:
+                return " OR ".join(parts)
+        keywords = self._query_keywords(question)
+        extra_stop = {"employees", "employee", "company", "corporate", "policy"}
+        keywords = [k for k in keywords if k not in extra_stop][:14]
+        if not keywords:
+            return (question or "")[:120]
+        return " OR ".join(keywords)
+
     def _resolve_document_id(self, session, name: str) -> Optional[str]:
         if not name:
             return None
         row = session.run(
-            """
-            MATCH (d:Document)
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE d.title IS NOT NULL AND toLower(d.title) CONTAINS toLower($name)
             RETURN d.id AS id
             LIMIT 1
@@ -110,7 +1164,7 @@ class DocumentRAGRetriever:
         resp = provider.embeddings(model=EMBEDDING_MODEL, input=(text or "")[:8000])
         return list(resp.data[0].embedding)
 
-    def _access_denied_response(self, query: str, ctx: UserContext) -> Optional[Dict[str, Any]]:
+    def _access_denied_response(self, query: str, ctx: UserContext) -> Optional[dict[str, Any]]:
         if self.rbac.can_query_knowledge_area(ctx.user_id, "esg"):
             return None
         return {
@@ -134,8 +1188,12 @@ class DocumentRAGRetriever:
         query: str,
         items: list[dict],
         user_context: Optional[UserContext] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         ctx = user_context or self.user_context
+        _passthrough = (
+            "image_key", "image_url", "pdf_page", "document_page",
+            "region_kind", "visual_content",
+        )
         return {
             "query": query,
             "chunks": [
@@ -145,6 +1203,7 @@ class DocumentRAGRetriever:
                     "text": r.get("text", ""),
                     "score": round(float(r.get("score", 0.0)), 3),
                     "related": r.get("related", []),
+                    **{k: r[k] for k in _passthrough if r.get(k) is not None},
                 }
                 for r in items
             ],
@@ -156,4 +1215,3 @@ class DocumentRAGRetriever:
 
 ESGComplianceRetriever = DocumentRAGRetriever
 RAGDataRetriever = DocumentRAGRetriever
-
