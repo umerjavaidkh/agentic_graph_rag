@@ -1,8 +1,8 @@
 # Agentic Graph RAG
 
-| [**1 · Ingestion**](https://www.youtube.com/watch?v=2983DqSe0GM) | [**2 · Structured**](https://www.youtube.com/watch?v=s3Eceo20Eq4) | [**3 · Unstructured**](https://www.youtube.com/watch?v=XvigWQ5mB1g) |
+| [**1 · Ingestion**](https://www.youtube.com/watch?v=2983DqSe0GM) | [**2 · Unstructured**](https://www.youtube.com/watch?v=s3Eceo20Eq4) | [**3 · Structured**](https://www.youtube.com/watch?v=XvigWQ5mB1g) |
 | :---: | :---: | :---: |
-| [![Watch — Ingestion](https://img.youtube.com/vi/2983DqSe0GM/0.jpg)](https://www.youtube.com/watch?v=2983DqSe0GM) | [![Watch — Structured](https://img.youtube.com/vi/s3Eceo20Eq4/0.jpg)](https://www.youtube.com/watch?v=s3Eceo20Eq4) | [![Watch — Unstructured](https://img.youtube.com/vi/XvigWQ5mB1g/0.jpg)](https://www.youtube.com/watch?v=XvigWQ5mB1g) |
+| [![Watch — Ingestion](https://img.youtube.com/vi/2983DqSe0GM/0.jpg)](https://www.youtube.com/watch?v=2983DqSe0GM) | [![Watch — Unstructured](https://img.youtube.com/vi/s3Eceo20Eq4/0.jpg)](https://www.youtube.com/watch?v=s3Eceo20Eq4) | [![Watch — Structured](https://img.youtube.com/vi/XvigWQ5mB1g/0.jpg)](https://www.youtube.com/watch?v=XvigWQ5mB1g) |
 
 ---
 
