@@ -81,5 +81,9 @@ MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() in ("1", "true", 
 
 # Structured queries: skip LLM synthesis when Cypher rows are self-explanatory (table/chart UI).
 STRUCTURED_FAST_ANSWER = os.environ.get("STRUCTURED_FAST_ANSWER", "true").lower() in ("1", "true", "yes")
+# If true, always run the multistep LLM planner before Text-to-Cypher (slower; default uses regex gate).
+STRUCTURED_ALWAYS_MULTISTEP_PLAN = os.environ.get(
+    "STRUCTURED_ALWAYS_MULTISTEP_PLAN", "false"
+).lower() in ("1", "true", "yes")
 # Skip routing LLM when question clearly targets documents vs graph data.
 FAST_ROUTE_QUERIES = os.environ.get("FAST_ROUTE_QUERIES", "true").lower() in ("1", "true", "yes")

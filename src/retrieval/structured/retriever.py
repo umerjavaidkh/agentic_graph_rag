@@ -16,6 +16,7 @@ from ...auth.rbac_setup import GraphRBAC
 from ...auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
 from ...config.settings import (
     CHAT_MODEL,
+    STRUCTURED_ALWAYS_MULTISTEP_PLAN,
     STRUCTURED_MODEL,
     MODEL_PROVIDER,
     NEO4J_PASSWORD,
@@ -26,7 +27,7 @@ from ...config.settings import (
 from ...config.prompts import load_prompt
 from ...model_providers.factory import get_model_provider
 from .neo4j_sanitize import sanitize_row
-from .query_intent import analytics_result_limit
+from .query_intent import analytics_result_limit, likely_needs_multistep_plan
 from ...conversation.clarification import format_clarification_answer
 from .executor import StructuredCypherExecutor
 from ...telemetry.context import TelemetryEvent, get_telemetry
@@ -426,12 +427,13 @@ class StructuredRetriever:
         clarification = self._needs_clarification(query)
         if clarification:
             return clarification
-        # Multi-step planning/execution is only used for complex questions when the planner says so.
+        # Multistep LLM planner only for nested analytics (regex gate) unless forced via env.
         schema = self._fetch_schema()
-        plan = self._plan_multistep(query, schema)
-        if plan and plan.needs_multistep and plan.steps:
-            chunks = self._execute_multistep(plan, user_context=ctx)
-            return self._format_response(query, chunks, strategy="multistep")
+        if STRUCTURED_ALWAYS_MULTISTEP_PLAN or likely_needs_multistep_plan(query):
+            plan = self._plan_multistep(query, schema)
+            if plan and plan.needs_multistep and plan.steps:
+                chunks = self._execute_multistep(plan, user_context=ctx)
+                return self._format_response(query, chunks, strategy="multistep")
 
         chunks = self._text2cypher(query, limit, user_context=ctx)
         return self._format_response(query, chunks, strategy="text2cypher")
