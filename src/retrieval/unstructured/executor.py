@@ -45,6 +45,11 @@ class DocumentQueryExecutor:
         # de-dupe while keeping order
         return list(dict.fromkeys(nums))
 
+    def parse_box_number(self, query: str) -> Optional[int]:
+        """Return Box number if query mentions a specific Box N."""
+        nums = self.extract_box_numbers(query or "")
+        return nums[0] if nums else None
+
     def build_doc_choice_clarification(
         self,
         *,

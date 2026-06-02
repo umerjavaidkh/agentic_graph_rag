@@ -237,6 +237,22 @@ class DocumentRAGRetriever:
                     tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response["mode"]}))
                 return response
 
+        # Box content fetch (generic): "Box 5" / "Box 10" should retrieve that box text.
+        box_n = self._exec.parse_box_number(query)
+        if box_n is not None and not self._exec.is_box_list_request(query):
+            with self.driver.session() as session:
+                items = self._structural_box_content(session, query, box_n)
+            if items:
+                response = self._format_response(query, items, user_context=ctx)
+                response["mode"] = "structural_box_content"
+                response["strategy"] = "graph_rag"
+                response["vector_seeds"] = 0
+                response["fulltext_hits"] = 0
+                response["graph_expanded"] = len(items)
+                if tel is not None:
+                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response["mode"], "box": box_n}))
+                return response
+
         # If the user asks about a specific section/subsections and multiple documents exist,
         # ask them to pick the document rather than guessing.
         if self._exec.is_subsection_request(query) and self._exec.parse_section_number(query):
@@ -1368,6 +1384,64 @@ class DocumentRAGRetriever:
                 }
 
         return [found[k] for k in sorted(found.keys())]
+
+    def _structural_box_content(self, session, query: str, box_n: int) -> list[dict]:
+        """
+        Retrieve content for a specific Box N (e.g. Box 5).
+        Looks for nodes whose title/text mention the box, then returns the best matches.
+        """
+        doc_id, doc_title = self._resolve_document_for_query(session, query)
+        box_phrase = f"box {int(box_n)}"
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            MATCH (n)
+            WHERE any(l IN labels(n) WHERE l IN $labels)
+              AND (
+                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
+                OR n.id STARTS WITH d.id + '_'
+              )
+              AND (
+                (n.title IS NOT NULL AND toLower(n.title) CONTAINS $box_phrase)
+                OR (n.text IS NOT NULL AND toLower(n.text) CONTAINS $box_phrase)
+              )
+            RETURN
+              coalesce(n.id,'') AS id,
+              coalesce(n.title,'') AS title,
+              coalesce(n.text,'') AS text
+            LIMIT 20
+            """,
+            doc_id=doc_id,
+            box_phrase=box_phrase,
+            labels=list(_TEXT_NODE_LABELS),
+        )
+
+        items: list[dict] = []
+        for r in rows:
+            rid = r.get("id") or ""
+            title = (r.get("title") or "").strip()
+            text = (r.get("text") or "").strip()
+            if not rid or not (title or text):
+                continue
+            # Prefer chunks whose title explicitly contains Box N.
+            score = 1.0
+            if re.search(rf"(?i)\\bbox\\s+{box_n}\\b", title):
+                score = 1.08
+            elif re.search(rf"(?i)\\bbox\\s+{box_n}\\b", text[:200]):
+                score = 1.02
+            # Keep a larger snippet since user asked "all the data".
+            snippet = text[:2500] if text else ""
+            items.append({
+                "id": rid,
+                "title": title or f"Box {box_n}",
+                "text": snippet,
+                "score": score,
+                "related": [f"doc:{doc_title}" if doc_title else "doc:unknown", "via:box_content"],
+            })
+
+        items.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+        return items[:6]
 
     def _get_embedding(self, text: str) -> list[float]:
         resp = provider.embeddings(model=EMBEDDING_MODEL, input=(text or "")[:8000])
