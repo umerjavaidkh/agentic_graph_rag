@@ -1,4 +1,3 @@
-from .page_vision import PageVisionEnricher
-from .parser import DoclingParser
+from .parser import LightPdfParser
 
-__all__ = ["DoclingParser", "PageVisionEnricher"]
+__all__ = ["LightPdfParser"]

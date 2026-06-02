@@ -54,6 +54,13 @@ VISION_MAX_PAGES_PER_DOC = int(os.environ.get("VISION_MAX_PAGES_PER_DOC", "25"))
 VISION_SELECTIVE = os.environ.get("VISION_SELECTIVE", "true").lower() in ("1", "true", "yes")
 VISION_MIN_TEXT_CHARS = int(os.environ.get("VISION_MIN_TEXT_CHARS", "350"))
 
+# Lightweight PDF parser
+PDF_PARSER_BACKEND = os.environ.get("PDF_PARSER_BACKEND", "light").lower()
+PDF_ENABLE_PDFPLUMBER = os.environ.get("PDF_ENABLE_PDFPLUMBER", "true").lower() in ("1", "true", "yes")
+PDF_LOW_TEXT_CHARS = int(os.environ.get("PDF_LOW_TEXT_CHARS", "120"))
+PDF_ENABLE_OCR = os.environ.get("PDF_ENABLE_OCR", "false").lower() in ("1", "true", "yes")
+PDF_OCR_BACKEND = os.environ.get("PDF_OCR_BACKEND", "none").lower()
+
 # Page images (JPEG) — local dir or MinIO; Neo4j stores image_key only
 ASSET_STORAGE_BACKEND = os.environ.get("ASSET_STORAGE_BACKEND", "local")  # local | minio
 ASSETS_DIR = os.environ.get("ASSETS_DIR", str(PROJECT_ROOT / "data" / "assets"))

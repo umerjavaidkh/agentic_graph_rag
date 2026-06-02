@@ -1,4 +1,4 @@
-"""Crop TABLE / FIGURE regions from PDF using Docling bboxes."""
+"""Crop TABLE / FIGURE regions from PDF using parser-provided bboxes."""
 from __future__ import annotations
 
 import io

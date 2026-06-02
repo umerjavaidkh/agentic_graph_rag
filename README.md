@@ -186,7 +186,7 @@ Open:
 | **Upload** | http://localhost:8000/upload |
 | **API docs** | http://localhost:8000/docs |
 
-For PDF ingest, use the full stack: `docker compose -f docker-compose.yml -f docker-compose.full.yml up --build` (see [Docker variants](#docker-variants) below).
+PDF ingest is available in the default lightweight stack via PyMuPDF/pdfplumber.
 
 ---
 
@@ -242,8 +242,8 @@ the related policy guidance.
 - FastAPI
 - OpenAI
 - Docker
-- Docling
-- PyTorch (full image — PDF ingest)
+- PyMuPDF
+- pdfplumber
 - Cypher
 
 ---
@@ -288,13 +288,13 @@ OPENAI_API_KEY=sk-your-real-key-here
 
 ### 3. Start the stack
 
-**Slim image (~1 GB)** — chat + structured queries, no PDF upload:
+**Default lightweight image (~1 GB)** — chat + structured queries + PDF upload:
 
 ```bash
 docker compose up --build
 ```
 
-**Full image (~8–10 GB)** — includes PDF ingest (Docling + PyTorch):
+**Legacy full override** — backwards-compatible command path, same lightweight parser:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
@@ -458,16 +458,16 @@ docker compose up --build
 
 - ~1 GB app image
 - Northwind structured queries + chat
-- No PDF upload
+- Lightweight PDF upload enabled
 
-### Full (PDF ingest)
+### Legacy full override
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
 ```
 
-- ~8–10 GB app image (Docling + PyTorch)
-- PDF upload enabled
+- Backwards-compatible compose override
+- Lightweight PDF upload enabled
 
 ### External Neo4j (already running on your machine)
 
@@ -527,10 +527,10 @@ flowchart TB
     subgraph Ingest["Ingestion (write path)"]
         direction TB
         UP --> IM["IngestionManager"]
-        IM --> U["Unstructured job<br/>(PDF / DOCX)"]
+        IM --> U["Unstructured job<br/>(PDF)"]
         IM --> C["Cypher job<br/>(.cypher file)"]
 
-        U --> A1["Axis 1 — Document structure<br/>(DoclingParser, always)"]
+        U --> A1["Axis 1 — Document structure<br/>(LightPdfParser, always)"]
         A1 --> ASSETS["Page & region JPEGs<br/>data/assets/ or MinIO"]
         A1 --> VISION["Page vision (optional)<br/>ENABLE_PAGE_VISION=true"]
         A1 --> A2["Axis 2 — Semantic enrichment<br/>(if OPENAI_API_KEY set)"]
@@ -579,7 +579,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    PDF["PDF / DOCX upload"] --> P["DoclingParser"]
+    PDF["PDF upload"] --> P["LightPdfParser<br/>(PyMuPDF + pdfplumber fallback)"]
 
     subgraph A1["Axis 1 — Document structure (always)"]
         P --> TREE["Document → Chapter → Section → Page → Region<br/>(TABLE / FIGURE crops)"]
@@ -616,7 +616,7 @@ flowchart LR
     EXP --> LOAD["AUTO_LOAD_TO_NEO4J → Neo4j MERGE"]
 ```
 
-**Axis 1 (document structure)** is always built first from the Docling parser:
+**Axis 1 (document structure)** is always built first from the lightweight PDF parser:
 
 - Hierarchy: `Document → Chapter → Section → Page → Region` (tables/figures).
 - **Page vision** (optional): when `ENABLE_PAGE_VISION=true`, selected PDF pages are sent to a cheap vision model; tables, charts, diagrams, maps, and shapes are stored as `Page.visual_content` for retrieval when normal text is missing or incomplete.
@@ -747,7 +747,7 @@ agentic_graph_rag/
 │   ├── presentation/         # UI blocks (markdown, tables, charts, images)
 │   ├── conversation/       # Thread memory + clarification
 │   ├── ingestion/            # Upload pipeline (PDF / Cypher jobs)
-│   ├── document/             # Docling parser, page vision, page numbers
+│   ├── document/             # Lightweight PDF parser, page vision, page numbers
 │   ├── exporter/             # Neo4j export from DKG nodes
 │   ├── semantic/             # Axis 2 enrichment (embeddings, entities)
 │   ├── auth/                 # RBAC (roles, knowledge areas)

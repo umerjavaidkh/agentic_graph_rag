@@ -1,8 +1,9 @@
-# Slim demo image (~500–900 MB) — chat, structured Northwind, API.
-# No Docling/PyTorch. PDF upload needs Dockerfile.full instead.
+# Slim image (~500–900 MB) — chat, structured Northwind, API, lightweight PDF ingest.
+# No heavy parser runtime.
 
-# ── Page assets (no Docling) ─────────────
+# ── Lightweight PDF + page assets ────────
 pymupdf>=1.24.0
+pdfplumber>=0.11.0
 Pillow>=10.0.0
 minio>=7.2.0
 

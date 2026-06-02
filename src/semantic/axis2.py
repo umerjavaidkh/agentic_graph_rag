@@ -50,7 +50,7 @@ CONCEPT_NODE_TYPES     = {NodeType.SECTION, NodeType.PAGE}
 # ─────────────────────────────────────────
 class Axis2Builder:
     """
-    Takes the node list from DoclingParser and enriches it with
+    Takes the node list from document ingestion and enriches it with
     all Axis 2 semantic edges.
 
     Usage:

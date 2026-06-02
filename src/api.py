@@ -33,7 +33,7 @@ app = FastAPI(title="Agentic Graph RAG API")
 
 # ingestion manager state
 ingestion_manager = IngestionManager()
-# One PDF at a time — Docling/PyTorch is CPU+RAM heavy; keeps /health responsive.
+# One PDF at a time keeps ingestion CPU/IO predictable and /health responsive.
 _ingest_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ingest")
 
 

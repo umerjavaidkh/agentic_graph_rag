@@ -1,5 +1,5 @@
-# Full image with Docling + PyTorch (~8–10 GB). PDF upload / ingest only.
-#   docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
+# Backwards-compatible Dockerfile for old full-image commands.
+# Uses the same lightweight requirements as the default image.
 FROM python:3.11-slim-bookworm
 
 WORKDIR /app

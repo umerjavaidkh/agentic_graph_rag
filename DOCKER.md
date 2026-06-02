@@ -23,13 +23,13 @@ First build ~3–5 min (slim). Northwind loads on first boot.
 
 | Image | Size | PDF upload |
 |-------|------|------------|
-| **Default** (`Dockerfile`) | ~**0.5–1 GB** | No |
-| **Full** (`Dockerfile.full` + Docling/PyTorch) | ~**8–10 GB** | Yes |
+| **Default** (`Dockerfile`) | ~**0.5–1 GB** | Yes, lightweight PyMuPDF/pdfplumber |
+| **Full override** (`Dockerfile.full`) | ~**0.5–1 GB** | Yes, backwards-compatible command path |
 
-### PDF ingest (large image only)
+### PDF ingest
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
+docker compose up --build
 ```
 
 ---

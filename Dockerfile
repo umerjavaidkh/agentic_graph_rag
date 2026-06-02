@@ -1,4 +1,4 @@
-# Agentic Graph RAG — slim demo (~1 GB). Structured queries + chat; no PDF ingest.
+# Agentic Graph RAG — lightweight image. Structured queries, chat, and PDF ingest.
 FROM python:3.11-slim-bookworm
 
 WORKDIR /app
@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
     PIP_NO_CACHE_DIR=1 \
-    ENABLE_PDF_INGEST=false
+    ENABLE_PDF_INGEST=true
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \

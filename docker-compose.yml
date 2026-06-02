@@ -51,7 +51,7 @@ services:
       STRUCTURED_FAST_ANSWER: "true"
       CLEANUP_BOOK_ASSETS_ON_INGEST: "true"
       LOAD_NORTHWIND_DEMO: "true"
-      ENABLE_PDF_INGEST: "false"
+      ENABLE_PDF_INGEST: "true"
     volumes:
       - app_assets:/app/data/assets
       - app_tmp:/app/tmp_ingest

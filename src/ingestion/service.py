@@ -25,14 +25,10 @@ from ..config.settings import (
     STORE_INGESTION_ARTIFACTS,
 )
 from ..assets.cleanup import cleanup_document_assets
-from ..assets.page_images import save_document_page_images
-from ..assets.region_images import save_region_images
-from ..document.page_vision import PageVisionEnricher
-from ..document.parser import DOCLING_AVAILABLE, DoclingParser
+from ..document.parser import LightPdfParser
 from ..models import NodeType
 from ..exporter.exporter import Neo4jExporter
 from ..models import DKGEdge, DKGNode
-from ..semantic.axis2 import Axis2Builder
 from .models import IngestionStatus
 
 from ..auth.rbac_setup import GraphRBAC
@@ -158,15 +154,10 @@ class IngestionManager:
         if not job.input_path or not job.input_path.exists():
             raise FileNotFoundError("Uploaded file was not saved correctly.")
 
-        parser = DoclingParser()
-        if not DOCLING_AVAILABLE:
-            import os
-            if os.environ.get("ENABLE_PDF_INGEST", "true").lower() in ("0", "false", "no"):
-                raise RuntimeError(
-                    "PDF ingest is disabled in this Docker image (slim demo). "
-                    "Structured Northwind queries work. For PDF upload use "
-                    "docker-compose.full.yml — see DOCKER.md."
-                )
+        if job.input_path.suffix.lower() != ".pdf":
+            raise ValueError("Only PDF ingestion is supported by the lightweight parser.")
+
+        parser = LightPdfParser()
         nodes, edges = parser.parse(str(job.input_path))
         self._log(job, f"Parsed {len(nodes)} nodes and {len(edges)} edges")
 
@@ -186,6 +177,9 @@ class IngestionManager:
                 self._log(job, f"Asset cleanup skipped for {document_id}: {exc}")
 
         if job.input_path.suffix.lower() == ".pdf":
+            from ..assets.page_images import save_document_page_images
+            from ..assets.region_images import save_region_images
+
             try:
                 region_count = save_region_images(
                     job.input_path, document_id, nodes
@@ -212,6 +206,8 @@ class IngestionManager:
                 "Vision enrichment (tables, charts, diagrams on selected pages)",
             )
             try:
+                from ..document.page_vision import PageVisionEnricher
+
                 count = PageVisionEnricher(api_key=OPENAI_API_KEY).enrich_document(
                     job.input_path, nodes
                 )
@@ -222,10 +218,15 @@ class IngestionManager:
         # Always attempt Axis 2 enrichment if OpenAI key is available
         if OPENAI_API_KEY:
             self._set_status(job, IngestionStatus.semantic_enrichment, "Running semantic enrichment (Axis 2)")
-            builder = Axis2Builder(api_key=OPENAI_API_KEY)
-            nodes, semantic_edges = builder.build(nodes, run_llm_pass=True)
-            edges += semantic_edges
-            self._log(job, f"Added {len(semantic_edges)} semantic edges")
+            try:
+                from ..semantic.axis2 import Axis2Builder
+
+                builder = Axis2Builder(api_key=OPENAI_API_KEY)
+                nodes, semantic_edges = builder.build(nodes, run_llm_pass=True)
+                edges += semantic_edges
+                self._log(job, f"Added {len(semantic_edges)} semantic edges")
+            except Exception as exc:
+                self._log(job, f"Semantic enrichment skipped: {exc}")
         else:
             self._log(job, "OPENAI_API_KEY not configured; skipping semantic enrichment")
 

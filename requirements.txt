@@ -2,9 +2,8 @@
 # pip install -r requirements.txt
 
 # ── Document parsing ─────────────────────
-docling>=2.5.0
-docling-core>=2.10.0
-pymupdf>=1.24.0          # page images for optional vision enrichment
+pymupdf>=1.24.0          # lightweight PDF text + page image extraction
+pdfplumber>=0.11.0       # targeted table/text fallback for weak PDF pages
 Pillow>=10.0.0           # JPEG compression for page assets
 minio>=7.2.0             # optional: ASSET_STORAGE_BACKEND=minio
 
@@ -20,7 +19,7 @@ python-dotenv>=1.0.0
 langgraph>=0.2.0
 
 # ── Semantic analysis ───────────────────
-numpy>=1.26.0,<2.0.0       # Pinned <2 for torch/docling compatibility
+numpy>=1.26.0,<2.0.0
 scikit-learn>=1.4.0        # KMeans clustering for SAME_CATEGORY
 
 # ── Neo4j driver (for live import option) ──
