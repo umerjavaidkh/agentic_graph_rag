@@ -691,6 +691,12 @@ class DocumentRAGRetriever:
             keywords.append("hospital sites")
         if re.search(r"noor|photo\s+credit", q):
             keywords.extend(["photo credits", "noor images"])
+        if "unicef" in q:
+            keywords.extend(["unicef", "united nations children's fund"])
+        if "budget" in q or "allocation" in q or "funding" in q:
+            keywords.extend(["budget", "allocation", "funding"])
+        if "operational team support" in q or "ost" in q.split():
+            keywords.extend(["operational team support", "ost"])
         return keywords[:18]
 
     @staticmethod

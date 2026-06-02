@@ -6,6 +6,8 @@ Vector seed + graph expansion + LLM synthesis.
 
 from langgraph.graph import END, StateGraph
 
+import re
+
 from ...routing import has_document_cue, is_structured_data_question
 from .retriever import (
     DocumentRAGRetriever,
@@ -26,6 +28,24 @@ from .state import ESGState
 
 retriever = DocumentRAGRetriever()
 provider = get_model_provider()
+
+_STRUCTURED_MISROUTE = re.compile(
+    r"not in the document corpus|use structured data access",
+    re.I,
+)
+
+
+def _fix_misrouted_structured_answer(answer: str, question: str) -> str:
+    """LLM sometimes mis-applies the Northwind redirect on Go.Data / WHO document questions."""
+    if not _STRUCTURED_MISROUTE.search(answer or ""):
+        return (answer or "").strip()
+    if not has_document_cue(question):
+        return (answer or "").strip()
+    return (
+        "This is a document question (Go.Data / WHO report content), not the Northwind business database. "
+        "I searched the ingested document sections but could not find the exact figure or detail you asked for. "
+        "Try rephrasing with a section number or page reference if you have one."
+    )
 
 
 def retrieve_node(state: ESGState):
@@ -110,7 +130,12 @@ def generate_node(state: ESGState):
             else DOCUMENT_SYNTHESIS_MAX_TOKENS
         ),
     )
-    return {"answer": response.choices[0].message.content.strip(), "low_confidence": False}
+    return {
+        "answer": _fix_misrouted_structured_answer(
+            response.choices[0].message.content.strip(), state["question"]
+        ),
+        "low_confidence": False,
+    }
 
 
 def should_continue(state: ESGState):

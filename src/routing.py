@@ -109,7 +109,7 @@ _DOC_ROUTE = re.compile(
     r"\b(?:policy|policies|document|documents|pdf|manual|protocol|section\s+\d|"
     r"whistleblow|compliance\s+officer|procedure|page\s+\d+|figure|table\s+on|"
     r"table\s+of\s+contents?|toc|annex|"
-    r"godata|go\.?\s*data|openwho|workshop|translated|translation|languages?|"
+    r"godata|go\.?\s*data|openwho|unicef|budget|allocation|funding|workshop|translated|translation|languages?|"
     r"annual\s+report|community\s+of\s+practice|dhis2|who\s+github|"
     r"goarn|institution|hosted|"
     r"case[\s-]control|hospital|health\s*care\s*workers?|healthcare|sars[\s-]?cov|"
