@@ -7,7 +7,6 @@ Schema introspection + LLM Text-to-Cypher + execute/repair.
 import json
 import re
 from typing import Any, Optional
-import os
 
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -18,6 +17,17 @@ from ...config.settings import (
     CHAT_MODEL,
     STRUCTURED_ALWAYS_MULTISTEP_PLAN,
     STRUCTURED_MODEL,
+    STRUCTURED_PLAN_MAX_TOKENS,
+    STRUCTURED_PLAN_QUERY_LARGE_CHARS,
+    STRUCTURED_PLAN_QUERY_MEDIUM_CHARS,
+    STRUCTURED_PLAN_SCHEMA_LARGE_CHARS,
+    STRUCTURED_PLAN_SCHEMA_MEDIUM_CHARS,
+    STRUCTURED_PLAN_TOKENS_LARGE,
+    STRUCTURED_PLAN_TOKENS_MEDIUM,
+    STRUCTURED_PLAN_TOKENS_SMALL,
+    STRUCTURED_TEXT2CYPHER_LONG_MAX_TOKENS,
+    STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS,
+    STRUCTURED_TEXT2CYPHER_MAX_TOKENS,
     MODEL_PROVIDER,
     NEO4J_PASSWORD,
     NEO4J_URI,
@@ -147,18 +157,17 @@ def _multistep_plan_token_budget(query: str, schema: str) -> int:
     We keep this dynamic because long questions require longer JSON plans.
     Allows override via STRUCTURED_PLAN_MAX_TOKENS.
     """
-    override = os.environ.get("STRUCTURED_PLAN_MAX_TOKENS")
-    if override and override.isdigit():
-        return max(300, min(int(override), 4000))
+    if STRUCTURED_PLAN_MAX_TOKENS.isdigit():
+        return max(300, min(int(STRUCTURED_PLAN_MAX_TOKENS), 4000))
 
     q_len = len((query or "").strip())
     s_len = len((schema or "").strip())
     # Heuristic: longer schema/question → more room for valid JSON + Cypher strings.
-    if q_len > 260 or s_len > 6000:
-        return 2200
-    if q_len > 160 or s_len > 3500:
-        return 1600
-    return 900
+    if q_len > STRUCTURED_PLAN_QUERY_LARGE_CHARS or s_len > STRUCTURED_PLAN_SCHEMA_LARGE_CHARS:
+        return STRUCTURED_PLAN_TOKENS_LARGE
+    if q_len > STRUCTURED_PLAN_QUERY_MEDIUM_CHARS or s_len > STRUCTURED_PLAN_SCHEMA_MEDIUM_CHARS:
+        return STRUCTURED_PLAN_TOKENS_MEDIUM
+    return STRUCTURED_PLAN_TOKENS_SMALL
 
 
 _PARAM_RE = re.compile(r"\$(\w+)")
@@ -660,7 +669,11 @@ class StructuredRetriever:
             }]
 
         schema = self._fetch_schema()
-        max_tokens = 900 if len(query) > 180 else 500
+        max_tokens = (
+            STRUCTURED_TEXT2CYPHER_LONG_MAX_TOKENS
+            if len(query) > STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS
+            else STRUCTURED_TEXT2CYPHER_MAX_TOKENS
+        )
         cypher = self._generate_cypher(query, schema, limit, max_tokens=max_tokens)
         if not cypher:
             return []
@@ -796,7 +809,7 @@ class StructuredRetriever:
         *,
         previous_cypher: Optional[str] = None,
         execution_error: Optional[str] = None,
-        max_tokens: int = 500,
+        max_tokens: int = STRUCTURED_TEXT2CYPHER_MAX_TOKENS,
     ) -> Optional[str]:
         retry_block = ""
         if execution_error and previous_cypher:

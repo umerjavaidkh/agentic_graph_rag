@@ -61,7 +61,8 @@ ASSETS_PUBLIC_PREFIX = os.environ.get("ASSETS_PUBLIC_PREFIX", "/assets")
 ENABLE_PAGE_IMAGES = os.environ.get("ENABLE_PAGE_IMAGES", "true").lower() in ("1", "true", "yes")
 PAGE_IMAGE_JPEG_QUALITY = int(os.environ.get("PAGE_IMAGE_JPEG_QUALITY", "60"))
 PAGE_IMAGE_MAX_PAGES = int(os.environ.get("PAGE_IMAGE_MAX_PAGES", "0"))  # 0 = no cap
-PAGE_IMAGE_SELECTIVE = os.environ.get("PAGE_IMAGE_SELECTIVE", "true").lower() in ("1", "true", "yes")
+# false (default) = save a full-page JPEG for every Page node (every PDF page at ingest).
+PAGE_IMAGE_SELECTIVE = os.environ.get("PAGE_IMAGE_SELECTIVE", "false").lower() in ("1", "true", "yes")
 PAGE_IMAGE_SKIP_WHEN_REGIONS = os.environ.get("PAGE_IMAGE_SKIP_WHEN_REGIONS", "true").lower() in ("1", "true", "yes")
 ENABLE_REGION_IMAGES = os.environ.get("ENABLE_REGION_IMAGES", "true").lower() in ("1", "true", "yes")
 # Remove prior JPEG crops for a document before re-ingesting the same document_id folder.
@@ -87,3 +88,58 @@ STRUCTURED_ALWAYS_MULTISTEP_PLAN = os.environ.get(
 ).lower() in ("1", "true", "yes")
 # Skip routing LLM when question clearly targets documents vs graph data.
 FAST_ROUTE_QUERIES = os.environ.get("FAST_ROUTE_QUERIES", "true").lower() in ("1", "true", "yes")
+
+
+def llm_max_tokens(env_key: str, default: int, *, minimum: int = 1, maximum: int = 128000) -> int:
+    """Read and clamp an LLM max_tokens value from the environment."""
+    raw = os.environ.get(env_key)
+    if raw is None:
+        return max(minimum, min(default, maximum))
+    try:
+        val = int(str(raw).strip())
+    except ValueError:
+        return max(minimum, min(default, maximum))
+    return max(minimum, min(val, maximum))
+
+
+# ── LLM max_tokens budgets (per call site) ───────────────────────────────
+STRUCTURED_SYNTHESIS_MAX_TOKENS = llm_max_tokens("STRUCTURED_SYNTHESIS_MAX_TOKENS", 600, minimum=100)
+STRUCTURED_TEXT2CYPHER_MAX_TOKENS = llm_max_tokens("STRUCTURED_TEXT2CYPHER_MAX_TOKENS", 500)
+STRUCTURED_TEXT2CYPHER_LONG_MAX_TOKENS = llm_max_tokens("STRUCTURED_TEXT2CYPHER_LONG_MAX_TOKENS", 900)
+STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS = int(
+    os.environ.get("STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS", "180")
+)
+# Fixed override for multistep planner; empty = use heuristic tiers below.
+STRUCTURED_PLAN_MAX_TOKENS = (os.environ.get("STRUCTURED_PLAN_MAX_TOKENS") or "").strip()
+STRUCTURED_PLAN_TOKENS_SMALL = llm_max_tokens("STRUCTURED_PLAN_TOKENS_SMALL", 900, minimum=300)
+STRUCTURED_PLAN_TOKENS_MEDIUM = llm_max_tokens("STRUCTURED_PLAN_TOKENS_MEDIUM", 1600, minimum=300)
+STRUCTURED_PLAN_TOKENS_LARGE = llm_max_tokens("STRUCTURED_PLAN_TOKENS_LARGE", 2200, minimum=300)
+STRUCTURED_PLAN_QUERY_MEDIUM_CHARS = int(os.environ.get("STRUCTURED_PLAN_QUERY_MEDIUM_CHARS", "160"))
+STRUCTURED_PLAN_QUERY_LARGE_CHARS = int(os.environ.get("STRUCTURED_PLAN_QUERY_LARGE_CHARS", "260"))
+STRUCTURED_PLAN_SCHEMA_MEDIUM_CHARS = int(os.environ.get("STRUCTURED_PLAN_SCHEMA_MEDIUM_CHARS", "3500"))
+STRUCTURED_PLAN_SCHEMA_LARGE_CHARS = int(os.environ.get("STRUCTURED_PLAN_SCHEMA_LARGE_CHARS", "6000"))
+
+DOCUMENT_SYNTHESIS_MAX_TOKENS = llm_max_tokens("DOCUMENT_SYNTHESIS_MAX_TOKENS", 600, minimum=100)
+DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS = llm_max_tokens("DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS", 1400, minimum=100)
+
+VISION_LLM_MAX_TOKENS = llm_max_tokens("VISION_LLM_MAX_TOKENS", 2000, minimum=256)
+
+AXIS2_NER_MAX_TOKENS = llm_max_tokens("AXIS2_NER_MAX_TOKENS", 200)
+AXIS2_RELATION_MAX_TOKENS = llm_max_tokens("AXIS2_RELATION_MAX_TOKENS", 150)
+
+# MCP routing: one tool call; args echo the user question verbatim.
+ROUTE_MAX_TOKENS_MIN = llm_max_tokens("ROUTE_MAX_TOKENS_MIN", 64, minimum=32)
+ROUTE_MAX_TOKENS_BASE = llm_max_tokens("ROUTE_MAX_TOKENS_BASE", 128, minimum=64)
+ROUTE_MAX_TOKENS_CAP = llm_max_tokens("ROUTE_MAX_TOKENS_CAP", 1024, minimum=128)
+# Fixed override; when set (digits only), skips length-based estimate.
+ROUTE_MAX_TOKENS = (os.environ.get("ROUTE_MAX_TOKENS") or "").strip()
+
+
+def estimate_route_max_tokens(question: str) -> int:
+    """Budget for MCP tool routing: base + room to echo question in tool arguments."""
+    if ROUTE_MAX_TOKENS.isdigit():
+        return max(ROUTE_MAX_TOKENS_MIN, min(int(ROUTE_MAX_TOKENS), ROUTE_MAX_TOKENS_CAP))
+    q_len = len((question or "").strip())
+    # ~3 chars/token for JSON args + fixed overhead for tool name/metadata.
+    estimated = ROUTE_MAX_TOKENS_BASE + (q_len // 3) + 96
+    return max(ROUTE_MAX_TOKENS_MIN, min(estimated, ROUTE_MAX_TOKENS_CAP))

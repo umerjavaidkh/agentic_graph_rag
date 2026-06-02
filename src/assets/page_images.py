@@ -13,7 +13,6 @@ from ..config.settings import (
     PAGE_IMAGE_JPEG_QUALITY,
     PAGE_IMAGE_MAX_PAGES,
     PAGE_IMAGE_SELECTIVE,
-    PAGE_IMAGE_SKIP_WHEN_REGIONS,
     VISION_MIN_TEXT_CHARS,
 )
 from ..document.page_vision import VISUAL_PAGE_HINTS

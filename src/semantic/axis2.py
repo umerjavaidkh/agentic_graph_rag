@@ -20,7 +20,14 @@ import itertools
 from typing import Optional
 
 import numpy as np
-from ..config.settings import MODEL_PROVIDER, OPENAI_API_KEY, EMBEDDING_MODEL, CHAT_MODEL
+from ..config.settings import (
+    AXIS2_NER_MAX_TOKENS,
+    AXIS2_RELATION_MAX_TOKENS,
+    CHAT_MODEL,
+    EMBEDDING_MODEL,
+    MODEL_PROVIDER,
+    OPENAI_API_KEY,
+)
 from ..model_providers.factory import get_model_provider
 from ..models import DKGNode, DKGEdge, NodeType, RelType
 
@@ -136,7 +143,7 @@ class Axis2Builder:
                         "role": "user",
                         "content": node.text[:3000]
                     }],
-                    max_tokens=200,
+                    max_tokens=AXIS2_NER_MAX_TOKENS,
                 )
                 raw = resp.choices[0].message.content.strip()
                 # Strip markdown fences if present
@@ -286,7 +293,7 @@ Determine the relationship. Return ONLY valid JSON:
                         id_a=a.id, text_a=a.text[:1500],
                         id_b=b.id, text_b=b.text[:1500],
                     )}],
-                    max_tokens=150,
+                    max_tokens=AXIS2_RELATION_MAX_TOKENS,
                 )
                 raw = resp.choices[0].message.content.strip()
                 raw = raw.replace("```json", "").replace("```", "").strip()

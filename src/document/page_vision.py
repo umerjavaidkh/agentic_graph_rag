@@ -16,6 +16,7 @@ from ..config.settings import (
     OPENAI_API_KEY,
     VISION_DPI,
     VISION_IMAGE_DETAIL,
+    VISION_LLM_MAX_TOKENS,
     VISION_MAX_PAGES_PER_DOC,
     VISION_MIN_TEXT_CHARS,
     VISION_MODEL,
@@ -266,7 +267,7 @@ class PageVisionEnricher:
                 },
             ],
             temperature=0.0,
-            max_tokens=2000,
+            max_tokens=VISION_LLM_MAX_TOKENS,
         )
         return (response.choices[0].message.content or "").strip()
 
@@ -299,6 +300,6 @@ class PageVisionEnricher:
                 },
             ],
             temperature=0.0,
-            max_tokens=2000,
+            max_tokens=VISION_LLM_MAX_TOKENS,
         )
         return (response.choices[0].message.content or "").strip()

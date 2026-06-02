@@ -15,7 +15,12 @@ from .retriever import (
     is_visual_page_question,
 )
 from ...config.prompts import load_prompt
-from ...config.settings import CHAT_MODEL, RETRIEVAL_FINAL_LIMIT
+from ...config.settings import (
+    CHAT_MODEL,
+    DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS,
+    DOCUMENT_SYNTHESIS_MAX_TOKENS,
+    RETRIEVAL_FINAL_LIMIT,
+)
 from ...model_providers.factory import get_model_provider
 from .state import ESGState
 
@@ -95,11 +100,15 @@ def generate_node(state: ESGState):
             {"role": "user", "content": str(state["question"])},
         ],
         temperature=0.1,
-        max_tokens=1400 if (
-            is_toc_question(state["question"])
-            or is_page_question(state["question"])
-            or is_visual_page_question(state["question"])
-        ) else 600,
+        max_tokens=(
+            DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS
+            if (
+                is_toc_question(state["question"])
+                or is_page_question(state["question"])
+                or is_visual_page_question(state["question"])
+            )
+            else DOCUMENT_SYNTHESIS_MAX_TOKENS
+        ),
     )
     return {"answer": response.choices[0].message.content.strip(), "low_confidence": False}
 

@@ -12,7 +12,13 @@ from typing import Any, Callable, Optional
 
 from .auth.roles import UserContext
 from .config.prompts import load_prompt
-from .config.settings import CHAT_MODEL, FAST_ROUTE_QUERIES, MODEL_PROVIDER, OPENAI_API_KEY
+from .config.settings import (
+    CHAT_MODEL,
+    FAST_ROUTE_QUERIES,
+    MODEL_PROVIDER,
+    OPENAI_API_KEY,
+    estimate_route_max_tokens,
+)
 from .model_providers.factory import get_model_provider
 
 logger = logging.getLogger(__name__)
@@ -179,6 +185,7 @@ def select_mcp_tool(
             tools=MCP_ROUTE_TOOLS,
             tool_choice="required",
             temperature=0,
+            max_tokens=estimate_route_max_tokens(question),
         )
         choice = response.choices[0]
         tool_calls = getattr(choice.message, "tool_calls", None) or []
