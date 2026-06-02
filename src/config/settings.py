@@ -58,6 +58,8 @@ VISION_MIN_TEXT_CHARS = int(os.environ.get("VISION_MIN_TEXT_CHARS", "350"))
 PDF_PARSER_BACKEND = os.environ.get("PDF_PARSER_BACKEND", "light").lower()
 PDF_ENABLE_PDFPLUMBER = os.environ.get("PDF_ENABLE_PDFPLUMBER", "true").lower() in ("1", "true", "yes")
 PDF_LOW_TEXT_CHARS = int(os.environ.get("PDF_LOW_TEXT_CHARS", "120"))
+# Per-page cap for pdfplumber fallback (find_tables/layout can hang on some PDFs).
+PDF_PLUMBER_PAGE_TIMEOUT_SEC = int(os.environ.get("PDF_PLUMBER_PAGE_TIMEOUT_SEC", "25"))
 PDF_ENABLE_OCR = os.environ.get("PDF_ENABLE_OCR", "false").lower() in ("1", "true", "yes")
 PDF_OCR_BACKEND = os.environ.get("PDF_OCR_BACKEND", "none").lower()
 

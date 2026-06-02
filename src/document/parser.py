@@ -6,6 +6,7 @@ where text/table extraction confidence is low.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
@@ -17,6 +18,7 @@ from ..config.settings import (
     PDF_ENABLE_PDFPLUMBER,
     PDF_LOW_TEXT_CHARS,
     PDF_OCR_BACKEND,
+    PDF_PLUMBER_PAGE_TIMEOUT_SEC,
 )
 from ..models import DKGEdge, DKGNode, NodeType, RelType
 from .page_numbers import enrich_page_nodes
@@ -136,8 +138,9 @@ class LightPdfParser:
                 used_pdfplumber = False
 
                 if self._needs_pdfplumber(text, confidence) and plumber_doc is not None:
-                    p_blocks, p_regions = self._extract_pdfplumber_page(
-                        plumber_doc.pages[idx - 1], idx
+                    p_blocks, p_regions = self._run_pdfplumber_page(
+                        plumber_doc.pages[idx - 1],
+                        idx,
                     )
                     p_text = self._join_blocks(p_blocks)
                     p_confidence = self._extraction_confidence(page, p_text, p_blocks)
@@ -219,64 +222,47 @@ class LightPdfParser:
                 out.append(_PdfBlock(text=text, page=page_no, page_size=page_size))
         return out
 
-    def _extract_pdfplumber_page(self, page, page_no: int) -> tuple[list[_PdfBlock], list[_PdfBlock]]:
-        page_size = [float(page.width), float(page.height)]
-        blocks: list[_PdfBlock] = []
-        regions: list[_PdfBlock] = []
+    def _run_pdfplumber_page(
+        self, page, page_no: int
+    ) -> tuple[list[_PdfBlock], list[_PdfBlock]]:
+        timeout = PDF_PLUMBER_PAGE_TIMEOUT_SEC
+        if timeout <= 0:
+            return self._extract_pdfplumber_page(page, page_no)
 
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self._extract_pdfplumber_page, page, page_no)
+            try:
+                return future.result(timeout=timeout)
+            except FuturesTimeout:
+                print(
+                    f"   ⚠ pdfplumber timed out on page {page_no} "
+                    f"(>{timeout}s); skipping fallback"
+                )
+                return [], []
+
+    def _extract_pdfplumber_page(
+        self, page, page_no: int
+    ) -> tuple[list[_PdfBlock], list[_PdfBlock]]:
+        """Text-only fallback (no extract_tables/find_tables — those can hang)."""
+        page_size = [float(page.width), float(page.height)]
         try:
-            text = self._normalize_text(page.extract_text(layout=True) or "")
+            text = self._normalize_text(page.extract_text() or "")
         except Exception:
             text = ""
-        if text:
-            blocks.append(
-                _PdfBlock(
-                    text=text,
-                    page=page_no,
-                    page_size=page_size,
-                    source="pdfplumber",
-                )
-            )
-
-        try:
-            tables = page.extract_tables() or []
-        except Exception:
-            tables = []
-        try:
-            table_objs = page.find_tables() or []
-        except Exception:
-            table_objs = []
-
-        for idx, table in enumerate(tables):
-            md = self._table_to_markdown(table)
-            if not md:
-                continue
-            bbox = None
-            if idx < len(table_objs) and getattr(table_objs[idx], "bbox", None):
-                bbox = [float(v) for v in table_objs[idx].bbox]
-            block = _PdfBlock(
-                text=md,
-                page=page_no,
-                bbox=bbox,
-                page_size=page_size,
-                source="pdfplumber",
-                kind="table",
-            )
-            blocks.append(block)
-            regions.append(block)
-
-        return blocks, regions
+        if not text:
+            return [], []
+        block = _PdfBlock(
+            text=text,
+            page=page_no,
+            page_size=page_size,
+            source="pdfplumber",
+        )
+        return [block], []
 
     def _needs_pdfplumber(self, text: str, confidence: float) -> bool:
         if not PDF_ENABLE_PDFPLUMBER or pdfplumber is None:
             return False
-        if len(text.strip()) < PDF_LOW_TEXT_CHARS or confidence < 0.55:
-            return True
-        lines = [ln for ln in text.splitlines() if ln.strip()]
-        if len(lines) >= 3:
-            tableish = sum(1 for ln in lines if _TABLE_DENSITY.search(ln))
-            return tableish / max(1, len(lines)) > 0.35
-        return False
+        return len(text.strip()) < PDF_LOW_TEXT_CHARS or confidence < 0.55
 
     def _extraction_confidence(
         self, page: fitz.Page, text: str, blocks: list[_PdfBlock]
@@ -806,7 +792,9 @@ class LightPdfParser:
                 title_lookup[f"{n.type.value.lower()} {n.order}"] = n.id
 
         for node in nodes:
-            for match in REFERENCE_PATTERN.findall(node.text):
+            # Section bodies can be very large; references appear in titles/intros.
+            snippet = (node.text or "")[:8000]
+            for match in REFERENCE_PATTERN.findall(snippet):
                 ref_key = match.strip().lower()
                 for key, target_id in title_lookup.items():
                     if key in ref_key and target_id != node.id:
