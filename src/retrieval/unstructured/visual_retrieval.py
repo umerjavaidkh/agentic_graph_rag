@@ -113,7 +113,7 @@ def normalize_visual_page_intent(intent: VisualIntent) -> None:
     Bare 'page N' in image/figure queries means PDF page index, not printed label.
 
     Must run after pdf_page / document_page are set on the intent (including from
-    retrieve_node), otherwise multi-document clarification never sees pdf_page=N.
+    retrieve_node), otherwise page-scoped visual queries may miss pdf_page=N.
     """
     if intent.pdf_page is not None or not intent.document_page:
         return

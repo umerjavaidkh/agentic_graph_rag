@@ -27,7 +27,7 @@ def _rbac_check() -> GraphRBAC:
     if _rbac is None:
         _rbac = GraphRBAC(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     return _rbac
-from .conversation import get_turn, resolve_follow_up, route_tool_for_clarification_reply, save_turn
+from .conversation import get_turn, resolve_follow_up, save_turn
 
 
 # ─────────────────────────────────────────
@@ -72,10 +72,6 @@ def search_documents(
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
         "_follow_up": resolved.get("follow_up_kind") if resolved.get("use_prior") else None,
     }
-    if resolved.get("follow_up_kind") in ("clarification_document", "structured_clarification") and prior:
-        pending = prior.get("pending_clarification")
-        if pending:
-            out["_resolved_clarification"] = pending
     save_turn(thread_id, question, out)
     return out
 
@@ -106,10 +102,6 @@ def query_data(question: str, user_context: Optional[UserContext] = None, thread
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
         "_follow_up": resolved.get("follow_up_kind") if resolved.get("use_prior") else None,
     }
-    if resolved.get("follow_up_kind") in ("clarification_document", "structured_clarification") and prior:
-        pending = prior.get("pending_clarification")
-        if pending:
-            out["_resolved_clarification"] = pending
     save_turn(thread_id, question, out)
     return out
 
@@ -189,20 +181,13 @@ MCP_TOOLS = [
 
 def ask(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
     prior = get_turn(thread_id)
-    tool_name = route_tool_for_clarification_reply(question, prior)
-    if not tool_name and prior:
+    tool_name = None
+    if prior:
         resolved = resolve_follow_up(question, prior)
         if resolved.get("use_prior"):
             fk = resolved.get("follow_up_kind") or ""
-            if fk in (
-                "clarification_document",
-                "subsection_detail",
-                "page",
-                "page_visual_focus",
-            ):
+            if fk in ("subsection_detail", "page", "page_visual_focus"):
                 tool_name = "search_documents"
-            elif fk == "structured_clarification":
-                tool_name = "query_data"
     if not tool_name:
         tool_name = select_mcp_tool(question)
 
