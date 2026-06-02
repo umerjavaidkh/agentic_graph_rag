@@ -4,27 +4,36 @@ retrieval/structured/retriever.py — Structured Neo4j retriever.
 Schema introspection + LLM Text-to-Cypher + execute/repair.
 """
 
+import json
 import re
-from typing import Optional
+from typing import Any, Optional
+import os
 
 from neo4j import GraphDatabase
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ...auth.rbac_setup import GraphRBAC
 from ...auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
 from ...config.settings import (
     CHAT_MODEL,
+    STRUCTURED_MODEL,
     MODEL_PROVIDER,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
     OPENAI_API_KEY,
 )
+from ...config.prompts import load_prompt
 from ...model_providers.factory import get_model_provider
 from .neo4j_sanitize import sanitize_row
 from .query_intent import analytics_result_limit
+from ...conversation.clarification import format_clarification_answer
+from .executor import StructuredCypherExecutor
+from ...telemetry.context import TelemetryEvent, get_telemetry
 
 provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
-LLM_MODEL = CHAT_MODEL
+# Use stronger model for structured planning + Text-to-Cypher if configured.
+LLM_MODEL = STRUCTURED_MODEL or CHAT_MODEL
 
 # Schema-agnostic hints when a query executes but returns no rows.
 _EMPTY_RESULT_HINTS = (
@@ -40,6 +49,151 @@ _EMPTY_RESULT_HINTS = (
         "When counting unique orders/customers/entities across joins, use COUNT(DISTINCT node)."
     ),
 )
+
+# SQL idioms that are invalid or fragile in Cypher — trigger regeneration before execute.
+_SQL_CYPHER_ISSUES: list[tuple[str, str]] = [
+    (r"\bGROUP\s+BY\b", "Neo4j Cypher does not support GROUP BY. Use WITH to group/aggregate."),
+    (
+        r"\bROW_NUMBER\s*\(\s*\)\s+OVER\b|\bOVER\s*\(\s*PARTITION\s+BY\b|\bPARTITION\s+BY\b",
+        "Cypher does not support ROW_NUMBER() OVER / PARTITION BY. "
+        "Use WITH ... ORDER BY groupKey, metric DESC ... collect({...}) AS rows then rows[0..N-1].",
+    ),
+    (
+        r"\bRANK\s*\(\s*\)\s+OVER\b|\bDENSE_RANK\s*\(\s*\)\s+OVER\b",
+        "Cypher does not support RANK() OVER. Use ordered collect + slice for top-N per group.",
+    ),
+    (
+        r"RETURN\b[\s\S]*\bMATCH\b",
+        "Never nest MATCH inside RETURN. Use WITH and a separate MATCH stage.",
+    ),
+    (
+        r"\.\s*ORDER_CONTAINS\s*\.",
+        "Bind ORDER_CONTAINS as a variable: (o)-[li:ORDER_CONTAINS]->(p) and use li.quantity, li.unitPrice, li.discount.",
+    ),
+    (
+        r"\bWITH\b[^\n]*[, ]\s*\w+\.\w+\s*(?!\s+AS\b)",
+        "Cypher syntax: every expression in WITH must be aliased using AS (e.g. `WITH p.productName AS productName`).",
+    ),
+    (
+        r"\bAS\s+\w+\)\s+AS\s+\w+",
+        "Cypher syntax: you have an extra ')' before an AS alias (e.g. 'AS x) AS y'). Remove the extra parenthesis.",
+    ),
+]
+
+
+def _sql_cypher_issue(cypher: str) -> Optional[str]:
+    for pattern, msg in _SQL_CYPHER_ISSUES:
+        if re.search(pattern, cypher, re.I | re.S):
+            return msg
+    return None
+
+
+def _regenerate_cypher_for_issue(
+    retriever: "StructuredRetriever",
+    query: str,
+    schema: str,
+    limit: int,
+    cypher: str,
+    issue: str,
+) -> str:
+    fixed = retriever._generate_cypher(
+        query,
+        schema,
+        limit,
+        previous_cypher=cypher,
+        execution_error=issue,
+    )
+    return fixed.strip() if fixed else cypher
+
+
+class _MultiStepStep(BaseModel):
+    id: str
+    purpose: str
+    cypher: str
+    expects: str = Field(default="rows")  # rows | scalar
+
+    @field_validator("expects")
+    @classmethod
+    def _expects_allowed(cls, v: str) -> str:
+        if v not in ("rows", "scalar"):
+            return "rows"
+        return v
+
+
+class _MultiStepPlan(BaseModel):
+    needs_multistep: bool = False
+    reason: str = ""
+    steps: list[_MultiStepStep] = Field(default_factory=list)
+    final_answer_hint: str = ""
+
+
+def _extract_json(text: str) -> str:
+    """Best-effort extraction of a JSON object from an LLM response."""
+    t = (text or "").strip()
+    if not t:
+        return "{}"
+    start = t.find("{")
+    end = t.rfind("}")
+    if start >= 0 and end > start:
+        return t[start : end + 1]
+    return t
+
+
+def _multistep_plan_token_budget(query: str, schema: str) -> int:
+    """
+    Token budget for the multistep planner.
+
+    We keep this dynamic because long questions require longer JSON plans.
+    Allows override via STRUCTURED_PLAN_MAX_TOKENS.
+    """
+    override = os.environ.get("STRUCTURED_PLAN_MAX_TOKENS")
+    if override and override.isdigit():
+        return max(300, min(int(override), 4000))
+
+    q_len = len((query or "").strip())
+    s_len = len((schema or "").strip())
+    # Heuristic: longer schema/question → more room for valid JSON + Cypher strings.
+    if q_len > 260 or s_len > 6000:
+        return 2200
+    if q_len > 160 or s_len > 3500:
+        return 1600
+    return 900
+
+
+_PARAM_RE = re.compile(r"\$(\w+)")
+
+
+def _find_param_names(cypher: str) -> list[str]:
+    return sorted(set(_PARAM_RE.findall(cypher or "")))
+
+
+def _collect_values_from_ctx(ctx: dict[str, Any], key: str) -> list[Any]:
+    """
+    Collect values for a key from previous step rows.
+
+    ctx holds {step_id: {"rows": [...]}} entries.
+    """
+    values: list[Any] = []
+    for v in ctx.values():
+        if not isinstance(v, dict):
+            continue
+        rows = v.get("rows")
+        if not isinstance(rows, list):
+            continue
+        for r in rows:
+            if isinstance(r, dict) and key in r and r[key] is not None:
+                values.append(r[key])
+    # de-dupe while preserving order
+    return list(dict.fromkeys(values))
+
+
+def _normalize_row_keys(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize keys so they can be referenced as row.<key> in later UNWIND steps."""
+    out: dict[str, Any] = {}
+    for k, v in (row or {}).items():
+        nk = str(k).replace(".", "_").strip()
+        out[nk] = v
+    return out
 
 
 def _parse_schema_relationships(schema: str) -> list[tuple[str, str, str]]:
@@ -257,6 +411,7 @@ class StructuredRetriever:
         self.rbac = GraphRBAC(uri, user, password)
         self._schema_cache: Optional[str] = None
         self._rbac_cache: dict[tuple[str, str], bool] = {}
+        self._executor = StructuredCypherExecutor(max_attempts=5)
 
     def close(self) -> None:
         self.driver.close()
@@ -268,8 +423,214 @@ class StructuredRetriever:
         user_context: Optional[UserContext] = None,
     ) -> dict:
         ctx = user_context or self.user_context
+        clarification = self._needs_clarification(query)
+        if clarification:
+            return clarification
+        # Multi-step planning/execution is only used for complex questions when the planner says so.
+        schema = self._fetch_schema()
+        plan = self._plan_multistep(query, schema)
+        if plan and plan.needs_multistep and plan.steps:
+            chunks = self._execute_multistep(plan, user_context=ctx)
+            return self._format_response(query, chunks, strategy="multistep")
+
         chunks = self._text2cypher(query, limit, user_context=ctx)
         return self._format_response(query, chunks, strategy="text2cypher")
+
+    def _plan_multistep(self, query: str, schema: str) -> Optional[_MultiStepPlan]:
+        """
+        Ask the LLM whether this query needs multi-step execution.
+
+        This is intentionally schema-driven and avoids hardcoding specific query phrases.
+        """
+        try:
+            prompt = load_prompt("structured_multistep_plan", schema=schema, query=query)
+        except Exception:
+            return None
+        try:
+            resp = provider.chat_completion(
+                model=LLM_MODEL,
+                temperature=0,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=_multistep_plan_token_budget(query, schema),
+            )
+            raw = (resp.choices[0].message.content or "").strip()
+            js = _extract_json(raw)
+            data = json.loads(js)
+            plan = _MultiStepPlan.model_validate(data)
+            # Guardrails: keep plans small and safe.
+            if len(plan.steps) > 4:
+                plan.steps = plan.steps[:4]
+            # If LLM didn't provide valid cypher, bail out.
+            if plan.needs_multistep and any((not s.cypher or len(s.cypher) < 10) for s in plan.steps):
+                return None
+            return plan
+        except (json.JSONDecodeError, ValidationError):
+            return None
+        except Exception:
+            return None
+
+    def _execute_multistep(self, plan: _MultiStepPlan, user_context: UserContext) -> list[dict[str, Any]]:
+        """
+        Execute each step sequentially and return chunks for synthesis.
+
+        No hardcoded business logic: each step is a Cypher query produced by the planner.
+        """
+        out: list[dict[str, Any]] = []
+        # RBAC is already checked inside _text2cypher; reuse same rule here.
+        if not self._can_query_structured(user_context.user_id):
+            return [{
+                "id": "access_denied",
+                "title": "Access Denied",
+                "text": f"User {user_context.user_id} does not have permission to query structured data.",
+                "score": 0.0,
+                "related": [],
+            }]
+
+        # Simple runtime context for later steps (optional).
+        ctx: dict[str, Any] = {"plan_reason": plan.reason, "final_hint": plan.final_answer_hint}
+
+        with self.driver.session() as session:
+            for idx, step in enumerate(plan.steps, 1):
+                cypher = (step.cypher or "").strip()
+                issue = _sql_cypher_issue(cypher)
+                if issue:
+                    # regenerate once if the step contains known-invalid patterns
+                    schema = self._fetch_schema()
+                    cypher = _regenerate_cypher_for_issue(self, step.purpose, schema, 10, cypher, issue)
+                rows: list[dict[str, Any]] = []
+                norm_rows: list[dict[str, Any]] = []
+                try:
+                    params: dict[str, Any] = {}
+
+                    # Always pass prior step rows as `$<step_id>_rows` for UNWIND-based chaining.
+                    for k, v in ctx.items():
+                        if isinstance(v, dict) and isinstance(v.get("rows"), list):
+                            params[f"{k}_rows"] = v["rows"]
+                    param_names = _find_param_names(cypher)
+                    if param_names:
+                        for pn in param_names:
+                            if pn in params:
+                                continue
+                            # Prefer plural → look for singular in prior rows too.
+                            candidates = [pn, pn.rstrip("s")]
+                            vals: list[Any] = []
+                            for cand in candidates:
+                                vals = _collect_values_from_ctx(ctx, cand)
+                                if vals:
+                                    break
+                            if vals:
+                                # If query uses UNWIND $x, pass list; else pass scalar if single.
+                                if re.search(rf"\bUNWIND\s+\${re.escape(pn)}\b", cypher, re.I):
+                                    params[pn] = vals
+                                else:
+                                    params[pn] = vals[0] if len(vals) == 1 else vals
+
+                    if param_names and not params:
+                        raise RuntimeError(f"Step requires parameters {param_names} but no values were found from prior steps.")
+
+                    # If we have a list param but the query likely expects scalar (e.g. {id:$id}),
+                    # run once per value and merge rows. This keeps it generic and avoids hardcoding.
+                    scalar_like = any(re.search(rf"\${re.escape(pn)}\b", cypher) for pn in params)
+                    list_param_names = [k for k, v in params.items() if isinstance(v, list)]
+                    if list_param_names and scalar_like and not re.search(r"\bUNWIND\b", cypher, re.I):
+                        merged: list[dict] = []
+                        # Only iterate over the first list param; others (if any) stay fixed.
+                        first = list_param_names[0]
+                        for v in params[first]:
+                            p2 = {**params, first: v}
+                            merged.extend([sanitize_row(r.data()) for r in session.run(cypher, p2)])
+                        rows = merged
+                    else:
+                        rows = [sanitize_row(r.data()) for r in session.run(cypher, params)]
+                except Exception as exc:
+                    out.append({
+                        "id": f"{step.id}_error",
+                        "title": f"{step.id} error",
+                        "text": f"Step failed: {exc}\nCypher: {cypher}",
+                        "score": 0.0,
+                        "related": [],
+                        "cypher": cypher,
+                    })
+                    return out
+
+                # Normalize keys so later steps can reference row.country, row.customerID, etc.
+                norm_rows = [_normalize_row_keys(r) for r in rows if isinstance(r, dict)]
+
+                # Store step output in ctx (for chaining and debugging).
+                ctx[step.id] = {"rows": norm_rows}
+
+                preview = norm_rows[:15]
+                out.append({
+                    "id": step.id,
+                    "title": f"{step.id}: {step.purpose}",
+                    "text": json.dumps(preview, indent=2, ensure_ascii=False),
+                    "raw": norm_rows,
+                    "score": 1.0,
+                    "related": [],
+                    "cypher": cypher,
+                })
+        return out
+
+    def _needs_clarification(self, query: str) -> Optional[dict]:
+        """
+        Ask a follow-up when the metric is ambiguous.
+
+        Example: "avg order price" could mean freight, computed order total, or unit price.
+        """
+        ql = (query or "").strip().lower()
+        if not ql:
+            return None
+
+        # Only trigger when user asks for an average and uses vague "order price".
+        if "order" in ql and "price" in ql and ("avg" in ql or "average" in ql):
+            # If they already specified one of the interpretations, don't ask.
+            if any(k in ql for k in ("freight", "shipping", "ship cost", "order total", "total", "unitprice", "unit price", "line item")):
+                return None
+            options = [
+                {
+                    "id": "order_total",
+                    "label": "Order total (recommended)",
+                    "detail": "Sum of line items per order: unitPrice × quantity × (1 - discount)",
+                    "aliases": ["total", "order total", "line item total", "sum items", "items total"],
+                },
+                {
+                    "id": "freight",
+                    "label": "Freight / shipping cost",
+                    "detail": "Use Order.freight (shipping cost) per order",
+                    "aliases": ["freight", "shipping", "shipping cost", "ship cost"],
+                },
+                {
+                    "id": "unit_price",
+                    "label": "Average unit price",
+                    "detail": "Average of line-item unitPrice (not the order total)",
+                    "aliases": ["unit price", "unitprice", "item price"],
+                },
+            ]
+            prompt = (
+                "When you say **average order price**, which metric do you mean?\n\n"
+                "Reply with 1, 2, or 3 (or the option name)."
+            )
+            answer = format_clarification_answer(prompt, options)
+            return {
+                "query": query,
+                "strategy": "clarification",
+                "mode": "needs_clarification",
+                "original_question": query,
+                "clarification_kind": "structured_order_price",
+                "clarification_options": options,
+                "chunks": [
+                    {
+                        "id": "clarification",
+                        "title": "Clarification",
+                        "text": answer,
+                        "score": 1.0,
+                        "related": [],
+                    }
+                ],
+                "total_available": 1,
+            }
+
+        return None
 
     def get_schema(self) -> dict:
         schema = self._fetch_schema()
@@ -297,13 +658,46 @@ class StructuredRetriever:
             }]
 
         schema = self._fetch_schema()
-        cypher = self._generate_cypher(query, schema, limit)
+        max_tokens = 900 if len(query) > 180 else 500
+        cypher = self._generate_cypher(query, schema, limit, max_tokens=max_tokens)
         if not cypher:
             return []
+
+        for _ in range(4):
+            issue = _sql_cypher_issue(cypher)
+            if not issue:
+                break
+            cypher = _regenerate_cypher_for_issue(self, query, schema, limit, cypher, issue)
         cypher = _fix_relationship_directions(cypher, schema)
         cypher = _repair_schema_paths(cypher, schema)
 
-        rows, cypher, err = self._execute_cypher_rows(cypher, query, schema=schema, limit=limit)
+        def _execute_once(c: str) -> list[dict]:
+            with self.driver.session() as session:
+                result = session.run(c)
+                return [sanitize_row(r.data()) for r in result]
+
+        def _regenerate(prev: str, err: str) -> Optional[str]:
+            return self._generate_cypher(
+                query,
+                schema,
+                limit,
+                previous_cypher=prev,
+                execution_error=err,
+            )
+
+        exec_res = self._executor.run(
+            initial_cypher=cypher,
+            question=query,
+            schema=schema,
+            limit=limit,
+            execute_once=_execute_once,
+            regenerate=_regenerate,
+            sql_issue=_sql_cypher_issue,
+        )
+        tel = get_telemetry()
+        if tel is not None:
+            tel.add(TelemetryEvent(kind="structured_execute", meta={"attempts": exec_res.attempts}))
+        rows, cypher, err = exec_res.rows, exec_res.cypher, exec_res.error
         if err:
             return [{
                 "id": "error",
@@ -400,6 +794,7 @@ class StructuredRetriever:
         *,
         previous_cypher: Optional[str] = None,
         execution_error: Optional[str] = None,
+        max_tokens: int = 500,
     ) -> Optional[str]:
         retry_block = ""
         if execution_error and previous_cypher:
@@ -416,32 +811,19 @@ If 0 rows: reverse any relationship whose direction does not match RELATIONSHIP 
 """
 
         n = analytics_result_limit(query, limit)
-        prompt = f"""You are a Neo4j Cypher expert. Generate a Cypher query for the question below.
-
-GRAPH SCHEMA:
-{schema}
-
-RULES:
-- Return ONLY the Cypher query, no explanation, no markdown
-- Use only labels/relationships/properties that appear in the schema
-- Relationship direction is critical: RELATIONSHIP TYPES shows exact arrows. If schema lists (:A)-[:R]->(:B), only match (a:A)-[:R]->(b:B); never reverse the arrow unless the question explicitly asks for the inverse
-- Multi-hop questions: chain patterns using schema directions (e.g. Order-[:ORDER_CONTAINS]->Product-[:SUPPLIED_BY]->Supplier). Each relationship must connect the node types shown in RELATIONSHIP TYPES — never attach a relationship to a node label that does not appear in that relationship's schema pattern
-- Shipment/location filters: use Order-[:SHIPPED_TO]->Address and filter Address country/city properties with toLower() CONTAINS
-- Aggregations / rankings ("most", "greatest", "highest", "top"): MATCH the full path, WITH groupKey, COUNT(DISTINCT countedNode) AS metric (use DISTINCT when counting orders/customers/entities that can repeat across joined rows), RETURN groupKey, metric ORDER BY metric DESC LIMIT {n}
-- For ranked top-N results: ORDER BY metric DESC then LIMIT {n}
-- For text search: toLower() and CONTAINS
-- Numeric safety: wrap CSV-backed fields with toFloat() or toInteger() before arithmetic
-- For dates: if orderDate includes time, parse via substring(toString(orderDate), 0, 10) before date()
-{retry_block}
-QUESTION: {query}
-
-CYPHER:"""
+        prompt = load_prompt(
+            "structured_text2cypher",
+            schema=schema,
+            retry_block=retry_block,
+            query=query,
+            n=n,
+        )
 
         response = provider.chat_completion(
             model=LLM_MODEL,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=500,
+            max_tokens=max_tokens,
         )
         cypher = response.choices[0].message.content.strip()
         cypher = cypher.replace("```cypher", "").replace("```", "").strip()

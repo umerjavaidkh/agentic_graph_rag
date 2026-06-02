@@ -139,6 +139,7 @@ class QueryResponse(BaseModel):
     presentation: Optional[dict] = None  # { kind, blocks[] } for rich UI
     query_type:   Optional[str] = None
     follow_up:    Optional[str] = None  # set when last-turn context was used
+    telemetry:    Optional[dict] = None  # {_telemetry} from router (tokens/tries)
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -170,6 +171,7 @@ async def query(request: QueryRequest):
             presentation = result.get("presentation"),
             query_type   = result.get("query_type"),
             follow_up    = result.get("_follow_up"),
+            telemetry    = result.get("_telemetry"),
         )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))

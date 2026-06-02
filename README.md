@@ -198,6 +198,18 @@ For PDF ingest, use the full stack: `docker compose -f docker-compose.yml -f doc
 Which customers ordered the most?
 What are the top 5 products by sales?
 Show monthly order volume.
+
+# Advanced (tough) analytics
+For each customer country, find the top 3 customers by total revenue in 1997
+(revenue = sum of line items unitPrice × quantity × (1 - discount)), and for each of those customers return:
+customer name / id, total revenue (1997), number of distinct orders (1997), average order value (1997),
+their top 2 products by revenue (1997). Then rank countries by the sum of the top-3 customers’ revenue
+and show the top 5 countries.
+
+Find the top 5 supplier–category pairs by total revenue in 1997, where revenue is the sum of line items
+unitPrice × quantity × (1 - discount). For each pair return: supplier name, category name, total revenue (1997),
+number of distinct products sold (1997), number of distinct orders (1997), and the top 3 products
+(names + revenue) within that supplier–category pair (1997).
 ```
 
 ### Unstructured

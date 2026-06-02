@@ -94,6 +94,11 @@ _DATA_ROUTE = re.compile(
 def is_structured_data_question(question: str) -> bool:
     """Northwind-style business graph (products, orders, …) — not PDF documents."""
     return bool(_DATA_ROUTE.search(question or ""))
+
+
+def has_document_cue(question: str) -> bool:
+    """True when the question clearly references documents/PDF/sections (not business analytics)."""
+    return bool(_DOC_ROUTE.search(question or ""))
 _DOC_ROUTE = re.compile(
     r"\b(?:policy|policies|document|documents|pdf|manual|protocol|section\s+\d|"
     r"whistleblow|compliance\s+officer|procedure|page\s+\d+|figure|table\s+on|"

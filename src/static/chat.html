@@ -1003,7 +1003,25 @@
       }
     }
 
-    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType, followUp) {
+    function formatTelemetryChip(telemetry) {
+      if (!telemetry || !telemetry.totals) return null;
+      const t = telemetry.totals;
+      const tok = Number(t.total_tokens || 0);
+      const calls = `chat:${t.chat_calls || 0} emb:${t.embed_calls || 0}`;
+      return `tokens:${tok.toLocaleString()} (${calls})`;
+    }
+
+    function extractTries(telemetry) {
+      const events = (telemetry && telemetry.events) || [];
+      for (const e of events) {
+        if (e.kind === 'structured_execute' && e.meta && typeof e.meta.attempts === 'number') {
+          return e.meta.attempts;
+        }
+      }
+      return null;
+    }
+
+    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType, followUp, telemetry) {
       removeThinking();
       const wrap = document.createElement('div');
       wrap.className = 'msg assistant';
@@ -1035,11 +1053,26 @@
 
       inner.appendChild(label);
       inner.appendChild(bubble);
-      inner.appendChild(buildMetaChips(
+      const metaRow = buildMetaChips(
         accessLevel, agent, strategy, routeTool, queryType,
         presentation && presentation.kind,
         followUp
-      ));
+      );
+      const telChip = formatTelemetryChip(telemetry);
+      const tries = extractTries(telemetry);
+      if (tries !== null) {
+        const span = document.createElement('span');
+        span.className = 'meta-chip';
+        span.textContent = `tries:${tries}`;
+        metaRow.appendChild(span);
+      }
+      if (telChip) {
+        const span = document.createElement('span');
+        span.className = 'meta-chip';
+        span.textContent = telChip;
+        metaRow.appendChild(span);
+      }
+      inner.appendChild(metaRow);
 
       if (sources && sources.length) {
         const details = document.createElement('details');
@@ -1060,6 +1093,19 @@
           more.textContent = `… ${sources.length - 10} more sources not shown`;
           details.appendChild(more);
         }
+        inner.appendChild(details);
+      }
+
+      if (telemetry) {
+        const details = document.createElement('details');
+        details.className = 'sources-panel';
+        const summary = document.createElement('summary');
+        summary.textContent = 'View telemetry';
+        details.appendChild(summary);
+        const pre = document.createElement('div');
+        pre.className = 'source';
+        pre.textContent = JSON.stringify(telemetry, null, 2);
+        details.appendChild(pre);
         inner.appendChild(details);
       }
 
@@ -1117,7 +1163,8 @@
           payload.route_method,
           payload.presentation,
           payload.query_type,
-          payload.follow_up
+          payload.follow_up,
+          payload.telemetry
         );
         setStatus('Ready');
       } catch (e) {

@@ -5,6 +5,7 @@ Rules:
 - Do NOT invent facts not present in the data.
 - Be concise but insightful.
 - Treat duplicate symmetric pairs as one pair.
+- Use correct metric names from the query result columns: if the value is a count, call it "orders" or "order count", not "sales"; if it is revenue/money, call it "revenue"; if it is quantity, call it "units".
 
 Retrieved Data:
 {context}

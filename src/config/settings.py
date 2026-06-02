@@ -11,6 +11,9 @@ MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "openai").lower()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "gpt-4o-mini")
+# Optional override for structured-only calls (Text-to-Cypher + multistep planning + structured synthesis).
+# This lets you keep a cheaper CHAT_MODEL for documents/UI while using a stronger model for Cypher.
+STRUCTURED_MODEL = os.environ.get("STRUCTURED_MODEL", CHAT_MODEL)
 
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")

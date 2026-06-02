@@ -9,6 +9,7 @@ import re
 from typing import Any, Optional
 
 from ..retrieval.unstructured.visual_retrieval import extract_visual_focus_terms
+from .clarification import match_clarification_choice
 
 # thread_id -> last critical turn snapshot
 _store: dict[str, dict[str, Any]] = {}
@@ -39,7 +40,19 @@ def extract_critical_from_result(user_question: str, result: dict) -> Optional[d
     rc = result.get("retrieved_context") or {}
     mode = rc.get("mode") or ""
 
-    if agent not in (None, "unstructured", "hybrid"):
+    if mode == "needs_clarification":
+        return {
+            "question": user_question.strip(),
+            "agent": agent,
+            "mode": mode,
+            "pending_clarification": {
+                "kind": rc.get("clarification_kind"),
+                "options": rc.get("clarification_options") or [],
+                "original_question": rc.get("original_question") or user_question.strip(),
+            },
+        }
+
+    if agent not in (None, "unstructured", "hybrid", "structured"):
         return None
 
     sources = result.get("sources") or []
@@ -108,6 +121,60 @@ def resolve_follow_up(question: str, prior: Optional[dict[str, Any]]) -> dict[st
 
     q = question.strip()
     q_lower = q.lower()
+
+    pending = prior.get("pending_clarification")
+    if pending:
+        # Only treat very short messages as clarification replies.
+        # This prevents hijacking new questions like: '"Gnocchi..." total order count'
+        # which might contain words like "total".
+        q_short = len(q) <= 40 and len(q.split()) <= 4
+        options = pending.get("options") or []
+        choice = match_clarification_choice(question, options) if q_short else None
+        if choice:
+            kind = pending.get("kind") or ""
+            orig = pending.get("original_question") or base["question"]
+            # Keep rewrite simple and explicit; avoid stuffing definitions into the question
+            # because it can confuse Text-to-Cypher generation.
+            if kind == "structured_order_price":
+                cid = (choice.get("id") or "").strip()
+
+                # Try to preserve the user's country filter in a robust way.
+                # Example: "avg order price for Germany" -> country_phrase="Germany"
+                country_phrase = None
+                m = re.search(r"\bfor\s+([a-zA-Z][a-zA-Z\s\.\-]{1,60})\??\s*$", orig, re.I)
+                if m:
+                    country_phrase = m.group(1).strip()
+                if not country_phrase:
+                    m2 = re.search(r"\bin\s+([a-zA-Z][a-zA-Z\s\.\-]{1,60})\??\s*$", orig, re.I)
+                    if m2:
+                        country_phrase = m2.group(1).strip()
+
+                where = f" for {country_phrase}" if country_phrase else ""
+
+                if cid == "order_total":
+                    rewritten = f"Calculate the average order total{where}. Define order total as sum of line items per order (unitPrice × quantity × (1 - discount))."
+                elif cid == "freight":
+                    rewritten = f"Calculate the average freight (shipping cost) per order{where}."
+                elif cid == "unit_price":
+                    rewritten = f"Calculate the average line-item unit price{where} (avg of ORDER_CONTAINS.unitPrice for matching orders)."
+                else:
+                    rewritten = f"Clarify and answer the original question{where}: {orig}"
+                return {
+                    **base,
+                    "question": rewritten,
+                    "use_prior": True,
+                    "follow_up_kind": "structured_clarification",
+                }
+            if kind == "document_choice":
+                label = (choice.get("label") or choice.get("id") or "").strip()
+                rewritten = f"{orig} from {label} document" if label else orig
+                return {
+                    **base,
+                    "question": rewritten,
+                    "document_id": choice.get("id"),
+                    "use_prior": True,
+                    "follow_up_kind": "clarification_document",
+                }
 
     children = prior.get("children") or []
     ord_m = re.match(r"^(?:#|item\s+)?(\d{1,2})\s*\.?$", q_lower)

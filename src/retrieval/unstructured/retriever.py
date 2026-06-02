@@ -33,6 +33,8 @@ from ...document.page_vision import PageVisionEnricher, compact_visual_content
 from ...graph.constants import DOCUMENT_ROOT_CYPHER
 from .visual_retrieval import parse_visual_intent
 from ...model_providers.factory import get_model_provider
+from .executor import DocumentQueryExecutor
+from ...telemetry.context import TelemetryEvent, get_telemetry
 
 provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
 
@@ -185,6 +187,7 @@ class DocumentRAGRetriever:
         self.rbac = GraphRBAC(uri, user, password)
         self._vision_cache: dict[str, str] = {}
         self._vision_enricher: Optional[PageVisionEnricher] = None
+        self._exec = DocumentQueryExecutor()
 
     def close(self) -> None:
         self.driver.close()
@@ -216,6 +219,85 @@ class DocumentRAGRetriever:
         denied = self._access_denied_response(query, ctx)
         if denied:
             return denied
+
+        tel = get_telemetry()
+
+        # Box headings listing (generic): "List all Box headings" should enumerate Box 1..N.
+        if self._exec.is_box_list_request(query):
+            with self.driver.session() as session:
+                items = self._structural_box_headings(session, query)
+            if items:
+                response = self._format_response(query, items, user_context=ctx)
+                response["mode"] = "structural_box_list"
+                response["strategy"] = "graph_rag"
+                response["vector_seeds"] = 0
+                response["fulltext_hits"] = 0
+                response["graph_expanded"] = len(items)
+                if tel is not None:
+                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response["mode"]}))
+                return response
+
+        # If the user asks about a specific section/subsections and multiple documents exist,
+        # ask them to pick the document rather than guessing.
+        if self._exec.is_subsection_request(query) and self._exec.parse_section_number(query):
+            with self.driver.session() as session:
+                doc_id, doc_title = self._resolve_document_for_query(session, query)
+                # If user didn't mention any doc terms, this resolver can "guess" the biggest doc.
+                # When multiple docs exist, prefer explicit clarification.
+                if not self._document_match_terms(query):
+                    docs = self._list_documents(session, limit=5)
+                    if len(docs) > 1:
+                        clar = self._exec.build_doc_choice_clarification(
+                            original_question=query,
+                            documents=docs,
+                        )
+                        return {
+                            "query": query,
+                            "strategy": "graph_rag",
+                            "mode": "needs_clarification",
+                            "original_question": query,
+                            "clarification_kind": clar.kind,
+                            "clarification_options": clar.options,
+                            "chunks": [{
+                                "id": "clarification",
+                                "title": "Clarification",
+                                "text": clar.prompt,
+                                "score": 1.0,
+                                "related": [],
+                            }],
+                            "total_available": 1,
+                        }
+
+        # Subsection listing: if a section number is requested, return child headings if present.
+        if self._exec.is_subsection_request(query):
+            sec_num = self._exec.parse_section_number(query)
+            if sec_num:
+                with self.driver.session() as session:
+                    items, parent = self._structural_subsections(session, query, sec_num)
+                if items:
+                    response = self._format_response(query, items, user_context=ctx)
+                    response["mode"] = "subsection_tree"
+                    response["strategy"] = "graph_rag"
+                    response["parent_id"] = parent.get("id")
+                    response["parent_title"] = parent.get("title")
+                    response["vector_seeds"] = 0
+                    response["fulltext_hits"] = 0
+                    response["graph_expanded"] = len(items)
+                    if tel is not None:
+                        tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response["mode"]}))
+                    return response
+                if parent and parent.get("text"):
+                    response = self._format_response(query, [parent], user_context=ctx)
+                    response["mode"] = "section_detail"
+                    response["strategy"] = "graph_rag"
+                    response["parent_id"] = parent.get("id")
+                    response["parent_title"] = parent.get("title")
+                    response["vector_seeds"] = 0
+                    response["fulltext_hits"] = 0
+                    response["graph_expanded"] = 1
+                    if tel is not None:
+                        tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response["mode"]}))
+                    return response
 
         if is_toc_question(query):
             with self.driver.session() as session:
@@ -1159,6 +1241,133 @@ class DocumentRAGRetriever:
             name=name.strip(),
         ).single()
         return str(row["id"]) if row and row.get("id") else None
+
+    def _list_documents(self, session, limit: int = 5) -> list[dict[str, str]]:
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            RETURN d.id AS id, coalesce(d.title, d.id) AS title
+            ORDER BY coalesce(d.title, d.id)
+            LIMIT $limit
+            """,
+            limit=max(1, int(limit)),
+        )
+        out: list[dict[str, str]] = []
+        for r in rows:
+            if not r.get("id"):
+                continue
+            out.append({"id": str(r["id"]), "title": str(r.get("title") or r["id"])})
+        return out
+
+    def _structural_subsections(
+        self,
+        session,
+        query: str,
+        sec_num: str,
+    ) -> tuple[list[dict], dict]:
+        """Return (children items, parent item) for a numbered section like 2.5."""
+        doc_id, _ = self._resolve_document_for_query(session, query)
+        row = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            MATCH (s:Section)
+            WHERE (s.id STARTS WITH d.id + '_' OR EXISTS {{ MATCH (d)-[:CONTAINS*1..6]->(s) }})
+              AND s.title IS NOT NULL
+              AND trim(s.title) <> ''
+              AND toLower(s.title) STARTS WITH toLower($sec_num)
+            WITH s
+            OPTIONAL MATCH (s)-[:CONTAINS]->(c:Section)
+            WHERE c.title IS NOT NULL AND trim(c.title) <> ''
+            RETURN
+              s.id AS sid,
+              s.title AS stitle,
+              coalesce(s.text,'') AS stext,
+              collect({{id: c.id, title: c.title, text: coalesce(c.text,'')}}) AS children
+            LIMIT 1
+            """,
+            doc_id=doc_id,
+            sec_num=sec_num,
+        ).single()
+        if not row:
+            return [], {}
+
+        parent = {
+            "id": row.get("sid") or "",
+            "title": (row.get("stitle") or "").strip(),
+            "text": (row.get("stext") or "").strip(),
+            "score": 1.0,
+            "related": ["via:section_lookup"],
+        }
+
+        children = row.get("children") or []
+        items: list[dict] = []
+        for c in children:
+            if not c or not c.get("id") or not c.get("title"):
+                continue
+            items.append({
+                "id": c["id"],
+                "title": c["title"],
+                "text": (c.get("text") or "").strip(),
+                "score": 1.0,
+                "related": ["via:subsections"],
+            })
+        return items, parent
+
+    def _structural_box_headings(self, session, query: str) -> list[dict]:
+        """
+        Enumerate Box headings (e.g. "Box 10") inside a document.
+        Generic: works for any document that contains "Box <number>" in titles or text.
+        """
+        doc_id, doc_title = self._resolve_document_for_query(session, query)
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            MATCH (n)
+            WHERE any(l IN labels(n) WHERE l IN $labels)
+              AND (
+                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
+                OR n.id STARTS WITH d.id + '_'
+              )
+              AND (
+                (n.title IS NOT NULL AND toLower(n.title) CONTAINS 'box')
+                OR (n.text IS NOT NULL AND toLower(n.text) CONTAINS 'box')
+              )
+            RETURN
+              coalesce(n.id,'') AS id,
+              coalesce(n.title,'') AS title,
+              coalesce(n.text,'') AS text
+            LIMIT 250
+            """,
+            doc_id=doc_id,
+            labels=list(_TEXT_NODE_LABELS),
+        )
+
+        found: dict[int, dict] = {}
+        for r in rows:
+            rid = r.get("id") or ""
+            title = (r.get("title") or "").strip()
+            text = (r.get("text") or "").strip()
+            hay = f"{title}\n{text}"
+            for num in self._exec.extract_box_numbers(hay):
+                if num in found:
+                    continue
+                # Prefer title if it contains Box, else synthesize a heading.
+                heading = title if re.search(rf"(?i)\\bbox\\s+{num}\\b", title) else f"Box {num}"
+                snippet = ""
+                if text:
+                    # keep a compact preview
+                    snippet = text[:800]
+                found[num] = {
+                    "id": rid or f"box_{num}",
+                    "title": heading,
+                    "text": snippet,
+                    "score": 1.0,
+                    "related": [f"doc:{doc_title}" if doc_title else "doc:unknown", "via:box_scan"],
+                }
+
+        return [found[k] for k in sorted(found.keys())]
 
     def _get_embedding(self, text: str) -> list[float]:
         resp = provider.embeddings(model=EMBEDDING_MODEL, input=(text or "")[:8000])

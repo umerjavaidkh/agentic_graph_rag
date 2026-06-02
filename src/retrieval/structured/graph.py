@@ -8,14 +8,14 @@ from langgraph.graph import END, StateGraph
 
 from .retriever import StructuredRetriever
 from ...config.prompts import load_prompt
-from ...config.settings import CHAT_MODEL
+from ...config.settings import STRUCTURED_MODEL
 from ...model_providers.factory import get_model_provider
 from .query_intent import analytics_result_limit
 from .state import StructuredState
 
 provider = get_model_provider()
 retriever = StructuredRetriever()
-LLM_MODEL = CHAT_MODEL
+LLM_MODEL = STRUCTURED_MODEL
 
 SCHEMA_PHRASES = {
     "what data", "what tables", "what is available",
@@ -55,8 +55,18 @@ def retrieve_node(state: StructuredState):
 
 
 def generate_node(state: StructuredState):
-    chunks = state["retrieved_context"].get("chunks", [])
+    retrieved_context = state.get("retrieved_context") or {}
+    chunks = retrieved_context.get("chunks", [])
     question = state["question"]
+
+    if (retrieved_context.get("mode") or "") == "needs_clarification":
+        # Return the clarification prompt as-is (no LLM synthesis).
+        if chunks:
+            return {"answer": (chunks[0].get("text") or "").strip(), "low_confidence": False}
+        return {
+            "answer": "I need one clarification before I can answer that.",
+            "low_confidence": False,
+        }
 
     if not chunks:
         return {

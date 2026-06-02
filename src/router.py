@@ -18,6 +18,7 @@ from .routing import (
     select_mcp_tool,
     run_via_mcp_tool,
 )
+from .telemetry import clear_telemetry, get_telemetry, start_telemetry
 
 _rbac: GraphRBAC | None = None
 
@@ -38,6 +39,7 @@ def search_documents(
     user_context: Optional[UserContext] = None,
     thread_id: str = "default",
 ) -> dict:
+    start_telemetry()
     prior = get_turn(thread_id)
     resolved = resolve_follow_up(question, prior)
 
@@ -72,11 +74,16 @@ def search_documents(
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
         "_follow_up": resolved.get("follow_up_kind") if resolved.get("use_prior") else None,
     }
+    tel = get_telemetry()
+    if tel is not None:
+        out["_telemetry"] = tel.summary()
+    clear_telemetry()
     save_turn(thread_id, question, out)
     return out
 
 
 def query_data(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
+    start_telemetry()
     prior = get_turn(thread_id)
     resolved = resolve_follow_up(question, prior)
 
@@ -102,11 +109,16 @@ def query_data(question: str, user_context: Optional[UserContext] = None, thread
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
         "_follow_up": resolved.get("follow_up_kind") if resolved.get("use_prior") else None,
     }
+    tel = get_telemetry()
+    if tel is not None:
+        out["_telemetry"] = tel.summary()
+    clear_telemetry()
     save_turn(thread_id, question, out)
     return out
 
 
 def query_hybrid(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
+    start_telemetry()
     state = {"question": question}
     if user_context is not None:
         state["user_context"] = user_context
@@ -136,7 +148,7 @@ def query_hybrid(question: str, user_context: Optional[UserContext] = None, thre
             retrieved_context=doc_result.get("retrieved_context", {}),
             query_type=doc_result.get("query_type"),
         )
-    return {
+    out = {
         "answer": (
             f"### From Documents:\n{doc_result.get('answer', '')}\n\n"
             f"### From Data:\n{data_result.get('answer', '')}"
@@ -149,6 +161,11 @@ def query_hybrid(question: str, user_context: Optional[UserContext] = None, thre
         "presentation": presentation,
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
     }
+    tel = get_telemetry()
+    if tel is not None:
+        out["_telemetry"] = tel.summary()
+    clear_telemetry()
+    return out
 
 
 MCP_HANDLERS = {
@@ -186,8 +203,10 @@ def ask(question: str, user_context: Optional[UserContext] = None, thread_id: st
         resolved = resolve_follow_up(question, prior)
         if resolved.get("use_prior"):
             fk = resolved.get("follow_up_kind") or ""
-            if fk in ("subsection_detail", "page", "page_visual_focus"):
+            if fk in ("subsection_detail", "page", "page_visual_focus", "clarification_document"):
                 tool_name = "search_documents"
+            elif fk == "structured_clarification":
+                tool_name = "query_data"
     if not tool_name:
         tool_name = select_mcp_tool(question)
 

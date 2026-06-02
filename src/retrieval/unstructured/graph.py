@@ -6,7 +6,7 @@ Vector seed + graph expansion + LLM synthesis.
 
 from langgraph.graph import END, StateGraph
 
-from ...routing import is_structured_data_question
+from ...routing import has_document_cue, is_structured_data_question
 from .retriever import (
     DocumentRAGRetriever,
     is_page_question,
@@ -47,7 +47,10 @@ def generate_node(state: ESGState):
     retrieved = state.get("retrieved_context", {}) or {}
     chunks = retrieved.get("chunks", []) or []
 
-    if is_structured_data_question(question):
+    # Guard against true structured questions being sent to the document agent.
+    # Do NOT trigger this for document questions that happen to contain words like "data"
+    # (e.g. "Go.Data" report sections).
+    if is_structured_data_question(question) and not has_document_cue(question):
         return {
             "answer": (
                 "This question is about the business database (products, orders, customers), "
