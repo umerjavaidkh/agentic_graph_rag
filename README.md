@@ -1,30 +1,244 @@
-# Agentic Graph RAG
+# Agentic GraphRAG
 
-| [**1 · Ingestion**](https://www.youtube.com/watch?v=2983DqSe0GM) | [**2 · Unstructured**](https://www.youtube.com/watch?v=s3Eceo20Eq4) | [**3 · Structured**](https://www.youtube.com/watch?v=XvigWQ5mB1g) |
+> A Neo4j-powered GraphRAG engine that unifies **structured analytics**, **document retrieval**, and **agentic orchestration** in a single knowledge layer.
+
+Built with **Neo4j**, **FastAPI**, **LangGraph**, and **OpenAI**.
+
+---
+
+## Why This Exists
+
+Most RAG systems treat all knowledge as flat chunks stored in a vector database.
+
+That works well for semantic search, but breaks down when questions require:
+
+- Multi-hop reasoning
+- Aggregations and analytics
+- Relationship-aware retrieval
+- Role-based access control
+- Understanding document hierarchy and structure
+
+This project separates retrieval into two specialized paths:
+
+### Structured knowledge
+
+Business entities, metrics, customers, orders, products, compliance data, and graph relationships.
+
+Retrieved using:
+
+- Schema-aware Text-to-Cypher
+- Neo4j graph traversal
+- Aggregations and analytics
+
+### Unstructured knowledge
+
+Policies, PDFs, manuals, reports, and documents.
+
+Retrieved using:
+
+- Hierarchical document graphs
+- Semantic search
+- Full-text search
+- Graph expansion
+- Lexical phrase matching
+- Visual and structural retrieval (TOC, pages, figures)
+
+An **MCP-style routing layer** (`routing.py`) decides which retrieval strategy—or combination of strategies—is best for each query.
+
+---
+
+## Architecture
+
+```text
+                    User Query
+                         │
+                         ▼
+                 MCP Query Router
+                         │
+         ┌───────────────┼───────────────┐
+         │                               │
+         ▼                               ▼
+ Structured Agent            Unstructured Agent
+(Text-to-Cypher)           (Document Graph RAG)
+         │                               │
+         └───────────────┬───────────────┘
+                         ▼
+                      Neo4j
+                         │
+                         ▼
+                    Final Answer
+```
+
+---
+
+## What Makes This Different?
+
+| Capability | Traditional RAG | GraphRAG | Agentic GraphRAG |
+|------------|-----------------|----------|------------------|
+| Semantic search | ✅ | ✅ | ✅ |
+| Document hierarchy | ❌ | ⚠️ | ✅ |
+| Multi-hop reasoning | ❌ | ✅ | ✅ |
+| Text-to-Cypher analytics | ❌ | ⚠️ | ✅ |
+| Structured + unstructured retrieval | ❌ | ⚠️ | ✅ |
+| Graph-native RBAC | ❌ | ⚠️ | ✅ |
+| Agentic routing | ❌ | ❌ | ✅ |
+
+---
+
+## Key features
+
+### Agentic query routing
+
+An MCP-style router analyzes incoming questions and selects:
+
+- `search_documents`
+- `query_data`
+- `query_hybrid`
+
+based on query intent, fast keyword signals, and user permissions.
+
+### Structured retrieval
+
+Schema-aware Text-to-Cypher generation against Neo4j.
+
+Example:
+
+```text
+Which customers ordered the most?
+```
+
+Generates Cypher and returns ranked results.
+
+Supports:
+
+- Counts, averages, filters, grouping
+- Relationship traversals and multi-hop paths
+- Schema-driven repair when queries return empty results
+
+### Unstructured retrieval
+
+Documents are transformed into a navigable graph:
+
+```text
+Document
+ └── Chapter
+      └── Section
+           └── Page
+                └── Region
+```
+
+Retrieval combines:
+
+- Vector search
+- Full-text search
+- Graph expansion
+- Phrase and keyword overlap
+- TOC navigation
+- Page and visual retrieval
+
+### Graph-native RBAC
+
+Permissions are modeled inside Neo4j and enforced at retrieval time.
+
+| Role | Documents | Structured data |
+|------|-----------|-----------------|
+| `public_001` | ✅ | ❌ |
+| `regular_001` | ❌ | ✅ |
+| `compliance_001` | ✅ | ✅ |
+| `admin_001` | ✅ | ✅ |
+
+### Hybrid retrieval
+
+Questions that need both business metrics and document evidence can invoke multiple agents.
+
+Example:
+
+```text
+Show compliance incidents from the policy documents
+and summarize affected departments.
+```
+
+---
+
+## Demo
+
+| Ingestion | Unstructured | Structured |
 | :---: | :---: | :---: |
 | [![Watch — Ingestion](https://img.youtube.com/vi/2983DqSe0GM/0.jpg)](https://www.youtube.com/watch?v=2983DqSe0GM) | [![Watch — Unstructured](https://img.youtube.com/vi/s3Eceo20Eq4/0.jpg)](https://www.youtube.com/watch?v=s3Eceo20Eq4) | [![Watch — Structured](https://img.youtube.com/vi/XvigWQ5mB1g/0.jpg)](https://www.youtube.com/watch?v=XvigWQ5mB1g) |
 
 ---
 
-Ask questions over **documents** and **structured graph data** in one place. An **MCP-style router** (`routing.py`) picks the path using fast signals plus LLM tool choice, with **RBAC** per user:
+## Quick start
 
-- **Documents** — policies, PDFs, manuals (`retrieval/unstructured`: vector + full-text + graph expansion + lexical + structural TOC/page/visual)
-- **Structured data** — products, orders, customers (`retrieval/structured`: schema-driven Text-to-Cypher on Neo4j)
-- **Hybrid** — both agents when the question needs document text and business metrics
+```bash
+git clone https://github.com/umerjavaidkh/agentic_graph_rag.git
+cd agentic_graph_rag
+cp .env.example .env
+# Add OPENAI_API_KEY to .env
+docker compose up --build
+```
 
-Built with **FastAPI**, **Neo4j**, **LangGraph**, and **OpenAI**.
+Open:
+
+| Page | URL |
+|------|-----|
+| **Chat** | http://localhost:8000/chat |
+| **Upload** | http://localhost:8000/upload |
+| **API docs** | http://localhost:8000/docs |
+
+For PDF ingest, use the full stack: `docker compose -f docker-compose.yml -f docker-compose.full.yml up --build` (see [Docker variants](#docker-variants) below).
 
 ---
 
-## What you get out of the box
+## Example questions
 
-| Feature | Description |
-|---------|-------------|
-| **Chat UI** | Ask questions in natural language |
-| **Upload UI** | Ingest documents into the knowledge graph |
-| **Northwind demo** | Sample business data loaded automatically on first Docker start |
-| **Neo4j Browser** | Explore the graph visually |
-| **Role-based access** | Control who can see which documents and data |
+### Structured
+
+```text
+Which customers ordered the most?
+What are the top 5 products by sales?
+Show monthly order volume.
+```
+
+### Unstructured
+
+```text
+What is the whistleblowing procedure?
+Summarize section 3.
+What must employees report?
+```
+
+### Hybrid
+
+```text
+Show compliance incidents and summarize
+the related policy guidance.
+```
+
+---
+
+## Deep dive
+
+**Medium article:** [Agentic Graph RAG — architecture and walkthrough](https://medium.com/p/0ee1f6baae26)
+
+---
+
+## Tech stack
+
+- Neo4j
+- LangGraph
+- FastAPI
+- OpenAI
+- Docker
+- Docling
+- PyTorch (full image — PDF ingest)
+- Cypher
+
+---
+
+## Detailed documentation
+
+The sections below cover installation, Docker variants, the ingestion pipeline, **detailed architecture diagrams**, configuration, API reference, troubleshooting, and project layout.
 
 ---
 
@@ -94,25 +308,7 @@ Wait until you see `Uvicorn running on http://0.0.0.0:8000` in the logs, then op
 1. Go to http://localhost:8000/chat
 2. Type a question and press **Send**
 
-### Example questions
-
-**Structured data (Northwind demo):**
-
-```
-Which customers ordered the most?
-What are the top 5 best-selling products?
-Show monthly order volume
-```
-
-**Documents (after you upload PDFs/DOCX):**
-
-```
-What is the whistleblowing procedure?
-Summarize section 3 of the compliance manual
-What must employees report to the compliance officer?
-```
-
-The app automatically routes your question to the right agent (`query_data`, `search_documents`, or `query_hybrid`).
+The app routes each question to `query_data`, `search_documents`, or `query_hybrid`. See [Example questions](#example-questions) above.
 
 ---
 
@@ -305,7 +501,7 @@ Interactive API docs: http://localhost:8000/docs
 
 ---
 
-## Architecture
+## Architecture (detailed)
 
 ### End-to-end overview
 
@@ -663,4 +859,4 @@ Private repository — use and share according to your own terms.
 2. Verify health: http://localhost:8000/health
 3. Verify Neo4j: http://localhost:17474 with `neo4j://localhost:17687`
 
-For a walkthrough, see the project video (link TBD).
+For walkthroughs, see the [Demo](#demo) videos at the top of this README.
