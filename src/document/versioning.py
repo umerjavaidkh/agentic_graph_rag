@@ -76,14 +76,15 @@ def build_revision_plan(
 ) -> DocumentRevisionPlan:
     logical_id = resolve_logical_id(file_path, doc_key=doc_key, job_id=job_id)
     revision_id = f"{logical_id}:r{version_number}"
-    root = content_root_id or f"doc_{slug_logical_key(file_path.stem)}"
+    clean_stem = upload_filename_stem(file_path, job_id)
+    root = content_root_id or f"doc_{slug_logical_key(clean_stem)}"
     return DocumentRevisionPlan(
         logical_id=logical_id,
         revision_id=revision_id,
         version_number=version_number,
         content_hash=file_content_sha256(file_path),
         content_root_id=f"{revision_id}::{root}",
-        title=file_path.stem,
+        title=clean_stem,
         source_filename=file_path.name,
     )
 

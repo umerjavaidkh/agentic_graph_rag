@@ -13,6 +13,10 @@ _TOC_LINE_RE = re.compile(
     r"|\s+\d{1,4}\s*$",
     re.I,
 )
+# A line that is *only* a page number — arabic or roman (TOCs often put the
+# page number on its own line under each entry title).
+_PAGE_NUMBER_LINE_RE = re.compile(r"^(?:\d{1,4}|[ivxlcdm]{1,6})$", re.I)
+_ENTRY_TITLE_RE = re.compile(r"[A-Za-z]")
 _TOC_SECTION_TITLE_RE = re.compile(
     r"^table\s+of\s+contents?\.?$|^contents$",
     re.I,
@@ -36,11 +40,22 @@ def score_page_text_as_toc(text: str) -> float:
     lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
     if len(lines) < 3:
         return score
+
+    # Same-line page numbers / dotted leaders.
     toc_lines = sum(1 for ln in lines if _TOC_LINE_RE.search(ln))
-    ratio = toc_lines / len(lines)
-    score += min(0.55, ratio * 0.9)
+
+    # Title line immediately followed by a standalone page-number line
+    # (arabic or roman) — the common multi-line TOC layout.
+    entry_pairs = 0
+    for i in range(len(lines) - 1):
+        if _PAGE_NUMBER_LINE_RE.match(lines[i + 1]) and _ENTRY_TITLE_RE.search(lines[i]):
+            entry_pairs += 1
+
+    signal = toc_lines + entry_pairs
+    ratio = signal / max(1, len(lines))
+    score += min(0.55, ratio * 1.1)
     # TOC pages are usually short lists, not long prose.
-    if len(lines) <= 80 and len(body) < 12000:
+    if len(lines) <= 120 and len(body) < 14000:
         score += 0.05
     return min(1.0, score)
 

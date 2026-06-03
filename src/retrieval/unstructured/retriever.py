@@ -58,6 +58,29 @@ def _doc_scope_cypher(alias: str = "d") -> str:
         f"OR ($doc_id IS NOT NULL AND {alias}.id STARTS WITH $doc_id + ':'))"
     )
 
+
+_JOB_PREFIX_RE = re.compile(r"^[0-9a-f]{32}_", re.I)
+
+
+def _clean_doc_title(title: Optional[str]) -> str:
+    """Strip a leading 32-hex job-id prefix left on older ingests' titles."""
+    t = (title or "").strip()
+    return _JOB_PREFIX_RE.sub("", t) or t
+
+
+def _node_scope_cypher(alias: str = "n") -> str:
+    """
+    Scope any content node (Page/Section/...) to a document without relying on
+    variable-length CONTAINS paths (parsers can nest sections far deeper than a
+    fixed hop budget). Matches the resolved logical id or a content-root id prefix.
+    """
+    return (
+        f"($doc_id IS NULL "
+        f"OR {alias}.logical_doc_id = $doc_id "
+        f"OR {alias}.id STARTS WITH $doc_id + '_' "
+        f"OR {alias}.id STARTS WITH $doc_id + ':')"
+    )
+
 # Structural + semantic edges created at ingest (Axis 1 & Axis 2).
 _GRAPH_REL_TYPES = (
     "SEMANTICALLY_SIMILAR",
@@ -1041,10 +1064,9 @@ class DocumentRAGRetriever:
     ) -> Optional[dict]:
         row = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-            MATCH (d)-[:CONTAINS*1..8]->(p:Page)
-            WHERE {lifecycle_active("p")}
+            MATCH (p:Page)
+            WHERE {_node_scope_cypher("p")}
+              AND {lifecycle_active("p")}
               AND trim(coalesce(p.text, '')) <> ''
               AND (
                 ($pdf_page IS NOT NULL AND p.pdf_page = $pdf_page)
@@ -1056,8 +1078,7 @@ class DocumentRAGRetriever:
             RETURN
               coalesce(p.text, '') AS text,
               p.pdf_page AS pdf_page,
-              p.document_page AS document_page,
-              coalesce(d.title, d.id) AS doc_title
+              p.document_page AS document_page
             ORDER BY p.order
             LIMIT 1
             """,
@@ -1072,16 +1093,14 @@ class DocumentRAGRetriever:
     ) -> Optional[dict]:
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-            MATCH (d)-[:CONTAINS*1..8]->(p:Page)
-            WHERE {lifecycle_active("p")}
+            MATCH (p:Page)
+            WHERE {_node_scope_cypher("p")}
+              AND {lifecycle_active("p")}
               AND trim(coalesce(p.text, '')) <> ''
             RETURN
               coalesce(p.text, '') AS text,
               p.pdf_page AS pdf_page,
               p.document_page AS document_page,
-              coalesce(d.title, d.id) AS doc_title,
               coalesce(p.pdf_page, p.order, 9999) AS sort_key
             ORDER BY sort_key
             LIMIT 40
@@ -1105,15 +1124,13 @@ class DocumentRAGRetriever:
     ) -> Optional[dict]:
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-            MATCH (d)-[:CONTAINS*1..8]->(s:Section)
-            WHERE {lifecycle_active("s")}
+            MATCH (s:Section)
+            WHERE {_node_scope_cypher("s")}
+              AND {lifecycle_active("s")}
               AND trim(coalesce(s.title, '')) <> ''
             RETURN
               trim(s.title) AS title,
               coalesce(s.text, '') AS text,
-              coalesce(d.title, d.id) AS doc_title,
               coalesce(s.order, 0) AS ord
             ORDER BY ord
             """,
@@ -1131,10 +1148,9 @@ class DocumentRAGRetriever:
     ) -> list[str]:
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-            MATCH (d)-[:CONTAINS*1..8]->(n)
+            MATCH (n)
             WHERE (n:Chapter OR n:Section)
+              AND {_node_scope_cypher("n")}
               AND {lifecycle_active("n")}
             WITH n,
                  trim(coalesce(n.title, '')) AS title,
@@ -1464,7 +1480,7 @@ class DocumentRAGRetriever:
                 terms=terms,
             ).single()
             if row and row.get("id"):
-                return str(row["id"]), str(row.get("title") or row["id"])
+                return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
 
             row = session.run(
                 f"""
@@ -1487,7 +1503,7 @@ class DocumentRAGRetriever:
                 terms=terms,
             ).single()
             if row and row.get("id"):
-                return str(row["id"]), str(row.get("title") or row["id"])
+                return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
 
         row = session.run(
             f"""
@@ -1501,7 +1517,7 @@ class DocumentRAGRetriever:
             """
         ).single()
         if row and row.get("id"):
-            return str(row["id"]), str(row.get("title") or row["id"])
+            return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
 
         row = session.run(
             f"""
@@ -1514,7 +1530,7 @@ class DocumentRAGRetriever:
             """
         ).single()
         if row and row.get("id"):
-            return str(row["id"]), str(row.get("title") or row["id"])
+            return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
         return None, None
 
     def _document_match_terms(self, query: str) -> list[str]:

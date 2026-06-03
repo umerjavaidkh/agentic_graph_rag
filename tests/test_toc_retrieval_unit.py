@@ -27,6 +27,20 @@ def test_score_toc_page():
     assert score_page_text_as_toc(body) < 0.4
 
 
+def test_score_toc_page_number_on_own_line():
+    # Common layout: entry title then page number (arabic/roman) on the next line.
+    toc = (
+        "Contents\n"
+        "acknowledgements\nv\n"
+        "List of abbreviations\nvi\n"
+        "EXECUTIVE SUMMARY\nvii\n"
+        "1. Introduction\n2\n"
+        "1.1. Goal of this report\n5\n"
+        "2. Go.Data activities and objectives\n9\n"
+    )
+    assert score_page_text_as_toc(toc) >= 0.6
+
+
 def test_outline_filters_boxes():
     assert not include_in_outline_fallback("Box 8", 2, "Section")
     assert include_in_outline_fallback("1. Introduction", 2, "Section")
@@ -36,6 +50,7 @@ def test_outline_filters_boxes():
 
 def main() -> None:
     test_score_toc_page()
+    test_score_toc_page_number_on_own_line()
     test_outline_filters_boxes()
     print("toc retrieval unit checks: OK")
 
