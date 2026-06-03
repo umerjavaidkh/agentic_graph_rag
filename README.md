@@ -2,19 +2,25 @@
 
 **One Neo4j graph. Two knowledge modes. Answers that flat RAG cannot reliably give.**
 
-Agentic GraphRAG is a production-oriented **Graph RAG** stack that keeps **structured business data** and **unstructured documents** in the same graph database, then routes each question to the right retrieval strategy—or combines both. You get SQL-grade analytics on Northwind-style entities *and* multi-hop reasoning over WHO reports, policies, and manuals—without maintaining separate vector DBs, ETL pipelines, and ad-hoc orchestration glue.
+## Demos
 
-Built with **Neo4j · FastAPI · LangGraph · OpenAI**.
+**1. Ingestion pipeline** — drop PDFs in the bulk-upload UI and watch them become a versioned Neo4j knowledge graph (lightweight parser, parallel NER + LLM extraction, batched writes, live job status).
 
----
+[![Agentic GraphRAG ingestion pipeline](https://img.youtube.com/vi/K4XIat6xpEw/maxresdefault.jpg)](https://youtu.be/K4XIat6xpEw)
 
-## Demo
+> ▶️ Watch: https://youtu.be/K4XIat6xpEw
 
-A full run of the **30-case eval suite** answering live in the chat UI — 20 unstructured document questions + 10 structured analytics questions (with bar/line/doughnut charts) — each validated with an on-screen PASS/FAIL banner. Final score: **30/30**.
+**2. Retrieval + eval run** — the **30-case eval suite** answered live in the chat UI: 20 unstructured document questions + 10 structured analytics questions (bar/line/doughnut charts), each validated with an on-screen PASS/FAIL banner. Final score: **30/30**.
 
 [![Agentic GraphRAG demo — 30/30 eval pass](https://img.youtube.com/vi/7011-xkI1RI/maxresdefault.jpg)](https://youtu.be/7011-xkI1RI)
 
-> ▶️ Watch the full run: https://youtu.be/7011-xkI1RI
+> ▶️ Watch: https://youtu.be/7011-xkI1RI
+
+---
+
+Agentic GraphRAG is a production-oriented **Graph RAG** stack that keeps **structured business data** and **unstructured documents** in the same graph database, then routes each question to the right retrieval strategy—or combines both. You get SQL-grade analytics on Northwind-style entities *and* multi-hop reasoning over WHO reports, policies, and manuals—without maintaining separate vector DBs, ETL pipelines, and ad-hoc orchestration glue.
+
+Built with **Neo4j · FastAPI · LangGraph · OpenAI**.
 
 ---
 
