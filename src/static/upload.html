@@ -5,416 +5,518 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ingestion Upload</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-    h1, h2 { color: #1f2937; }
-    .card { border: 1px solid #d1d5db; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.5rem; background: #ffffff; }
-    label { display: block; margin-top: 0.75rem; font-weight: 600; }
-    input[type=file], textarea, input[type=text] { width: 100%; padding: 0.75rem; margin-top: 0.35rem; border: 1px solid #cbd5e1; border-radius: 8px; }
-    button { margin-top: 1rem; padding: 0.85rem 1.25rem; background: #2563eb; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
-    button:disabled { opacity: 0.65; cursor: not-allowed; }
-    button.loading { position: relative; padding-left: 2.5rem; }
-    button.loading::before {
-      content: '';
-      position: absolute; left: 0.85rem; top: 50%;
-      width: 1rem; height: 1rem; margin-top: -0.5rem;
-      border: 2px solid rgba(255,255,255,0.35);
-      border-top-color: #fff;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, Arial, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; background: #f1f5f9; color: #1e293b; }
+    h1 { color: #1f2937; margin-bottom: 0.25rem; }
+    h2 { font-size: 1.05rem; margin: 0 0 0.75rem; color: #374151; }
+    a { color: #2563eb; }
+    .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem; background: #fff; }
+    label { display: block; margin-top: 0.75rem; font-weight: 600; font-size: 0.9rem; color: #374151; }
+    input[type=file], input[type=text] { width: 100%; padding: 0.65rem 0.85rem; margin-top: 0.3rem; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem; }
+    input[type=file] { cursor: pointer; }
+    .hint { font-size: 0.85rem; color: #64748b; margin-top: 0.3rem; }
+    .row { display: flex; gap: 1rem; }
+    .row > * { flex: 1; }
+    button {
+      margin-top: 1rem; padding: 0.8rem 1.25rem; background: #2563eb; color: #fff;
+      border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.95rem;
+      display: inline-flex; align-items: center; gap: 0.5rem;
     }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    button.secondary { background: #64748b; }
+    button.danger { background: #dc2626; }
+    .spinner {
+      width: 1rem; height: 1rem;
+      border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
+      border-radius: 50%; animation: spin 0.7s linear infinite; display: none;
+    }
+    button.loading .spinner { display: block; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .file-hint { font-size: 0.9rem; color: #64748b; margin-top: 0.35rem; }
-    .inline-status {
-      margin-top: 1rem; padding: 0.85rem 1rem;
-      border-radius: 10px; font-size: 0.95rem; line-height: 1.45;
-      border: 1px solid #cbd5e1; background: #f8fafc;
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; }
+    .tab { padding: 0.6rem 1.1rem; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer; background: #f8fafc; font-weight: 600; font-size: 0.9rem; }
+    .tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .hidden { display: none !important; }
+
+    /* Drop zone */
+    .dropzone {
+      border: 2px dashed #93c5fd; border-radius: 10px; padding: 2rem 1rem;
+      text-align: center; cursor: pointer; margin-top: 0.75rem;
+      background: #eff6ff; color: #1e40af; transition: background 0.2s;
     }
-    .inline-status.hidden { display: none; }
-    .inline-status.info { border-color: #93c5fd; background: #eff6ff; color: #1e40af; }
-    .inline-status.success { border-color: #86efac; background: #f0fdf4; color: #166534; }
-    .inline-status.error { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
-    .inline-status.running { border-color: #fcd34d; background: #fffbeb; color: #92400e; }
-    .notice { background: #f8fafc; border: 1px solid #cbd5e1; padding: 1rem; border-radius: 10px; margin-top: 1rem; }
-    .status { white-space: pre-wrap; background: #f8fafc; padding: 1rem; border-radius: 10px; margin-top: 1rem; font-family: Menlo, monospace; }
-    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
-    .tab { padding: 0.75rem 1rem; border: 1px solid #cbd5e1; border-radius: 10px; cursor: pointer; background: #f8fafc; }
-    .tab.active { background: #2563eb; color: white; border-color: #2563eb; }
-    .hidden { display: none; }
+    .dropzone.drag-over { background: #dbeafe; border-color: #3b82f6; }
+    .dropzone .drop-icon { font-size: 2rem; margin-bottom: 0.35rem; }
+    .dropzone .drop-label { font-weight: 600; }
+    .dropzone .drop-sub { font-size: 0.85rem; opacity: 0.75; margin-top: 0.25rem; }
+
+    /* File queue (before submit) */
+    .file-list { margin-top: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
+    .file-chip {
+      display: flex; align-items: center; gap: 0.5rem;
+      border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.5rem 0.75rem;
+      background: #f8fafc; font-size: 0.9rem;
+    }
+    .file-chip .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-chip .fsize { color: #64748b; font-size: 0.8rem; }
+    .file-chip .remove { cursor: pointer; color: #dc2626; font-size: 1.1rem; line-height: 1; }
+
+    /* Job cards */
+    #jobs-panel { display: flex; flex-direction: column; gap: 0.75rem; }
+    .job-card {
+      border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.9rem 1rem;
+      background: #fff; font-size: 0.88rem;
+    }
+    .job-card-header { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
+    .job-card-header .jname { font-weight: 700; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .badge {
+      padding: 0.2rem 0.55rem; border-radius: 6px; font-size: 0.78rem; font-weight: 700; white-space: nowrap;
+    }
+    .badge-queued    { background: #e0e7ff; color: #3730a3; }
+    .badge-running   { background: #fef3c7; color: #92400e; animation: pulse 1.5s infinite; }
+    .badge-completed { background: #dcfce7; color: #166534; }
+    .badge-failed    { background: #fee2e2; color: #991b1b; }
+    .badge-skipped   { background: #f1f5f9; color: #475569; }
+    .badge-worker    { background: #ede9fe; color: #5b21b6; }
+    .badge-bg        { background: #e0f2fe; color: #0c4a6e; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+    .job-meta { color: #64748b; margin-bottom: 0.35rem; }
+    .job-meta span { margin-right: 0.75rem; }
+    .job-logs {
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+      padding: 0.5rem 0.75rem; font-family: Menlo, monospace; font-size: 0.8rem;
+      max-height: 120px; overflow-y: auto; color: #334155; white-space: pre-wrap;
+    }
+    .job-logs-toggle { cursor: pointer; color: #2563eb; font-size: 0.82rem; margin-top: 0.35rem; }
+
+    /* Queue status bar */
+    #queue-bar {
+      display: flex; align-items: center; gap: 1rem;
+      padding: 0.6rem 1rem; border-radius: 8px; background: #f8fafc;
+      border: 1px solid #e2e8f0; font-size: 0.88rem; margin-bottom: 1rem;
+    }
+    #queue-bar .qitem { display: flex; align-items: center; gap: 0.35rem; }
+    #queue-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+    #queue-bar .dot.green { background: #22c55e; }
+    #queue-bar .dot.blue  { background: #3b82f6; }
+    #queue-bar .dot.red   { background: #ef4444; }
   </style>
 </head>
 <body>
   <h1>Document Ingestion</h1>
-  <p><a href="/chat">Open Agentic Graph RAG Chat</a></p>
+  <p><a href="/chat">Open Chat</a> &nbsp;|&nbsp; <a href="/docs">API docs</a></p>
+
+  <!-- Queue status bar -->
+  <div id="queue-bar">
+    <div class="qitem"><div class="dot" id="redis-dot"></div> <span id="redis-label">Checking…</span></div>
+    <div class="qitem"><span>Queue depth: <strong id="queue-depth">—</strong></span></div>
+    <div class="qitem"><span>Failed jobs: <strong id="failed-count">—</strong></span></div>
+    <button class="secondary" style="margin-top:0;padding:0.35rem 0.75rem;font-size:0.82rem" onclick="refreshQueueStatus()">Refresh</button>
+  </div>
+
+  <!-- Upload card -->
   <div class="card">
     <div class="tabs">
-      <div class="tab active" id="tab-unstructured">Unstructured</div>
-      <div class="tab" id="tab-cypher">Cypher</div>
+      <div class="tab active" id="tab-unstructured" onclick="switchTab('unstructured')">Unstructured (PDF)</div>
+      <div class="tab" id="tab-cypher" onclick="switchTab('cypher')">Cypher</div>
+      <div class="tab" id="tab-admin" onclick="switchTab('admin')">Admin</div>
     </div>
 
-    <div id="unstructured-panel">
-      <h2>Upload document</h2>
-      <p>Upload a PDF/DOCX/PPTX/HTML. Ingestion will automatically build the document structure and enrich it with semantic relationships if configured.</p>
-      <label>File</label>
-      <input type="file" id="unstructured-file" accept=".pdf,.docx,.pptx,.html,.txt" />
-      <div class="file-hint" id="unstructured-file-hint">No file selected</div>
-      <label>Job name (optional)</label>
-      <input type="text" id="unstructured-job-name" placeholder="policy-manual" />
-      <button type="button" id="submit-unstructured">Submit ingestion</button>
-      <div class="inline-status hidden" id="unstructured-inline-status" role="status" aria-live="polite"></div>
+    <!-- Unstructured panel -->
+    <div id="panel-unstructured">
+      <h2>Upload one or more PDFs</h2>
+
+      <!-- Drop zone -->
+      <div class="dropzone" id="dropzone"
+           ondragover="ev.preventDefault();this.classList.add('drag-over')"
+           ondragleave="this.classList.remove('drag-over')"
+           ondrop="handleDrop(event)"
+           onclick="document.getElementById('file-picker').click()">
+        <div class="drop-icon">📄</div>
+        <div class="drop-label">Drop PDFs here or click to browse</div>
+        <div class="drop-sub">Multiple files supported — all submitted concurrently</div>
+      </div>
+      <input type="file" id="file-picker" accept=".pdf" multiple class="hidden"
+             onchange="addFiles(this.files)" />
+
+      <div class="file-list" id="file-list"></div>
+
+      <div class="row" style="margin-top:0.75rem">
+        <div>
+          <label>Doc key prefix <span style="font-weight:400;color:#64748b">(optional)</span></label>
+          <input type="text" id="doc-key-prefix" placeholder="e.g. my-report  →  my-report-1, my-report-2…" />
+          <div class="hint">Stable logical ID used for versioning. Same key + same file = skipped. Same key + new file = new revision.</div>
+        </div>
+        <div>
+          <label>Job name <span style="font-weight:400;color:#64748b">(optional)</span></label>
+          <input type="text" id="job-name" placeholder="batch-upload-01" />
+        </div>
+      </div>
+
+      <button id="submit-btn" onclick="submitAll()">
+        <div class="spinner"></div>
+        <span id="submit-label">Submit all</span>
+      </button>
     </div>
 
-    <div id="cypher-panel" class="hidden">
+    <!-- Cypher panel -->
+    <div id="panel-cypher" class="hidden">
       <h2>Upload Cypher (schema + data)</h2>
-      <p>Upload a <code>.cypher</code>/<code>.cql</code> file to execute directly in Neo4j. This endpoint is disabled by default and requires a compliance/admin role when enabled.</p>
+      <p class="hint">Execute a <code>.cypher</code> file directly in Neo4j. Requires <code>ALLOW_CYPHER_INGEST=true</code> and compliance/admin role.</p>
       <label>Cypher file</label>
       <input type="file" id="cypher-file" accept=".cypher,.cql,.txt" />
-      <label>Job name (optional)</label>
-      <input type="text" id="cypher-job-name" placeholder="northwind-load" />
-      <label>Role (must be compliance_officer or admin)</label>
-      <input type="text" id="cypher-role" placeholder="compliance_officer" value="compliance_officer" />
-      <label>User ID (must exist in RBAC if you enforce it)</label>
-      <input type="text" id="cypher-user-id" placeholder="compliance_001" value="compliance_001" />
-      <label>OpenAI API key (optional)</label>
-      <input type="text" id="cypher-openai-key" placeholder="sk-..." />
-      <button type="button" id="submit-cypher">Submit cypher ingestion</button>
-      <div class="inline-status hidden" id="cypher-inline-status" role="status" aria-live="polite"></div>
+      <div class="row">
+        <div><label>Job name</label><input type="text" id="cypher-job-name" placeholder="northwind-load" /></div>
+        <div><label>Role</label><input type="text" id="cypher-role" value="compliance_officer" /></div>
+        <div><label>User ID</label><input type="text" id="cypher-user-id" value="compliance_001" /></div>
+      </div>
+      <label>OpenAI API key <span style="font-weight:400;color:#64748b">(optional)</span></label>
+      <input type="text" id="cypher-openai-key" placeholder="sk-…" />
+      <button onclick="submitCypher()"><div class="spinner"></div><span>Submit Cypher</span></button>
+    </div>
+
+    <!-- Admin panel -->
+    <div id="panel-admin" class="hidden">
+      <h2>Admin tools</h2>
+      <p class="hint" style="color:#dc2626">Danger: wipes Neo4j completely. Disabled by default (<code>ALLOW_DB_RESET=true</code> to enable).</p>
+      <div class="row">
+        <div><label>Role</label><input type="text" id="reset-role" value="admin" /></div>
+        <div><label>User ID</label><input type="text" id="reset-user-id" value="admin_001" /></div>
+      </div>
+      <button class="danger" onclick="resetDb()"><div class="spinner"></div><span>Reset Neo4j DB</span></button>
+      <div id="admin-status" style="margin-top:0.75rem;font-size:0.88rem"></div>
     </div>
   </div>
 
-  <div class="card notice" id="notice-unstructured">
-    <h2>How ingestion works</h2>
-    <ul>
-      <li><strong>Axis 1</strong> (Document Structure): Always built first from the document parser.</li>
-      <li><strong>Page vision</strong> (optional): When <code>ENABLE_PAGE_VISION=true</code>, selected PDF pages are sent to a cheap vision model; tables, charts, diagrams, maps, and shapes are stored as <code>Page.visual_content</code> for retrieval when normal text is missing or incomplete.</li>
-      <li><strong>Visual content</strong> is text in Neo4j (<code>Page.visual_content</code>); the API does not store or serve binary page JPEGs.</li>
-      <li><strong>Axis 2</strong> (Semantic Enrichment): Automatically run when the server has an OpenAI key configured.</li>
-      <li>The result is exported as Neo4j import artifacts in <code>output/ingestion/&lt;job_id&gt;</code> and loaded into Neo4j automatically when configured.</li>
-    </ul>
-  </div>
-
-  <div class="card notice hidden" id="notice-cypher">
-    <h2>How cypher ingestion works</h2>
-    <ul>
-      <li>The server executes your Cypher statements against the configured Neo4j.</li>
-      <li>Enable it with <code>ALLOW_CYPHER_INGEST=true</code>.</li>
-      <li>Use only in trusted environments (this can create/drop data).</li>
-    </ul>
-  </div>
-
+  <!-- Live jobs panel -->
   <div class="card">
-    <h2>Job status</h2>
-    <label>Job ID</label>
-    <input type="text" id="status-job-id" placeholder="Enter job ID" />
-    <button type="button" id="check-status">Check status</button>
-    <div class="status" id="status-output"></div>
-  </div>
-
-  <div class="card notice">
-    <h2>Admin tools</h2>
-    <p><strong>Danger:</strong> This wipes Neo4j completely (nodes, relationships, indexes, constraints). Disabled by default.</p>
-    <label>Role (must be admin)</label>
-    <input type="text" id="reset-role" placeholder="admin" value="admin" />
-    <label>User ID</label>
-    <input type="text" id="reset-user-id" placeholder="admin_001" value="admin_001" />
-    <button type="button" id="reset-db" style="background:#dc2626;">Reset Neo4j DB</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+      <h2 style="margin:0">Active &amp; recent jobs</h2>
+      <div style="display:flex;gap:0.5rem;align-items:center">
+        <label style="margin:0;font-weight:400;font-size:0.85rem">
+          <input type="checkbox" id="auto-refresh" checked onchange="toggleAutoRefresh(this.checked)" />
+          Auto-refresh
+        </label>
+        <button class="secondary" style="margin-top:0;padding:0.35rem 0.75rem;font-size:0.82rem" onclick="loadJobList()">Refresh now</button>
+      </div>
+    </div>
+    <div id="jobs-panel"><p style="color:#64748b;font-size:0.9rem">No jobs yet. Upload a document to get started.</p></div>
   </div>
 
   <script>
-    const tabUnstructured = document.getElementById('tab-unstructured');
-    const tabCypher = document.getElementById('tab-cypher');
-    const unstructuredPanel = document.getElementById('unstructured-panel');
-    const cypherPanel = document.getElementById('cypher-panel');
+    // ── File staging ────────────────────────────────────────────────────────
+    let stagedFiles = [];
 
-    tabUnstructured.addEventListener('click', () => {
-      tabUnstructured.classList.add('active');
-      tabCypher.classList.remove('active');
-      unstructuredPanel.classList.remove('hidden');
-      cypherPanel.classList.add('hidden');
-      document.getElementById('notice-unstructured').classList.remove('hidden');
-      document.getElementById('notice-cypher').classList.add('hidden');
-    });
-    tabCypher.addEventListener('click', () => {
-      tabCypher.classList.add('active');
-      tabUnstructured.classList.remove('active');
-      cypherPanel.classList.remove('hidden');
-      unstructuredPanel.classList.add('hidden');
-      document.getElementById('notice-cypher').classList.remove('hidden');
-      document.getElementById('notice-unstructured').classList.add('hidden');
-    });
-
-    function showStatus(message) {
-      document.getElementById('status-output').innerText = message;
-    }
-
-    function showInlineStatus(elId, message, kind) {
-      const el = document.getElementById(elId);
-      el.className = 'inline-status ' + (kind || 'info');
-      el.textContent = message;
-      el.classList.remove('hidden');
-    }
-
-    function hideInlineStatus(elId) {
-      const el = document.getElementById(elId);
-      el.classList.add('hidden');
-      el.textContent = '';
-    }
-
-    function setButtonLoading(btn, loading, loadingLabel) {
-      if (!btn) return;
-      btn.disabled = loading;
-      btn.classList.toggle('loading', loading);
-      if (loading) {
-        btn.dataset.originalLabel = btn.textContent;
-        btn.textContent = loadingLabel || 'Working…';
-      } else if (btn.dataset.originalLabel) {
-        btn.textContent = btn.dataset.originalLabel;
-      }
-    }
-
-    let pollTimer = null;
-
-    function stopPolling() {
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
-      }
-    }
-
-    async function fetchJobStatus(jobId) {
-      let lastErr;
-      for (let attempt = 0; attempt < 5; attempt++) {
-        try {
-          const res = await fetch('/ingest/jobs/' + encodeURIComponent(jobId), {
-            signal: AbortSignal.timeout(15000),
-          });
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(text || 'Status request failed');
-          }
-          return res.json();
-        } catch (err) {
-          lastErr = err;
-          if (attempt < 4) {
-            await new Promise(r => setTimeout(r, 3000));
-          }
+    function addFiles(fileList) {
+      for (const f of fileList) {
+        if (!stagedFiles.find(x => x.name === f.name && x.size === f.size)) {
+          stagedFiles.push(f);
         }
       }
-      throw new Error(
-        'Cannot reach the server (Failed to fetch). The app may be busy parsing a large PDF, '
-        + 'restarting after running out of memory, or stopped. '
-        + 'Wait 1–2 minutes, refresh the page, then click Check status again. '
-        + `(Job ID: ${jobId})`
-      );
+      renderFileList();
     }
 
-    function isJobInProgress(status) {
-      const st = (status || '').toLowerCase();
-      return st !== 'completed' && st !== 'failed';
+    function removeFile(idx) {
+      stagedFiles.splice(idx, 1);
+      renderFileList();
     }
 
-    async function pollJob(jobId, inlineElId) {
-      stopPolling();
-      document.getElementById('status-job-id').value = jobId;
+    function renderFileList() {
+      const el = document.getElementById('file-list');
+      if (!stagedFiles.length) { el.innerHTML = ''; return; }
+      el.innerHTML = stagedFiles.map((f, i) => `
+        <div class="file-chip">
+          <span class="fname">${esc(f.name)}</span>
+          <span class="fsize">${(f.size/1024/1024).toFixed(2)} MB</span>
+          <span class="remove" onclick="removeFile(${i})" title="Remove">✕</span>
+        </div>`).join('');
+      document.getElementById('submit-label').textContent =
+        stagedFiles.length === 1 ? 'Submit 1 file' : `Submit all ${stagedFiles.length} files`;
+    }
 
+    function handleDrop(ev) {
+      ev.preventDefault();
+      document.getElementById('dropzone').classList.remove('drag-over');
+      const files = ev.dataTransfer.files;
+      addFiles(files);
+    }
+
+    // ── Tab switching ───────────────────────────────────────────────────────
+    function switchTab(name) {
+      ['unstructured','cypher','admin'].forEach(t => {
+        document.getElementById('tab-'+t).classList.toggle('active', t === name);
+        document.getElementById('panel-'+t).classList.toggle('hidden', t !== name);
+      });
+    }
+
+    // ── Submit all staged files concurrently ────────────────────────────────
+    async function submitAll() {
+      if (!stagedFiles.length) { alert('Select at least one PDF file.'); return; }
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true; btn.classList.add('loading');
+      document.getElementById('submit-label').textContent = `Submitting ${stagedFiles.length} file(s)…`;
+
+      const keyPrefix = document.getElementById('doc-key-prefix').value.trim();
+      const jobName   = document.getElementById('job-name').value.trim();
+
+      // Fire all uploads in parallel
+      const uploads = stagedFiles.map((file, i) => {
+        const fd = new FormData();
+        fd.append('file', file);
+        if (jobName)   fd.append('job_name', jobName || file.name);
+        if (keyPrefix) fd.append('doc_key', stagedFiles.length === 1 ? keyPrefix : `${keyPrefix}-${i+1}`);
+        return submitFile(fd, file.name);
+      });
+
+      await Promise.allSettled(uploads);
+
+      // Reset
+      stagedFiles = [];
+      renderFileList();
+      btn.disabled = false; btn.classList.remove('loading');
+      document.getElementById('submit-label').textContent = 'Submit all';
+      document.getElementById('file-picker').value = '';
+      await loadJobList();
+    }
+
+    async function submitFile(formData, filename) {
+      const tempId = 'pending-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      upsertJobCard({ job_id: tempId, _filename: filename, status: 'uploading', dispatch: null, logs: [] });
+
+      try {
+        const res = await fetch('/ingest/unstructured', { method: 'POST', body: formData });
+        if (!res.ok) {
+          const t = await res.text();
+          let msg = t; try { msg = JSON.parse(t).detail || t; } catch(_) {}
+          upsertJobCard({ job_id: tempId, _filename: filename, status: 'failed', error: msg, logs: [] });
+          return;
+        }
+        const data = await res.json();
+        // Replace temp card with real job id
+        removeJobCard(tempId);
+        upsertJobCard({ ...data, _filename: filename, status: data.status, logs: [] });
+        // Start polling this job
+        pollJob(data.job_id, filename);
+      } catch(err) {
+        upsertJobCard({ job_id: tempId, _filename: filename, status: 'failed', error: err.message, logs: [] });
+      }
+    }
+
+    // ── Cypher submit ───────────────────────────────────────────────────────
+    async function submitCypher() {
+      const file = document.getElementById('cypher-file').files[0];
+      if (!file) { alert('Select a Cypher file.'); return; }
+      const fd = new FormData();
+      fd.append('file', file);
+      const jn = document.getElementById('cypher-job-name').value;
+      const role = document.getElementById('cypher-role').value;
+      const uid = document.getElementById('cypher-user-id').value;
+      const key = document.getElementById('cypher-openai-key').value;
+      if (jn) fd.append('job_name', jn);
+      if (role) fd.append('role', role);
+      if (uid) fd.append('user_id', uid);
+      if (key) fd.append('openai_key', key);
+
+      try {
+        const res = await fetch('/ingest/cypher', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) { alert('Error: ' + (data.detail || JSON.stringify(data))); return; }
+        upsertJobCard({ ...data, _filename: file.name, logs: [] });
+        pollJob(data.job_id, file.name);
+        loadJobList();
+      } catch(err) { alert('Error: ' + err.message); }
+    }
+
+    // ── Job polling ─────────────────────────────────────────────────────────
+    const activePolls = new Map(); // job_id → intervalId
+
+    function pollJob(jobId, filename) {
+      if (activePolls.has(jobId)) clearInterval(activePolls.get(jobId));
       const tick = async () => {
         try {
-          const payload = await fetchJobStatus(jobId);
-          const text = formatJobStatus(payload);
-          showStatus(text);
-
-          const st = (payload.status || '').toLowerCase();
-          if (isJobInProgress(st)) {
-            showInlineStatus(
-              inlineElId,
-              `Job ${jobId.slice(0, 8)}… — ${payload.status.toUpperCase()}. Large PDFs can take 10–30+ minutes. Keep this tab open.`,
-              'running'
-            );
-            return;
+          const res = await fetch('/ingest/jobs/' + encodeURIComponent(jobId));
+          if (!res.ok) return;
+          const data = await res.json();
+          data._filename = filename;
+          upsertJobCard(data);
+          const st = (data.status||'').toLowerCase();
+          if (st === 'completed' || st === 'failed') {
+            clearInterval(activePolls.get(jobId));
+            activePolls.delete(jobId);
           }
-
-          stopPolling();
-          if (st === 'completed') {
-            showInlineStatus(inlineElId, `Done. Job ${jobId} completed successfully.`, 'success');
-          } else if (st === 'failed') {
-            showInlineStatus(inlineElId, `Failed: ${payload.error || 'See logs below.'}`, 'error');
-          } else {
-            showInlineStatus(inlineElId, `Job finished with status: ${payload.status}`, 'info');
-          }
-        } catch (err) {
-          showInlineStatus(inlineElId, err.message, 'error');
-          showStatus(err.message);
-          // Keep polling — server may come back after heavy parse or restart
-        }
+        } catch(_) {}
       };
-
-      await tick();
-      pollTimer = setInterval(tick, 2500);
+      tick();
+      activePolls.set(jobId, setInterval(tick, 2500));
     }
 
-    document.getElementById('unstructured-file').addEventListener('change', (e) => {
-      const hint = document.getElementById('unstructured-file-hint');
-      const f = e.target.files && e.target.files[0];
-      hint.textContent = f
-        ? `Selected: ${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`
-        : 'No file selected';
-    });
+    // ── Job card rendering ──────────────────────────────────────────────────
+    const jobData = new Map(); // job_id → data
+    const jobOrder = [];       // insertion order
 
-    function formatJobStatus(payload) {
-      const lines = [
-        `Job ID: ${payload.job_id}`,
-        `Type: ${payload.job_type}`,
-        `Status: ${payload.status}`,
-        `Created: ${payload.created_at}`,
-      ];
-
-      if (payload.started_at) lines.push(`Started: ${payload.started_at}`);
-      if (payload.finished_at) lines.push(`Finished: ${payload.finished_at}`);
-      if (payload.output_dir) lines.push(`Output directory: ${payload.output_dir}`);
-      if (payload.neo4j_load_status) lines.push(`Neo4j load: ${payload.neo4j_load_status}`);
-      if (payload.neo4j_load_message) lines.push(`Neo4j message: ${payload.neo4j_load_message}`);
-      if (payload.error) lines.push(`Error: ${payload.error}`);
-      if (payload.logs && payload.logs.length) {
-        lines.push('Logs:');
-        payload.logs.forEach(log => lines.push(`- ${log}`));
-      }
-
-      return lines.join('\n');
+    function removeJobCard(id) {
+      jobData.delete(id);
+      const idx = jobOrder.indexOf(id);
+      if (idx > -1) jobOrder.splice(idx, 1);
+      const el = document.getElementById('jcard-' + id);
+      if (el) el.remove();
     }
 
-    async function postForm(url, formData) {
-      const res = await fetch(url, { method: 'POST', body: formData });
-      if (!res.ok) {
-        let detail = await res.text();
-        try {
-          const j = JSON.parse(detail);
-          detail = j.detail || detail;
-        } catch (_) { /* plain text */ }
-        throw new Error(detail || 'Request failed');
-      }
-      return res.json();
+    function upsertJobCard(data) {
+      const id = data.job_id;
+      const isNew = !jobData.has(id);
+      jobData.set(id, data);
+      if (isNew) jobOrder.unshift(id);
+      renderJobCard(id, data);
     }
 
-    document.getElementById('submit-unstructured').addEventListener('click', async () => {
-      const btn = document.getElementById('submit-unstructured');
-      const fileElement = document.getElementById('unstructured-file');
-      const jobName = document.getElementById('unstructured-job-name').value;
+    function statusBadge(status, skipped) {
+      if (skipped) return '<span class="badge badge-skipped">SKIPPED (dup)</span>';
+      const s = (status||'').toLowerCase();
+      const map = {
+        queued: 'badge-queued', uploading: 'badge-running',
+        validating: 'badge-running', parsing: 'badge-running',
+        building_structure: 'badge-running', semantic_enrichment: 'badge-running',
+        vision_enrichment: 'badge-running', exporting: 'badge-running',
+        completed: 'badge-completed', failed: 'badge-failed',
+      };
+      const cls = map[s] || 'badge-running';
+      return `<span class="badge ${cls}">${(status||'').toUpperCase()}</span>`;
+    }
 
-      if (!fileElement.files.length) {
-        showInlineStatus('unstructured-inline-status', 'Please select a file first.', 'error');
-        return;
+    function dispatchBadge(dispatch) {
+      if (!dispatch) return '';
+      if (dispatch === 'worker') return '<span class="badge badge-worker">WORKER</span>';
+      return '<span class="badge badge-bg">IN-PROCESS</span>';
+    }
+
+    function renderJobCard(id, data) {
+      const panel = document.getElementById('jobs-panel');
+      // Clear "no jobs" placeholder
+      if (panel.querySelector('p')) panel.innerHTML = '';
+
+      const safeId = CSS.escape('jcard-' + id);
+      let card = document.getElementById('jcard-' + id);
+      if (!card) {
+        card = document.createElement('div');
+        card.className = 'job-card';
+        card.id = 'jcard-' + id;
+        panel.prepend(card);
       }
 
-      stopPolling();
-      setButtonLoading(btn, true, 'Uploading…');
-      showInlineStatus(
-        'unstructured-inline-status',
-        `Uploading ${fileElement.files[0].name}…`,
-        'running'
-      );
-      showStatus('Submitting unstructured ingestion…');
+      const name = data._filename || data.name || id.slice(0, 12) + '…';
+      const logs = (data.logs || []).slice(-8).join('\n');
+      const logsId = 'logs-' + id;
+      const logsVisible = card.querySelector('.job-logs')?.style.display !== 'none';
 
-      const formData = new FormData();
-      formData.append('file', fileElement.files[0]);
-      if (jobName) formData.append('job_name', jobName);
+      card.innerHTML = `
+        <div class="job-card-header">
+          <span class="jname" title="${esc(id)}">${esc(name)}</span>
+          ${statusBadge(data.status, data.skipped_duplicate)}
+          ${dispatchBadge(data.dispatch)}
+        </div>
+        <div class="job-meta">
+          ${data.logical_doc_id ? `<span>📄 ${esc(data.logical_doc_id)}</span>` : ''}
+          ${data.version_number  ? `<span>v${data.version_number}</span>` : ''}
+          ${data.revision_id     ? `<span>rev ${esc(data.revision_id.slice(0,8))}…</span>` : ''}
+          ${data.created_at      ? `<span>${new Date(data.created_at).toLocaleTimeString()}</span>` : ''}
+        </div>
+        ${data.error ? `<div style="color:#dc2626;font-size:0.85rem;margin-bottom:0.35rem">⚠ ${esc(data.error)}</div>` : ''}
+        ${logs ? `
+          <div class="job-logs-toggle" onclick="toggleLogs('${id}')">
+            ${logsVisible ? '▾' : '▸'} Logs (${(data.logs||[]).length})
+          </div>
+          <div class="job-logs" id="${logsId}" style="display:${logsVisible ? 'block' : 'none'}">${esc(logs)}</div>
+        ` : ''}
+      `;
+    }
 
+    function toggleLogs(id) {
+      const el = document.getElementById('logs-' + id);
+      if (!el) return;
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    }
+
+    // ── Job list (GET /ingest/jobs) ─────────────────────────────────────────
+    async function loadJobList() {
       try {
-        const result = await postForm('/ingest/unstructured', formData);
-        document.getElementById('status-job-id').value = result.job_id;
-        showInlineStatus(
-          'unstructured-inline-status',
-          `Upload received. Job ID: ${result.job_id}. Processing…`,
-          'running'
-        );
-        showStatus('Job submitted.\nJob ID: ' + result.job_id + '\nStatus: ' + result.status);
-        await pollJob(result.job_id, 'unstructured-inline-status');
-      } catch (err) {
-        showInlineStatus('unstructured-inline-status', 'Error: ' + err.message, 'error');
-        showStatus('Error: ' + err.message);
-      } finally {
-        setButtonLoading(btn, false);
-      }
-    });
+        const res = await fetch('/ingest/jobs?limit=20');
+        if (!res.ok) return;
+        const jobs = await res.json();
+        for (const j of jobs) {
+          if (!jobData.has(j.job_id)) {
+            upsertJobCard({ ...j, _filename: j.name || j.logical_doc_id || j.job_id });
+            // Resume polling for in-progress jobs
+            const st = (j.status||'').toLowerCase();
+            if (st !== 'completed' && st !== 'failed' && !activePolls.has(j.job_id)) {
+              pollJob(j.job_id, j.name || j.logical_doc_id || j.job_id);
+            }
+          }
+        }
+      } catch(_) {}
+    }
 
-    document.getElementById('submit-cypher').addEventListener('click', async () => {
-      const btn = document.getElementById('submit-cypher');
-      const fileElement = document.getElementById('cypher-file');
-      const jobName = document.getElementById('cypher-job-name').value;
-      const role = document.getElementById('cypher-role').value;
-      const userId = document.getElementById('cypher-user-id').value;
-      const openaiKey = document.getElementById('cypher-openai-key').value;
-
-      if (!fileElement.files.length) {
-        showInlineStatus('cypher-inline-status', 'Please select a Cypher file first.', 'error');
-        return;
-      }
-
-      stopPolling();
-      setButtonLoading(btn, true, 'Uploading…');
-      showInlineStatus('cypher-inline-status', 'Uploading Cypher file…', 'running');
-
-      const formData = new FormData();
-      formData.append('file', fileElement.files[0]);
-      if (jobName) formData.append('job_name', jobName);
-      if (role) formData.append('role', role);
-      if (userId) formData.append('user_id', userId);
-      if (openaiKey) formData.append('openai_key', openaiKey);
-
+    // ── Queue status bar ────────────────────────────────────────────────────
+    async function refreshQueueStatus() {
       try {
-        showStatus('Submitting cypher ingestion…');
-        const result = await postForm('/ingest/cypher', formData);
-        showInlineStatus(
-          'cypher-inline-status',
-          `Job submitted: ${result.job_id}. Processing…`,
-          'running'
-        );
-        showStatus('Job submitted. Job ID: ' + result.job_id + '\nStatus: ' + result.status);
-        await pollJob(result.job_id, 'cypher-inline-status');
-      } catch (err) {
-        showInlineStatus('cypher-inline-status', 'Error: ' + err.message, 'error');
-        showStatus('Error: ' + err.message);
-      } finally {
-        setButtonLoading(btn, false);
+        const res = await fetch('/ingest/queue/status');
+        const data = await res.json();
+        const dot = document.getElementById('redis-dot');
+        const label = document.getElementById('redis-label');
+        if (data.redis_configured) {
+          dot.classList.add('green'); dot.classList.remove('red');
+          label.textContent = 'Redis connected';
+        } else {
+          dot.classList.remove('green'); dot.classList.add('red');
+          label.textContent = 'In-process mode (no Redis)';
+        }
+        document.getElementById('queue-depth').textContent =
+          data.queue_depth !== null ? data.queue_depth : '—';
+        document.getElementById('failed-count').textContent =
+          Array.isArray(data.failed_jobs) ? data.failed_jobs.length : '—';
+      } catch(_) {
+        document.getElementById('redis-label').textContent = 'Status unavailable';
       }
-    });
+    }
 
-    document.getElementById('check-status').addEventListener('click', async () => {
-      const btn = document.getElementById('check-status');
-      const jobId = document.getElementById('status-job-id').value.trim();
-      if (!jobId) return showStatus('Enter a job ID to query.');
-      setButtonLoading(btn, true, 'Checking…');
+    // ── Auto-refresh ────────────────────────────────────────────────────────
+    let listRefreshTimer = null;
+
+    function toggleAutoRefresh(on) {
+      if (listRefreshTimer) clearInterval(listRefreshTimer);
+      if (on) {
+        listRefreshTimer = setInterval(() => {
+          loadJobList();
+          refreshQueueStatus();
+        }, 5000);
+      }
+    }
+
+    // ── Admin ───────────────────────────────────────────────────────────────
+    async function resetDb() {
+      if (!confirm('WIPE Neo4j completely — are you sure?')) return;
+      const fd = new FormData();
+      fd.append('role', document.getElementById('reset-role').value);
+      fd.append('user_id', document.getElementById('reset-user-id').value);
       try {
-        showStatus('Checking status…');
-        const payload = await fetchJobStatus(jobId);
-        showStatus(formatJobStatus(payload));
-      } catch (err) {
-        showStatus('Error: ' + err.message);
-      } finally {
-        setButtonLoading(btn, false);
+        const res = await fetch('/admin/reset-neo4j', { method: 'POST', body: fd });
+        const data = await res.json();
+        document.getElementById('admin-status').textContent =
+          res.ok ? '✅ ' + data.message : '❌ ' + (data.detail || JSON.stringify(data));
+      } catch(err) {
+        document.getElementById('admin-status').textContent = '❌ ' + err.message;
       }
-    });
+    }
 
-    document.getElementById('reset-db').addEventListener('click', async () => {
-      const btn = document.getElementById('reset-db');
-      const role = document.getElementById('reset-role').value;
-      const userId = document.getElementById('reset-user-id').value;
-      const confirmed = confirm('This will WIPE Neo4j completely. Are you sure?');
-      if (!confirmed) return;
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    function esc(str) {
+      return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
 
-      const formData = new FormData();
-      if (role) formData.append('role', role);
-      if (userId) formData.append('user_id', userId);
-
-      try {
-        setButtonLoading(btn, true, 'Resetting…');
-        showStatus('Resetting Neo4j…');
-        const result = await postForm('/admin/reset-neo4j', formData);
-        showStatus('Reset complete.\n' + JSON.stringify(result, null, 2));
-      } catch (err) {
-        showStatus('Error: ' + err.message);
-      } finally {
-        setButtonLoading(btn, false);
-      }
-    });
+    // ── Init ─────────────────────────────────────────────────────────────────
+    refreshQueueStatus();
+    loadJobList();
+    toggleAutoRefresh(true);
   </script>
 </body>
 </html>

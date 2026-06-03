@@ -126,6 +126,10 @@ class IngestionJobSummary(BaseModel):
     created_at: str
     name: Optional[str]
     logical_doc_id: Optional[str]
+    revision_id: Optional[str] = None
+    version_number: Optional[int] = None
+    skipped_duplicate: bool = False
+    error: Optional[str] = None
 
 
 class QueryRequest(BaseModel):
@@ -298,6 +302,10 @@ async def list_ingestion_jobs(limit: int = 50):
                 created_at=job.created_at.isoformat() + "Z",
                 name=job.name,
                 logical_doc_id=job.logical_doc_id,
+                revision_id=job.revision_id,
+                version_number=job.version_number,
+                skipped_duplicate=bool(job.skipped_duplicate),
+                error=job.error,
             )
         )
     return summaries
