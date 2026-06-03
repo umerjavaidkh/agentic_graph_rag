@@ -1,22 +1,25 @@
 import numpy as np
-from neo4j import GraphDatabase
 from openai import OpenAI
 
-from ..config.settings import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, OPENAI_API_KEY
+from ..config.settings import (
+    EMBEDDING_MODEL,
+    OPENAI_API_KEY,
+)
+from ..graph.driver import get_neo4j_driver
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 def get_embedding(text: str) -> list[float]:
     """Generate OpenAI embedding for text."""
     response = client.embeddings.create(
-        model="text-embedding-3-small",
+        model=EMBEDDING_MODEL,
         input=text[:8000]  # OpenAI limit
     )
     return response.data[0].embedding
 
 def embed_all_sections():
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-    
+    driver = get_neo4j_driver()
+
     with driver.session() as session:
         # Get all sections
         result = session.run("MATCH (s:Section) RETURN s.id AS id, s.text AS text")
@@ -33,7 +36,6 @@ def embed_all_sections():
             """, id=sec['id'], embedding=embedding)  # ← pass list directly, not str()
             print(f"  ✓ {sec['id']}")
     
-    driver.close()
     print("Done! All sections have embeddings.")
 
 if __name__ == "__main__":

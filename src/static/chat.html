@@ -409,6 +409,20 @@
     table.pres-table.interactive th:hover{ background: rgba(59,130,246,0.2); }
     table.pres-table.interactive tbody tr:hover{ background: rgba(255,255,255,0.04); }
     table.pres-table tr.row-highlight{ background: var(--accent-soft); }
+    .pres-chart-canvas-wrap{
+      position: relative;
+      margin: 10px 0;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: rgba(0,0,0,0.2);
+      max-height: 320px;
+    }
+    .pres-chart-canvas-wrap canvas{
+      display: block;
+      width: 100% !important;
+      max-height: 280px;
+    }
     .pres-chart{
       display: flex;
       align-items: flex-end;
@@ -663,6 +677,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
   <script>
     const chatBody = document.getElementById('chat_body');
     const q = document.getElementById('q');
@@ -831,6 +846,125 @@
       });
     }
 
+    const CHART_PALETTE = [
+      'hsla(210, 70%, 58%, 0.85)',
+      'hsla(168, 65%, 52%, 0.85)',
+      'hsla(132, 60%, 50%, 0.85)',
+      'hsla(95, 58%, 48%, 0.85)',
+      'hsla(48, 70%, 55%, 0.85)',
+      'hsla(280, 55%, 62%, 0.85)',
+      'hsla(320, 60%, 58%, 0.85)',
+      'hsla(12, 72%, 58%, 0.85)',
+    ];
+
+    function renderChartBarsLegacy(block, wrap, vals, labels) {
+      const chart = document.createElement('div');
+      chart.className = 'pres-chart';
+      const max = Math.max(...vals, 1);
+      const trackInnerPx = 88;
+      const barHues = [210, 168, 132, 95, 48, 280, 320];
+      vals.forEach((v, i) => {
+        const col = document.createElement('div');
+        col.className = 'pres-bar-col';
+        const valEl = document.createElement('div');
+        valEl.className = 'pres-bar-value';
+        valEl.textContent = formatChartValue(v, block);
+        const track = document.createElement('div');
+        track.className = 'pres-bar-track';
+        const bar = document.createElement('div');
+        bar.className = 'pres-bar';
+        const px = Math.max(3, Math.round((v / max) * trackInnerPx));
+        bar.style.height = px + 'px';
+        const hue = barHues[i % barHues.length];
+        bar.style.background = `linear-gradient(180deg, hsl(${hue} 70% 58%), hsl(${hue} 65% 42%))`;
+        bar.title = (labels[i] || '') + ': ' + formatChartValue(v, block);
+        track.appendChild(bar);
+        const lbl = document.createElement('div');
+        lbl.className = 'pres-bar-label';
+        lbl.textContent = labels[i] || '';
+        col.appendChild(valEl);
+        col.appendChild(track);
+        col.appendChild(lbl);
+        chart.appendChild(col);
+      });
+      wrap.appendChild(chart);
+    }
+
+    function renderChartJs(canvas, block, chartType, vals, labels) {
+      const ctype = (chartType || 'bar').toLowerCase();
+      const isHorizontal = ctype === 'bar-horizontal';
+      const isPie = ctype === 'pie' || ctype === 'doughnut';
+      const isLine = ctype === 'line';
+      const jsType = isHorizontal ? 'bar' : (isPie ? (ctype === 'doughnut' ? 'doughnut' : 'pie') : (isLine ? 'line' : 'bar'));
+
+      const bg = CHART_PALETTE.slice(0, vals.length);
+      const border = bg.map(c => c.replace('0.85', '1'));
+
+      const dataset = {
+        label: block.title || block.valueKey || 'Value',
+        data: vals,
+        backgroundColor: isLine ? 'hsla(210, 70%, 58%, 0.25)' : bg,
+        borderColor: isLine ? 'hsla(210, 70%, 58%, 1)' : border,
+        borderWidth: isLine ? 2 : 1,
+        fill: isLine,
+        tension: 0.25,
+      };
+
+      const options = {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: {
+            display: isPie,
+            position: 'bottom',
+            labels: { color: '#94a3b8', boxWidth: 12, padding: 10 },
+          },
+          tooltip: {
+            callbacks: {
+              label(ctx) {
+                let val = ctx.raw;
+                if (typeof ctx.parsed === 'number') val = ctx.parsed;
+                else if (ctx.parsed && typeof ctx.parsed.y === 'number') val = ctx.parsed.y;
+                return (ctx.label || '') + ': ' + formatChartValue(val, block);
+              },
+            },
+          },
+        },
+        scales: {},
+      };
+
+      if (!isPie) {
+        options.scales = {
+          x: {
+            ticks: { color: '#94a3b8', maxRotation: 45, minRotation: 0 },
+            grid: { color: 'rgba(255,255,255,0.06)' },
+          },
+          y: {
+            ticks: {
+              color: '#94a3b8',
+              callback: (v) => formatChartValue(v, block),
+            },
+            grid: { color: 'rgba(255,255,255,0.06)' },
+            beginAtZero: true,
+          },
+        };
+        if (isHorizontal) {
+          options.indexAxis = 'y';
+        }
+      } else {
+        options.scales = { x: { display: false }, y: { display: false } };
+        if (ctype === 'doughnut') {
+          options.cutout = '58%';
+        }
+      }
+
+      canvas.chartInstance = new Chart(canvas, {
+        type: jsType,
+        data: { labels, datasets: [dataset] },
+        options,
+      });
+    }
+
     const BLOCK_RENDERERS = {
       image(block, container) {
         const wrap = document.createElement('div');
@@ -914,51 +1048,33 @@
       chart(block, container) {
         const wrap = document.createElement('div');
         wrap.className = 'pres-block';
+        wrap.dataset.chartType = (block.chartType || 'bar').toLowerCase();
         if (block.title) {
           const t = document.createElement('div');
           t.className = 'pres-caption';
           t.textContent = block.title;
           wrap.appendChild(t);
         }
-        const chart = document.createElement('div');
-        chart.className = 'pres-chart';
         const vals = (block.values || []).map(v => Number(v)).filter(v => !Number.isNaN(v));
         const labels = block.labels || vals.map((_, i) => String(i + 1));
         if (vals.length < 2) return;
 
-        const max = Math.max(...vals, 1);
-        const trackInnerPx = 88;
-        const barHues = [210, 168, 132, 95, 48, 280, 320];
-
-        vals.forEach((v, i) => {
-          const col = document.createElement('div');
-          col.className = 'pres-bar-col';
-
-          const valEl = document.createElement('div');
-          valEl.className = 'pres-bar-value';
-          valEl.textContent = formatChartValue(v, block);
-
-          const track = document.createElement('div');
-          track.className = 'pres-bar-track';
-          const bar = document.createElement('div');
-          bar.className = 'pres-bar';
-          const px = Math.max(3, Math.round((v / max) * trackInnerPx));
-          bar.style.height = px + 'px';
-          const hue = barHues[i % barHues.length];
-          bar.style.background = `linear-gradient(180deg, hsl(${hue} 70% 58%), hsl(${hue} 65% 42%))`;
-          bar.title = (labels[i] || '') + ': ' + formatChartValue(v, block);
-          track.appendChild(bar);
-
-          const lbl = document.createElement('div');
-          lbl.className = 'pres-bar-label';
-          lbl.textContent = labels[i] || '';
-
-          col.appendChild(valEl);
-          col.appendChild(track);
-          col.appendChild(lbl);
-          chart.appendChild(col);
-        });
-        wrap.appendChild(chart);
+        const chartType = (block.chartType || 'bar').toLowerCase();
+        if (typeof Chart !== 'undefined') {
+          const canvasWrap = document.createElement('div');
+          canvasWrap.className = 'pres-chart-canvas-wrap';
+          const canvas = document.createElement('canvas');
+          canvasWrap.appendChild(canvas);
+          wrap.appendChild(canvasWrap);
+          try {
+            renderChartJs(canvas, block, chartType, vals, labels);
+          } catch (err) {
+            console.warn('Chart.js render failed, using bars', err);
+            renderChartBarsLegacy(block, wrap, vals, labels);
+          }
+        } else {
+          renderChartBarsLegacy(block, wrap, vals, labels);
+        }
         container.appendChild(wrap);
       },
       markdown(block, container) {

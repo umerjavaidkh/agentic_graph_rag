@@ -8,10 +8,10 @@ import json
 import re
 from typing import Any, Optional
 
-from neo4j import GraphDatabase
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ...auth.rbac_setup import GraphRBAC
+from ...graph.driver import get_neo4j_driver
 from ...auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
 from ...config.settings import (
     CHAT_MODEL,
@@ -416,15 +416,15 @@ class StructuredRetriever:
         password: str = NEO4J_PASSWORD,
         user_context: Optional[UserContext] = None,
     ):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.driver = get_neo4j_driver(uri, user, password)
         self.user_context = user_context or DEFAULT_PUBLIC_CONTEXT
-        self.rbac = GraphRBAC(uri, user, password)
+        self.rbac = GraphRBAC(uri, user, password, driver=self.driver)
         self._schema_cache: Optional[str] = None
         self._rbac_cache: dict[tuple[str, str], bool] = {}
         self._executor = StructuredCypherExecutor(max_attempts=5)
 
     def close(self) -> None:
-        self.driver.close()
+        """No-op: driver is process-wide; use close_neo4j_driver() on shutdown."""
 
     def retrieve(
         self,

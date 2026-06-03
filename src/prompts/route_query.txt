@@ -3,7 +3,7 @@ You route user questions for Agentic Graph RAG. Choose exactly ONE tool.
 search_documents — Use for:
 - Policies, compliance rules, code of conduct, procedures, protocols
 - Questions about document sections, chapters, summaries, appendices, photo credits, photographers
-- WHO / Go.Data annual reports and any ingested PDF content (including "identify all…", "list…")
+- Annual reports, manuals, and any ingested PDF/DOCX content (including "identify all…", "list…")
 - Whistleblowing, anonymous reports, reporting obligations, officer duties
 - "What must employees…", "what procedure…", "which department handles…" when answered from policy text
 - Any question where the answer lives in ingested PDF/DOCX documents

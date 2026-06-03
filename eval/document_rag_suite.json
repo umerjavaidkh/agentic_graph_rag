@@ -1,0 +1,284 @@
+{
+  "suite": "godata_document_rag_v1",
+  "description": "Twenty curated document-RAG questions (written for a WHO Go.Data annual report fixture). Keyword and routing expectations live here only — not in application code.",
+  "eval_only_keywords": true,
+  "prerequisites": [
+    "Ingest your Go.Data (or equivalent) annual report PDF via unstructured pipeline.",
+    "App reachable at EVAL_BASE_URL (default http://localhost:8000).",
+    "Chat user public_001 (or role public) for document access."
+  ],
+  "default_user_id": "public_001",
+  "default_role": "public",
+  "cases": [
+    {
+      "id": "godata_a01",
+      "category": "A",
+      "tier": "lookup",
+      "question": "What is the electronic version ISBN of the Go.Data annual report 2021?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 8,
+        "any_of_keywords": [["978"], ["ISBN"], ["isbn"]]
+      },
+      "notes": "Direct attribute / front-matter fact."
+    },
+    {
+      "id": "godata_a05",
+      "category": "A",
+      "tier": "lookup",
+      "question": "Under what specific Creative Commons license is the Go.Data annual report 2021 available?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 10,
+        "any_of_keywords": [["CC BY-NC-SA"], ["BY-NC-SA"], ["Creative Commons"], ["creativecommons"], ["NC-SA"]]
+      },
+      "notes": "License string in copyright section."
+    },
+    {
+      "id": "godata_a08",
+      "category": "A",
+      "tier": "lookup",
+      "question": "What is the full name of the abbreviation AFENET?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 12,
+        "any_of_keywords": [["African Field Epidemiology"], ["AFENET"]]
+      },
+      "notes": "Abbreviation expansion."
+    },
+    {
+      "id": "godata_b01",
+      "category": "B",
+      "tier": "single_hop",
+      "question": "Which international network collaborated with the World Health Organization to develop Go.Data?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 10,
+        "any_of_keywords": [["GOARN"], ["Global Outbreak"], ["Outbreak Alert"]]
+      },
+      "notes": "WHO–GOARN development relationship."
+    },
+    {
+      "id": "godata_b10",
+      "category": "B",
+      "tier": "single_hop",
+      "question": "Into which four languages has the OpenWHO Go.Data online training course been translated?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 15,
+        "any_of_keywords": [["English"], ["Mongolian"], ["Spanish"], ["Ukrainian"]],
+        "min_keyword_groups": 3
+      },
+      "notes": "Section 2.3.1 OpenWHO languages."
+    },
+    {
+      "id": "godata_c02",
+      "category": "C",
+      "tier": "multi_hop",
+      "question": "Identify the field epidemiology training network whose fellow was deployed to Lesbos, Greece, to support emergency operations in the Kara Tepe Camp.",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 10,
+        "any_of_keywords": [["EPIET"], ["TEPHINET"], ["Lesbos"], ["Kara Tepe"], ["field epidemiology"]]
+      },
+      "notes": "2-hop: network → fellow → Lesbos / Kara Tepe."
+    },
+    {
+      "id": "godata_c09",
+      "category": "C",
+      "tier": "multi_hop",
+      "question": "Identify the network that deployed alumni and fellows to Greece, Malta, Moldova, and Kosovo to support Go.Data implementations.",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 10,
+        "any_of_keywords": [["TEPHINET"], ["EPIET"], ["FETP"], ["field epidemiology"]]
+      },
+      "notes": "Multi-country deployment via training network."
+    },
+    {
+      "id": "godata_d03",
+      "category": "D",
+      "tier": "temporal",
+      "question": "Which deployment of Go.Data occurred first: the one in Cox's Bazar, Bangladesh, or the one in Kasese, Uganda?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 12,
+        "any_of_keywords": [["Cox"], ["Kasese"], ["Bangladesh"], ["Uganda"], ["first"]],
+        "min_keyword_groups": 2
+      },
+      "notes": "Temporal ordering between two field stories."
+    },
+    {
+      "id": "godata_d05",
+      "category": "D",
+      "tier": "temporal",
+      "question": "What major global health event in 2020 rapidly shifted the project focus of Go.Data from its 2019 design configuration toward immediate country implementation support?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 10,
+        "any_of_keywords": [["COVID"], ["pandemic"], ["coronavirus"], ["SARS"], ["2020"]]
+      },
+      "notes": "COVID-19 pivot narrative."
+    },
+    {
+      "id": "godata_d07",
+      "category": "D",
+      "tier": "temporal",
+      "question": "What platform holds short 3–10-minute how-to tutorials available in Arabic, English, French, and Spanish?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 8,
+        "any_of_keywords": [["OpenWHO"], ["openwho"], ["how-to"], ["tutorial"], ["Open WHO"]]
+      },
+      "notes": "Platform + language bundle."
+    },
+    {
+      "id": "godata_e01",
+      "category": "E",
+      "tier": "aggregation",
+      "question": "How many total countries and territories were supported by WHO and GOARN partners for Go.Data projects during 2020–2021?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["65"], ["sixty-five"], ["sixty five"], ["countries"], ["territor"]]
+      },
+      "notes": "Global count; full country list may be in annex only."
+    },
+    {
+      "id": "godata_e03",
+      "category": "E",
+      "tier": "aggregation",
+      "question": "List all distinct international, regional, and national field epidemiology networks explicitly mentioned as partners or collaborators in the document.",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 40,
+        "any_of_keywords": [["TEPHINET"], ["AFENET"], ["EPIET"], ["MediPIET"], ["FETP"]],
+        "min_keyword_groups": 2
+      },
+      "notes": "Long list answer; keyword hints are partial."
+    },
+    {
+      "id": "godata_f01",
+      "category": "F",
+      "tier": "compare",
+      "question": "Contrast the operational capabilities and underlying technologies of proximity tracing tools versus the Go.Data outbreak response platform as categorized by WHO.",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 80,
+        "any_of_keywords": [["proximity"], ["Go.Data"], ["contact tracing"], ["Bluetooth"], ["GPS"], ["bluetooth"]],
+        "min_keyword_groups": 2
+      },
+      "notes": "Comparative synthesis across categories."
+    },
+    {
+      "id": "godata_f05",
+      "category": "F",
+      "tier": "compare",
+      "question": "What structural changes did the Go.Data implementation roadmap undergo moving from its reactive phase in 2020–2021 to its planned proactive strategy in 2022?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 60,
+        "any_of_keywords": [["2022"], ["2020"], ["roadmap"], ["proactive"], ["reactive"]],
+        "min_keyword_groups": 2
+      },
+      "notes": "Roadmap phase transition."
+    },
+    {
+      "id": "godata_g04",
+      "category": "G",
+      "tier": "synthesis",
+      "question": "Trace the historical timeline of Go.Data from its conceptualization workshop in October 2016 to its global implementation footprints at the end of December 2021.",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 100,
+        "any_of_keywords": [["2016"], ["2021"], ["October"], ["December"], ["workshop"]],
+        "min_keyword_groups": 3
+      },
+      "notes": "Long narrative timeline."
+    },
+    {
+      "id": "godata_g05",
+      "category": "G",
+      "tier": "synthesis",
+      "question": "How do field epidemiology training networks like TEPHINET, AFENET, and MediPIET act as conduits for embedding Go.Data into national health infrastructures?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 80,
+        "any_of_keywords": [["TEPHINET"], ["AFENET"], ["MediPIET"], ["national"], ["fellow"]],
+        "min_keyword_groups": 2
+      },
+      "notes": "Network conduit synthesis."
+    },
+    {
+      "id": "godata_h03",
+      "category": "H",
+      "tier": "inference",
+      "question": "Identify the common underlying networks or training programs that connect the personnel deployed to support Go.Data rollouts in Malta, Moldova, Greece, and Kosovo.",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["TEPHINET"], ["EPIET"], ["FETP"], ["field epidemiology"]]
+      },
+      "notes": "Shared network across four countries."
+    },
+    {
+      "id": "godata_i01",
+      "category": "I",
+      "tier": "anti_hallucination",
+      "question": "Which software engineering firm in Silicon Valley was contracted by the WHO to write the underlying source code for the Go.Data iOS application?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 15,
+        "anti_hallucination": true,
+        "none_of_keywords": ["Silicon Valley", "Cupertino", "contracted by WHO to write", "Apple Inc", "Google LLC"]
+      },
+      "notes": "Entity not in report; must hedge or deny, not invent a vendor."
+    },
+    {
+      "id": "godata_i08",
+      "category": "I",
+      "tier": "anti_hallucination",
+      "question": "List the names of all 65 countries and territories where Go.Data projects were deployed during 2020–2021 based on the main body text.",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 20,
+        "anti_hallucination": true,
+        "any_of_keywords": [["annex"], ["not list"], ["cannot list"], ["main body"], ["not provided"], ["not included"], ["65"], ["territor"]]
+      },
+      "notes": "Full list likely only in annex; answer should not fabricate 65 names."
+    },
+    {
+      "id": "godata_j01",
+      "category": "J",
+      "tier": "semantic_alias",
+      "question": "Tell me how disease detectives interact with the OpenWHO knowledge-transfer platform according to the section on training networks.",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 40,
+        "any_of_keywords": [["OpenWHO"], ["openwho"], ["FETP"], ["fellow"], ["training"], ["disease detective"], ["disease detectives"]],
+        "min_keyword_groups": 2
+      },
+      "notes": "Semantic alias: disease detectives → FETP fellows."
+    }
+  ]
+}

@@ -7,7 +7,7 @@ from typing import List, Optional
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from neo4j import GraphDatabase
+from .graph.driver import close_neo4j_driver, get_neo4j_driver
 from pydantic import BaseModel, Field
 
 from .bridge import ask
@@ -23,6 +23,7 @@ from .config.settings import (
     OPENAI_API_KEY,
     PROJECT_ROOT,
     REDIS_URL,
+    get_model_config,
 )
 from .ingestion.service import IngestionManager
 from .ingestion.job_store import get_job_store
@@ -68,6 +69,12 @@ async def _ensure_rbac_schema_initialized():
             rbac.setup_schema(str(PROJECT_ROOT / "src" / "auth" / "rbac_schema.cypher"))
     finally:
         rbac.close()
+
+
+@app.on_event("shutdown")
+async def _close_neo4j_driver():
+    close_neo4j_driver()
+
 
 app.mount(
     "/static",
@@ -212,7 +219,7 @@ async def ingest_unstructured(
     doc_key: Optional[str] = Form(
         None,
         description=(
-            "Stable logical document key (e.g. godata-manual). "
+            "Stable logical document key (e.g. annual-report-2021). "
             "Re-ingests with the same key create a new revision; identical file hash is skipped."
         ),
     ),
@@ -385,42 +392,39 @@ async def reset_neo4j(
     if not ctx.has_role(Role.ADMIN):
         raise HTTPException(status_code=403, detail="Insufficient role (requires admin).")
 
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    driver = get_neo4j_driver()
     dropped_indexes = 0
     dropped_constraints = 0
-    try:
-        with driver.session() as session:
-            try:
-                rows = session.run("SHOW INDEXES YIELD name RETURN name").data()
-                for r in rows:
-                    name = r.get("name")
-                    if not name:
-                        continue
-                    try:
-                        session.run(f"DROP INDEX `{name}` IF EXISTS").consume()
-                        dropped_indexes += 1
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+    with driver.session() as session:
+        try:
+            rows = session.run("SHOW INDEXES YIELD name RETURN name").data()
+            for r in rows:
+                name = r.get("name")
+                if not name:
+                    continue
+                try:
+                    session.run(f"DROP INDEX `{name}` IF EXISTS").consume()
+                    dropped_indexes += 1
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
-            try:
-                rows = session.run("SHOW CONSTRAINTS YIELD name RETURN name").data()
-                for r in rows:
-                    name = r.get("name")
-                    if not name:
-                        continue
-                    try:
-                        session.run(f"DROP CONSTRAINT `{name}` IF EXISTS").consume()
-                        dropped_constraints += 1
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+        try:
+            rows = session.run("SHOW CONSTRAINTS YIELD name RETURN name").data()
+            for r in rows:
+                name = r.get("name")
+                if not name:
+                    continue
+                try:
+                    session.run(f"DROP CONSTRAINT `{name}` IF EXISTS").consume()
+                    dropped_constraints += 1
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
-            session.run("MATCH (n) DETACH DELETE n").consume()
-    finally:
-        driver.close()
+        session.run("MATCH (n) DETACH DELETE n").consume()
 
     return {
         "status": "ok",
@@ -433,6 +437,27 @@ async def reset_neo4j(
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/config/models")
+async def config_models():
+    """
+    Active LLM/embedding model per pipeline stage (from .env).
+    Change models in .env and restart the app (or workers) to apply.
+    """
+    models = get_model_config()
+    return {
+        "models": models,
+        "env_keys": {
+            "chat": "CHAT_MODEL",
+            "structured": "STRUCTURED_MODEL",
+            "routing": "ROUTING_MODEL",
+            "embedding": "EMBEDDING_MODEL",
+            "axis2": "AXIS2_MODEL",
+            "vision": "VISION_MODEL",
+        },
+        "defaults_when_unset": "ROUTING_MODEL, STRUCTURED_MODEL, and AXIS2_MODEL fall back to CHAT_MODEL",
+    }
 
 
 if __name__ == "__main__":

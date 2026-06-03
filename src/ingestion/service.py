@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import UploadFile
-from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError
 
 from ..config.settings import (
@@ -39,6 +38,7 @@ from .models import IngestionStatus
 from .job_store import JobStore, get_job_store
 
 from ..auth.rbac_setup import GraphRBAC
+from ..graph.driver import get_neo4j_driver
 
 
 @dataclass
@@ -219,22 +219,19 @@ class IngestionManager:
             exporter_probe = Neo4jExporter(
                 output_dir=str(job.output_dir) if job.output_dir else Path(".")
             )
-            driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-            try:
-                with driver.session() as session:
-                    if exporter_probe.active_revision_has_hash(
-                        session, logical_id, content_hash
-                    ):
-                        job.skipped_duplicate = True
-                        job.neo4j_load_status = "skipped"
-                        job.neo4j_load_message = (
-                            "Identical content already ACTIVE for this logical document; "
-                            "ingest skipped (no parse)."
-                        )
-                        self._log(job, job.neo4j_load_message)
-                        return
-            finally:
-                driver.close()
+            driver = get_neo4j_driver()
+            with driver.session() as session:
+                if exporter_probe.active_revision_has_hash(
+                    session, logical_id, content_hash
+                ):
+                    job.skipped_duplicate = True
+                    job.neo4j_load_status = "skipped"
+                    job.neo4j_load_message = (
+                        "Identical content already ACTIVE for this logical document; "
+                        "ingest skipped (no parse)."
+                    )
+                    self._log(job, job.neo4j_load_message)
+                    return
 
         parser = LightPdfParser()
         nodes, edges = parser.parse(str(job.input_path))
@@ -257,12 +254,9 @@ class IngestionManager:
         exporter = Neo4jExporter(output_dir=str(job.output_dir) if job.output_dir else Path("."))
         version_number = 1
         if AUTO_LOAD_TO_NEO4J:
-            driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-            try:
-                with driver.session() as session:
-                    version_number = exporter.next_version_number(session, logical_id)
-            finally:
-                driver.close()
+            driver = get_neo4j_driver()
+            with driver.session() as session:
+                version_number = exporter.next_version_number(session, logical_id)
 
         plan = build_revision_plan(
             job.input_path,
@@ -376,26 +370,23 @@ class IngestionManager:
         if not statements:
             raise ValueError("Cypher file contained no statements.")
 
-        driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-        try:
-            with driver.session() as session:
-                for idx, stmt in enumerate(statements, start=1):
-                    preview = " ".join(stmt.split())[:120]
-                    self._log(job, f"Running statement {idx}/{len(statements)}: {preview}...")
-                    try:
-                        session.run(stmt, **params).consume()
-                    except ClientError as exc:
-                        code = getattr(exc, "code", "") or ""
-                        if code in {
-                            "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
-                            "Neo.ClientError.Schema.IndexAlreadyExists",
-                            "Neo.ClientError.Schema.ConstraintAlreadyExists",
-                        }:
-                            self._log(job, f"Skipping non-fatal schema error ({code}): {exc.message}")
-                            continue
-                        raise
-        finally:
-            driver.close()
+        driver = get_neo4j_driver()
+        with driver.session() as session:
+            for idx, stmt in enumerate(statements, start=1):
+                preview = " ".join(stmt.split())[:120]
+                self._log(job, f"Running statement {idx}/{len(statements)}: {preview}...")
+                try:
+                    session.run(stmt, **params).consume()
+                except ClientError as exc:
+                    code = getattr(exc, "code", "") or ""
+                    if code in {
+                        "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+                        "Neo.ClientError.Schema.IndexAlreadyExists",
+                        "Neo.ClientError.Schema.ConstraintAlreadyExists",
+                    }:
+                        self._log(job, f"Skipping non-fatal schema error ({code}): {exc.message}")
+                        continue
+                    raise
 
         job.neo4j_load_status = "success"
         job.neo4j_load_message = f"Executed {len(statements)} Cypher statements successfully"

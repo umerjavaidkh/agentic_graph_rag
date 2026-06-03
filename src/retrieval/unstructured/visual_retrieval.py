@@ -24,7 +24,7 @@ _QUERY_TAIL = re.compile(
     re.I,
 )
 _DOC_REF = re.compile(
-    r"\s*(?:in|from)\s+(?:the\s+)?(?:go\.?data|godata|document)?\s*pdf\.?",
+    r"\s*(?:in|from)\s+(?:the\s+)?(?:document)?\s*pdf\.?",
     re.I,
 )
 _LIST_ALL = re.compile(r"\b(all|every|each|list|show\s+all)\b", re.I)

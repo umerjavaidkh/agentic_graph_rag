@@ -8,9 +8,11 @@ This module provides:
 """
 
 from typing import List, Dict, Optional
-from neo4j import GraphDatabase
+
+from neo4j import Driver
 
 from ..config.settings import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
+from ..graph.driver import get_neo4j_driver
 
 
 class GraphRBAC:
@@ -21,8 +23,9 @@ class GraphRBAC:
         uri: str = NEO4J_URI,
         user: str = NEO4J_USER,
         password: str = NEO4J_PASSWORD,
+        driver: Optional[Driver] = None,
     ):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.driver = driver or get_neo4j_driver(uri, user, password)
 
     def setup_schema(self, cypher_file: str = "src/auth/rbac_schema.cypher"):
         """
@@ -209,8 +212,8 @@ class GraphRBAC:
         
         return result
 
-    def close(self):
-        self.driver.close()
+    def close(self) -> None:
+        """No-op: driver is process-wide; use close_neo4j_driver() on shutdown."""
 
 
 # Convenience function for RBAC schema setup

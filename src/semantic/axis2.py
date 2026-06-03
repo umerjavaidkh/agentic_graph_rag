@@ -26,10 +26,10 @@ import numpy as np
 from ..config.settings import (
     AXIS2_LLM_PAIR_CONCURRENCY,
     AXIS2_MAX_LLM_PAIRS,
+    AXIS2_MODEL,
     AXIS2_NER_CONCURRENCY,
     AXIS2_NER_MAX_TOKENS,
     AXIS2_RELATION_MAX_TOKENS,
-    CHAT_MODEL,
     EMBEDDING_MODEL,
     MODEL_PROVIDER,
     OPENAI_API_KEY,
@@ -44,8 +44,6 @@ from ..models import DKGNode, DKGEdge, NodeType, RelType
 SIMILARITY_THRESHOLD   = 0.75   # cosine sim for SEMANTICALLY_SIMILAR
 CONTRADICTION_THRESH   = 0.85   # only run LLM on very similar pairs
 N_CLUSTERS             = None   # None = auto (sqrt of chapter count)
-EMBED_MODEL            = "text-embedding-3-small"
-LLM_MODEL              = "gpt-4o-mini"
 # Node types to include in semantic analysis (skip PAGE for perf)
 SEMANTIC_NODE_TYPES    = {NodeType.CHAPTER, NodeType.SECTION}
 CONCEPT_NODE_TYPES     = {NodeType.SECTION, NodeType.PAGE}
@@ -113,7 +111,7 @@ class Axis2Builder:
         for batch_start in range(0, len(texts), 100):
             batch = texts[batch_start:batch_start + 100]
             response = self.client.embeddings(
-                model=EMBED_MODEL, input=batch
+                model=EMBEDDING_MODEL, input=batch
             )
             for i, emb_obj in enumerate(response.data):
                 targets[batch_start + i].embedding = emb_obj.embedding
@@ -138,7 +136,7 @@ class Axis2Builder:
         def _ner_one(node: DKGNode) -> Tuple[str, list]:
             try:
                 resp = self.client.chat_completion(
-                    model=CHAT_MODEL,
+                    model=AXIS2_MODEL,
                     temperature=0,
                     messages=[
                         {
@@ -318,7 +316,7 @@ Determine the relationship. Return ONLY valid JSON:
             a, b = embedded[i], embedded[j]
             try:
                 resp = self.client.chat_completion(
-                    model=CHAT_MODEL,
+                    model=AXIS2_MODEL,
                     temperature=0,
                     messages=[{"role": "user", "content": PROMPT.format(
                         id_a=a.id, text_a=a.text[:1500],
