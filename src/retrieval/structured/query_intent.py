@@ -52,6 +52,19 @@ def analytics_result_limit(question: str, default: int = 5) -> int:
     return default
 
 
+def estimate_structured_synthesis_max_tokens(
+    question: str,
+    *,
+    chunk_count: int = 0,
+    default_max: int,
+    long_max: int,
+) -> int:
+    """Long budget for nested top-N / per-group analytics and multistep result sets."""
+    if likely_needs_multistep_plan(question) or chunk_count > 3:
+        return long_max
+    return default_max
+
+
 def likely_needs_multistep_plan(question: str) -> bool:
     """
     Fast regex gate for the multistep LLM planner.

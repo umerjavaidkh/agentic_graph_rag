@@ -1,0 +1,156 @@
+{
+  "suite": "northwind_structured_rag_v1",
+  "description": "Ten Northwind structured-graph questions for routing, Cypher retrieval, charts, and hallucination resistance.",
+  "prerequisites": [
+    "Load sample_data_to_test/structured/northwind-data.cypher on the Cypher tab.",
+    "ALLOW_CYPHER_INGEST=true and CYPHER_INGEST_SKIP_GENAI=true.",
+    "App reachable at EVAL_BASE_URL (default http://localhost:8000).",
+    "Use user_id regular_001 (role regular_office) in chat."
+  ],
+  "default_user_id": "regular_001",
+  "default_role": "regular_office",
+  "cases": [
+    {
+      "id": "nw_01",
+      "category": "structured",
+      "tier": "lookup",
+      "question": "Which supplier provides Chai?",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 5,
+        "forbid_chart": true,
+        "any_of_keywords": [["Chai"], ["chai"]]
+      },
+      "notes": "Simple lookup; table or short text, no chart required."
+    },
+    {
+      "id": "nw_02",
+      "category": "structured",
+      "tier": "rank",
+      "question": "What are the top 5 most expensive products?",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 10,
+        "expect_chart_types": ["bar", "bar-horizontal"],
+        "min_table_rows": 3
+      },
+      "notes": "Bar chart + table."
+    },
+    {
+      "id": "nw_03",
+      "category": "structured",
+      "tier": "aggregation",
+      "question": "How many products exist in each category?",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 10,
+        "expect_chart_types": ["bar"],
+        "min_table_rows": 2
+      },
+      "notes": "Per-category counts."
+    },
+    {
+      "id": "nw_04",
+      "category": "structured",
+      "tier": "share",
+      "question": "Show the revenue share by product category in 1997.",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 10,
+        "expect_chart_types": ["doughnut", "pie"],
+        "min_table_rows": 2
+      },
+      "notes": "Part-to-whole chart."
+    },
+    {
+      "id": "nw_05",
+      "category": "structured",
+      "tier": "timeseries",
+      "question": "Show monthly order count in 1997.",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 10,
+        "expect_chart_types": ["line"],
+        "min_table_rows": 2
+      },
+      "notes": "Monthly line chart."
+    },
+    {
+      "id": "nw_06",
+      "category": "structured",
+      "tier": "rank",
+      "question": "What are the top 12 customers by total order count?",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 10,
+        "expect_chart_types": ["bar-horizontal", "bar"],
+        "min_table_rows": 5
+      },
+      "notes": "Many categories → horizontal bar preferred."
+    },
+    {
+      "id": "nw_07",
+      "category": "structured",
+      "tier": "multi_hop",
+      "question": "Which customers purchased products in the Seafood category?",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 10,
+        "min_table_rows": 1,
+        "any_of_keywords": [["Seafood"], ["seafood"]]
+      },
+      "notes": "Join-style question; table + narrative."
+    },
+    {
+      "id": "nw_08",
+      "category": "structured",
+      "tier": "rank",
+      "question": "What are the top 10 best-selling products by order count?",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 10,
+        "expect_chart_types": ["bar", "bar-horizontal"],
+        "min_table_rows": 5
+      },
+      "notes": "Top-N ranking with chart."
+    },
+    {
+      "id": "nw_09",
+      "category": "structured",
+      "tier": "anti_hallucination",
+      "question": "Which categories have never appeared in an order?",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 5,
+        "forbid_chart": true,
+        "anti_hallucination": true,
+        "max_table_rows": 15,
+        "keywords_in_sources": false,
+        "any_of_keywords": [["none"], ["no categor"], ["never appeared"], ["not appear"], ["0 categor"], ["no matching"], ["not found"], ["no records"]]
+      },
+      "notes": "May be empty; must not invent category rows."
+    },
+    {
+      "id": "nw_10",
+      "category": "structured",
+      "tier": "bi",
+      "question": "Which supplier's products appear in the greatest number of orders?",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 10,
+        "any_of_keywords": [["supplier"], ["Plutzer"], ["orders"]]
+      },
+      "notes": "Advanced aggregation with chart."
+    }
+  ]
+}

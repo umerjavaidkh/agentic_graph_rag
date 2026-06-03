@@ -36,13 +36,13 @@ _STRUCTURED_MISROUTE = re.compile(
 
 
 def _fix_misrouted_structured_answer(answer: str, question: str) -> str:
-    """LLM sometimes mis-applies the Northwind redirect on Go.Data / WHO document questions."""
+    """LLM sometimes mis-applies the Northwind redirect on document questions."""
     if not _STRUCTURED_MISROUTE.search(answer or ""):
         return (answer or "").strip()
     if not has_document_cue(question):
         return (answer or "").strip()
     return (
-        "This is a document question (Go.Data / WHO report content), not the Northwind business database. "
+        "This is a document question (ingested PDF content), not the Northwind business database. "
         "I searched the ingested document sections but could not find the exact figure or detail you asked for. "
         "Try rephrasing with a section number or page reference if you have one."
     )
@@ -74,7 +74,7 @@ def generate_node(state: ESGState):
 
     # Guard against true structured questions being sent to the document agent.
     # Do NOT trigger this for document questions that happen to contain words like "data"
-    # (e.g. "Go.Data" report sections).
+    # (e.g. report sections that mention a product name containing "data").
     if is_structured_data_question(question) and not has_document_cue(question):
         return {
             "answer": (

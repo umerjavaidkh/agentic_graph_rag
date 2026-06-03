@@ -5,7 +5,7 @@ Use ONLY the provided sections (often the introduction, early chapters, annual-r
 Rules:
 - If the user asked for a numbered list (e.g. 10 points), return exactly that many bullet points.
 - Each point should be a complete sentence grounded in the context.
-- Mention Go.Data / outbreak investigation / data collection when the sections support it.
+- Mention outbreak investigation / data collection themes when the sections support it.
 - End each point with the section title in parentheses when helpful, e.g. (Introduction).
 - If context is thin, infer cautiously from section titles and the earliest substantive paragraphs — do not say "context does not contain" when any section describes scope, purpose, or activities.
 

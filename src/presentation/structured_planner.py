@@ -178,26 +178,35 @@ def build_structured_presentation(
 
     blocks: list[dict] = []
 
-    if value_key and len(values) >= 2 and _values_vary_enough(values):
+    chart_limit = 16 if len(rows) > 10 else 12
+    chart_labels = labels[:chart_limit]
+    chart_values = values[:chart_limit]
+
+    if value_key and len(chart_values) >= 2 and _values_vary_enough(chart_values):
         chart_title = _chart_title(question, value_key)
+        chart_type = choose_chart_type(question, label_key, chart_labels, chart_values)
         blocks.append({
             "type": "chart",
-            "chartType": "bar",
-            "interactive": True,
+            "chartType": chart_type,
+            "interactive": chart_type in ("bar", "bar-horizontal", "line"),
             "valueFormat": "number",
             "valueKey": value_key,
             "title": chart_title,
-            "labels": labels[:12],
-            "values": values[:12],
+            "labels": chart_labels,
+            "values": chart_values,
         })
 
-    blocks.append({
+    table_block = {
         "type": "table",
         "title": "Query results",
         "headers": headers,
         "rows": table_rows,
         "interactive": True,
-    })
+    }
+    if len(display_keys) > 4 and blocks:
+        blocks.insert(0, table_block)
+    else:
+        blocks.append(table_block)
 
     blocks.append({"type": "markdown", "content": answer or ""})
 
@@ -223,6 +232,47 @@ def _cell(val: Any) -> str:
     if len(s) >= 10 and s[4] == "-" and s[7] == "-":
         return s[:7]
     return s
+
+
+def choose_chart_type(
+    question: str,
+    label_key: Optional[str],
+    labels: list[str],
+    values: list[float],
+) -> str:
+    """
+    Pick a chart type from query shape and data (document-agnostic).
+
+    Returns one of: bar, bar-horizontal, line, pie, doughnut.
+    """
+    n = len(values)
+    if n < 2:
+        return "bar"
+    q = (question or "").lower()
+    lk = (label_key or "").lower().replace(" ", "")
+
+    if lk in ("month", "orderdate", "shipdate", "requireddate", "date", "period", "year"):
+        return "line"
+    if re.search(r"\b(monthly|over\s+time|trend|time\s+series|by\s+month|per\s+month)\b", q):
+        return "line"
+    if re.search(
+        r"\b(share|portion|percent|%|distribution|breakdown|split|composition|"
+        r"proportion|mix)\b",
+        q,
+    ):
+        return "doughnut" if n <= 6 else "pie"
+
+    total = sum(values)
+    if n <= 8 and total > 0 and all(v >= 0 for v in values):
+        mx = max(values)
+        if mx <= 1.0 + 1e-9:
+            return "doughnut"
+        if mx <= 100 and abs(total - 100.0) <= max(2.0, 0.03 * total):
+            return "pie"
+
+    if n > 10 or (labels and max(len(str(lbl)) for lbl in labels) > 16):
+        return "bar-horizontal"
+    return "bar"
 
 
 def _values_vary_enough(values: list[float]) -> bool:

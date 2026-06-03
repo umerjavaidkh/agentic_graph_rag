@@ -13,9 +13,8 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from neo4j import GraphDatabase
-
 from ...auth.rbac_setup import GraphRBAC
+from ...graph.driver import get_neo4j_driver
 from ...auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
 from ...config.settings import (
     EMBEDDING_MODEL,
@@ -116,6 +115,11 @@ _SYNTHESIS_RE = re.compile(
     re.I,
 )
 
+_ENUMERATION_RE = re.compile(
+    r"\b(list\s+all|enumerate|name\s+all|distinct)\b",
+    re.I,
+)
+
 _CONTRAST_COMPARE_RE = re.compile(
     r"\b(contrast|compare|comparison|versus|vs\.?)\b",
     re.I,
@@ -129,8 +133,41 @@ _KEYWORD_STOP = frozenset({
 })
 
 
+def _query_anchor_terms(query: str) -> list[str]:
+    """Proper names and dotted tokens from the user question (corpus-agnostic)."""
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: str) -> None:
+        for variant in (
+            raw,
+            raw.replace(".", ""),
+            raw.replace(".", " "),
+            raw.replace("-", " "),
+        ):
+            tl = variant.lower().strip()
+            if tl and tl not in seen and len(tl) >= 2:
+                seen.add(tl)
+                terms.append(tl)
+
+    for m in re.finditer(r"\b[A-Za-z][\w]*(?:\.[\w]+)+\b", query or ""):
+        _add(m.group(0))
+
+    for m in re.finditer(r"\b[A-Z][A-Z0-9]{2,}\b", query or ""):
+        _add(m.group(0))
+
+    for m in re.finditer(r"\b[A-Z][a-z][A-Za-z0-9]{2,}\b", query or ""):
+        _add(m.group(0))
+
+    return terms[:10]
+
+
 def is_synthesis_question(query: str) -> bool:
     return bool(_SYNTHESIS_RE.search(query or ""))
+
+
+def is_enumeration_question(query: str) -> bool:
+    return bool(_ENUMERATION_RE.search(query or ""))
 
 
 _TOC_RE = re.compile(
@@ -179,7 +216,7 @@ _FACT_LOOKUP_RE = re.compile(
     r"\b(?:url|link|website|web\s*site|portal|email|e-mail|hyperlink)\b|"
     r"\bwhat\s+is\s+the\s+(?:url|link|website|address|portal)\b|"
     r"\b(?:which|into\s+which|how\s+many|when\s+did|who\s+hosted)\b|"
-    r"\b(?:translated|translation|languages?|hosted|host|workshop|openwho)\b",
+    r"\b(?:translated|translation|languages?|hosted|host|workshop)\b",
     re.I,
 )
 
@@ -205,7 +242,7 @@ def is_fact_lookup_question(query: str) -> bool:
 
 
 def _normalize_broken_urls(text: str) -> str:
-    """Fix PDF line-breaks/spaces inside URLs (e.g. 'https://community-godata. who.int/')."""
+    """Fix PDF line-breaks/spaces inside URLs (e.g. 'https://example. org/path' -> 'https://example.org/path')."""
 
     def _fix(match: re.Match) -> str:
         return re.sub(r"\s+", "", match.group(0))
@@ -237,13 +274,13 @@ class DocumentRAGRetriever:
         password: str = NEO4J_PASSWORD,
         user_context: Optional[UserContext] = None,
     ):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.driver = get_neo4j_driver(uri, user, password)
         self.user_context = user_context or DEFAULT_PUBLIC_CONTEXT
-        self.rbac = GraphRBAC(uri, user, password)
+        self.rbac = GraphRBAC(uri, user, password, driver=self.driver)
         self._exec = DocumentQueryExecutor()
 
     def close(self) -> None:
-        self.driver.close()
+        """No-op: driver is process-wide; use close_neo4j_driver() on shutdown."""
 
     def semantic_retrieve(
         self,
@@ -441,7 +478,12 @@ class DocumentRAGRetriever:
                 return response
 
         synthesis = is_synthesis_question(query)
-        fetch_limit = max(limit, 16) if synthesis else limit
+        enumeration = is_enumeration_question(query)
+        fetch_limit = limit
+        if synthesis:
+            fetch_limit = max(limit, 16)
+        if enumeration:
+            fetch_limit = max(fetch_limit, 18)
         vector_limit = min(RETRIEVAL_CANDIDATE_POOL, 16) if synthesis else _VECTOR_SEED_LIMIT
         graph_1hop = 32 if synthesis else _GRAPH_1HOP_LIMIT
         graph_2hop = 24 if synthesis else _GRAPH_2HOP_LIMIT
@@ -476,6 +518,10 @@ class DocumentRAGRetriever:
                 synthesis=synthesis,
                 limit=max(1, int(fetch_limit)),
             )
+            if lexical_hits:
+                items = self._pin_precision_lexical_chunks(
+                    query, items, lexical_hits, limit=max(1, int(fetch_limit))
+                )
             if synthesis and lexical_hits:
                 items = self._pin_contrast_lexical_chunks(
                     query, items, lexical_hits, limit=max(1, int(fetch_limit))
@@ -733,20 +779,35 @@ class DocumentRAGRetriever:
         return out
 
     def _contrast_term_groups(self, query: str) -> list[list[str]]:
-        """For compare/contrast questions, require chunks that mention each topic."""
+        """For compare/contrast questions, one keyword group per side of the comparison."""
         if not _CONTRAST_COMPARE_RE.search(query or ""):
             return []
+        parts = re.split(
+            r"\b(?:versus|vs\.?|compared\s+to|against)\b",
+            query or "",
+            maxsplit=1,
+            flags=re.I,
+        )
+        if len(parts) >= 2:
+            groups: list[list[str]] = []
+            for part in parts[:2]:
+                kws = [
+                    k
+                    for k in self._content_keywords_from_query(part)
+                    if len(k) >= 4 and k not in _KEYWORD_STOP
+                ]
+                if kws:
+                    groups.append(kws[:4])
+            if len(groups) >= 2:
+                return groups
         q = (query or "").lower()
-        groups: list[list[str]] = []
-        if re.search(r"proximity|contact\s*trac", q):
-            groups.append(["proximity"])
-        if re.search(r"go\.?\s*data|godata", q):
-            groups.append(["go.data", "godata"])
-        if re.search(r"symptom\s*track", q):
-            groups.append(["symptom tracking", "symptom"])
-        if re.search(r"outbreak\s*response", q):
-            groups.append(["outbreak response"])
-        return groups
+        groups = []
+        for token in self._query_keywords(query):
+            if len(token) >= 5 and token not in {
+                "contrast", "compare", "comparison", "between", "versus",
+            }:
+                groups.append([token])
+        return groups[:2] if len(groups) >= 2 else []
 
     @staticmethod
     def _text_matches_term_groups(text: str, groups: list[list[str]]) -> bool:
@@ -758,6 +819,67 @@ class DocumentRAGRetriever:
                 return False
         return True
 
+    def _precision_pin_patterns(self, query: str) -> list[str]:
+        """Long query-derived phrases used to pin compact high-signal chunks."""
+        min_len = 10 if is_enumeration_question(query) else 8
+        patterns = [
+            p for p in self._search_phrases_from_query(query) if len(p) >= min_len
+        ]
+        return list(dict.fromkeys(patterns))[:8]
+
+    def _pin_precision_lexical_chunks(
+        self,
+        query: str,
+        items: list[dict],
+        lexical_hits: list[dict],
+        *,
+        limit: int,
+    ) -> list[dict]:
+        """
+        Pin compact, high-signal lexical hits (e.g. Region facts, network lists)
+        that vector search often ranks below broad sections.
+        """
+        patterns = self._precision_pin_patterns(query)
+        if not patterns:
+            return items
+
+        pinned: list[dict] = []
+        for hit in lexical_hits:
+            text = (hit.get("text") or "").lower()
+            if any(p in text for p in patterns):
+                pinned.append(hit)
+        if not pinned:
+            return items
+
+        pinned.sort(key=lambda h: len(h.get("text") or ""))
+
+        seen: set[str] = set()
+        out: list[dict] = []
+        for hit in pinned[:3]:
+            cid = hit.get("id")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            out.append(
+                {
+                    "id": cid,
+                    "title": hit.get("title") or cid,
+                    "text": hit.get("text") or "",
+                    "score": float(hit.get("score", 1.5)) + 0.55,
+                    "related": list(
+                        dict.fromkeys([*(hit.get("related") or []), "via:precision_pin"])
+                    ),
+                }
+            )
+
+        for item in items:
+            cid = item.get("id")
+            if cid and cid not in seen:
+                out.append(item)
+            if len(out) >= limit:
+                break
+        return out[:limit]
+
     def _pin_contrast_lexical_chunks(
         self,
         query: str,
@@ -767,7 +889,7 @@ class DocumentRAGRetriever:
         limit: int,
     ) -> list[dict]:
         """
-        Contrast questions need chunks that mention BOTH sides (e.g. proximity + Go.Data).
+        Contrast questions need chunks that mention BOTH sides named in the query.
         Vector-only ranking often returns executive-summary pages and drops the intro contrast.
         """
         groups = self._contrast_term_groups(query)
@@ -825,23 +947,6 @@ class DocumentRAGRetriever:
         q = (query or "").lower()
         phrases: list[str] = []
 
-        if _CONTRAST_COMPARE_RE.search(q):
-            if re.search(r"proximity", q):
-                phrases.extend(
-                    [
-                        "proximity tracing tools",
-                        "proximity tracing and symptom tracking",
-                        "unlike proximity tracing tools",
-                    ]
-                )
-            if re.search(r"go\.?\s*data|godata", q):
-                phrases.extend(
-                    [
-                        "go.data falls under the outbreak response",
-                        "outbreak response category",
-                    ]
-                )
-
         for m in _MONTH_YEAR_RE.finditer(q):
             phrases.append(f"{m.group(1).lower()} {m.group(2)}")
 
@@ -849,8 +954,10 @@ class DocumentRAGRetriever:
             "of", "at", "in", "on", "to", "and", "or", "for", "by", "with", "from",
         })
         tokens: list[str] = []
-        if re.search(r"\bg[o\s]*\.?\s*data\b", q) or "godata" in q.replace(" ", "").replace(".", ""):
-            tokens.extend(["go", "data"])
+        for anchor in _query_anchor_terms(query):
+            for w in re.findall(r"[\w']+", anchor):
+                if len(w) >= 2 and w not in tokens:
+                    tokens.append(w)
         for w in re.findall(r"[\w']+", q):
             if len(w) <= 2 or w in _light_stop:
                 continue
@@ -863,6 +970,10 @@ class DocumentRAGRetriever:
                 if len(phrase) >= 8:
                     phrases.append(phrase)
 
+        for w in tokens:
+            if len(w) >= 5:
+                phrases.append(w)
+
         seen: set[str] = set()
         ordered: list[str] = []
         for p in sorted(phrases, key=len, reverse=True):
@@ -873,44 +984,48 @@ class DocumentRAGRetriever:
         return ordered[:14]
 
     def _content_keywords_from_query(self, query: str) -> list[str]:
-        """Distinct content terms for AND-style overlap scoring (any document)."""
+        """
+        Distinct content terms for AND-style overlap scoring (corpus-agnostic).
+
+        Derived entirely from the question: proper-noun/acronym anchors, month-year
+        dates, content tokens, hyphen/space variants, and adjacent bigrams. No
+        per-document or per-topic vocabulary is injected here.
+        """
         q = (query or "").lower()
         keywords: list[str] = []
-        if re.search(r"\bg[o\s]*\.?\s*data\b", q) or "godata" in q.replace(" ", "").replace(".", ""):
-            keywords.extend(["godata", "go.data"])
-        if re.search(r"proximity\s*trac", q):
-            keywords.extend(
-                ["proximity tracing", "proximity", "bluetooth", "gps", "contact tracing"]
-            )
-        if re.search(r"symptom\s*track", q):
-            keywords.extend(["symptom tracking", "symptom"])
-        if re.search(r"outbreak\s*response", q):
-            keywords.extend(["outbreak response", "outbreak investigation"])
+
+        for anchor in _query_anchor_terms(query):
+            if anchor not in keywords:
+                keywords.append(anchor)
+
         for m in _MONTH_YEAR_RE.finditer(q):
             keywords.append(f"{m.group(1).lower()} {m.group(2)}")
             keywords.append(m.group(2))
+
+        # Hyphenated terms in the query: add joined / spaced variants generically
+        # (e.g. "case-control" → "case control", "casecontrol") to survive PDF wording.
+        for hyph in re.findall(r"[a-z]+(?:-[a-z]+)+", q):
+            keywords.append(hyph)
+            keywords.append(hyph.replace("-", " "))
+            keywords.append(hyph.replace("-", ""))
+
         for w in re.findall(r"[\w']+", q):
             if len(w) <= 2 or w in _PHRASE_STOP:
                 continue
             if w not in keywords:
                 keywords.append(w)
-        if re.search(r"case[\s-]?control", q):
-            keywords.extend(["case control", "case-control"])
-        if re.search(r"sars[\s-]?cov", q):
-            keywords.extend(["sarscov-2", "sars-cov-2"])
-        if re.search(r"health\s*care\s*workers?|healthcare\s*workers?", q):
-            keywords.append("health care workers")
-        if "hospital" in keywords and "site" in keywords:
-            keywords.append("hospital sites")
-        if re.search(r"noor|photo\s+credit", q):
-            keywords.extend(["photo credits", "noor images"])
-        if "unicef" in q:
-            keywords.extend(["unicef", "united nations children's fund"])
-        if "budget" in q or "allocation" in q or "funding" in q:
-            keywords.extend(["budget", "allocation", "funding"])
-        if "operational team support" in q or "ost" in q.split():
-            keywords.extend(["operational team support", "ost"])
-        return keywords[:18]
+
+        words = [
+            w
+            for w in re.findall(r"[\w']+", q)
+            if len(w) >= 4 and w not in _KEYWORD_STOP
+        ]
+        for i in range(len(words) - 1):
+            bigram = f"{words[i]} {words[i + 1]}"
+            if bigram not in keywords:
+                keywords.append(bigram)
+
+        return list(dict.fromkeys(keywords))[:18]
 
     @staticmethod
     def _merge_retrieval_chunks(primary: list[dict], extra: list[dict]) -> list[dict]:
@@ -1028,11 +1143,17 @@ class DocumentRAGRetriever:
                 continue
             title = r.get("title") or r["id"]
             text = self._enrich_chunk_text_for_facts(title, r.get("text") or "")
+            score = 0.9 + 0.08 * int(r.get("phrase_hits") or 0)
+            if len(text) < 1200:
+                score += 0.12
+            tl = text.lower()
+            if re.search(r"language|translat", (query or "").lower()) and "available in" in tl:
+                score += 0.15
             items.append({
                 "id": r["id"],
                 "title": title,
                 "text": text,
-                "score": 0.9 + 0.08 * int(r.get("phrase_hits") or 0),
+                "score": score,
                 "related": ["via:phrase_search"],
             })
         return items
@@ -1581,8 +1702,81 @@ class DocumentRAGRetriever:
 
         return top[1], top[2]
 
+    @staticmethod
+    def _logical_id_from_node_id(node_id: str) -> Optional[str]:
+        """Extract the logical document id prefix from a content node id."""
+        if not node_id:
+            return None
+        # Revision-scoped ids look like "<logical_id>:<rev>::<...>".
+        return node_id.split(":", 1)[0] or None
+
+    def _resolve_document_by_vector(
+        self, session, query: str
+    ) -> tuple[Optional[str], Optional[str]]:
+        """
+        Resolve the target document via semantic similarity (corpus-agnostic):
+        embed the query, take the top vector seeds, and pick the logical document
+        that owns a clear majority of them. No per-document or per-topic terms.
+        """
+        try:
+            embedding = self._get_embedding(query)
+        except Exception:
+            return None, None
+        if not embedding:
+            return None, None
+
+        seeds = self._vector_seed(session, embedding, 12)
+        if len(seeds) < 3:
+            return None, None
+
+        counts: dict[str, int] = {}
+        for seed in seeds:
+            lid = self._logical_id_from_node_id(seed.get("id") or "")
+            if lid:
+                counts[lid] = counts.get(lid, 0) + 1
+        if not counts:
+            return None, None
+
+        ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+        top_id, top_n = ranked[0]
+        runner_n = ranked[1][1] if len(ranked) > 1 else 0
+        # Require a clear majority over the runner-up to avoid guessing.
+        if runner_n > 0 and top_n < runner_n * 1.5:
+            return None, None
+        if top_n < max(3, len(seeds) // 2):
+            return None, None
+
+        title = self._document_title_for_logical_id(session, top_id)
+        return top_id, title
+
+    def _document_title_for_logical_id(
+        self, session, logical_id: str
+    ) -> Optional[str]:
+        if not logical_id:
+            return None
+        row = session.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
+            WHERE dl.logical_id = $lid
+            RETURN coalesce(dl.title, dl.logical_id) AS title
+            LIMIT 1
+            """,
+            lid=logical_id,
+        ).single()
+        if row and row.get("title"):
+            return _clean_doc_title(str(row["title"]))
+        return _clean_doc_title(logical_id)
+
     def _resolve_document_for_query(self, session, query: str) -> tuple[Optional[str], Optional[str]]:
         """Return logical document id (preferred) and display title for doc-scoped retrieval."""
+        strict_id, strict_title = self._resolve_document_for_query_strict(session, query)
+        if strict_id:
+            return strict_id, strict_title
+
+        vector_id, vector_title = self._resolve_document_by_vector(session, query)
+        if vector_id:
+            return vector_id, vector_title
+
         terms = self._document_match_terms(query)
         lc = lifecycle_active("d")
         lc_n = lifecycle_active("n")
@@ -1664,13 +1858,8 @@ class DocumentRAGRetriever:
         return None, None
 
     def _document_match_terms(self, query: str) -> list[str]:
-        q = (query or "").lower()
-        terms: list[str] = []
-        if re.search(r"\bg[o\s]*\.?\s*data\b", q) or "godata" in q.replace(" ", "").replace(".", ""):
-            terms.append("godata")
-        if "stratec" in q:
-            terms.append("stratec")
-        for t in re.findall(r"[\w'-]{3,}", q):
+        terms: list[str] = list(_query_anchor_terms(query))
+        for t in re.findall(r"[\w'-]{3,}", (query or "").lower()):
             if t in _KEYWORD_STOP:
                 continue
             if t in {"table", "contents", "content", "provide", "list", "show", "give", "from", "form", "page", "fetch", "document"}:
@@ -1684,22 +1873,13 @@ class DocumentRAGRetriever:
         Return only the high-confidence document-name tokens from a query.
 
         Unlike _document_match_terms (which adds generic keywords for broad matching),
-        this returns only:
-          - Explicitly recognised doc names (go.data, stratec)
-          - Capitalised proper-noun tokens from the original query text (not the
-            first word of the sentence, which is always capitalised)
-          - Tokens >= 5 chars that are not common English words / stop words
+        this returns anchor tokens and proper nouns from the question only.
 
         Used by the strict document resolver to avoid matching the wrong document
         via common words like "all", "toc", etc.
         """
         q_lower = (query or "").lower()
-        terms: list[str] = []
-
-        if re.search(r"\bg[o\s]*\.?\s*data\b", q_lower) or "godata" in q_lower.replace(" ", "").replace(".", ""):
-            terms.append("godata")
-        if "stratec" in q_lower:
-            terms.append("stratec")
+        terms: list[str] = list(_query_anchor_terms(query))
 
         # Tokens that are capitalised mid-sentence are likely proper nouns / doc names
         words = re.findall(r"[A-Za-z][\w'-]*", query or "")
@@ -1715,6 +1895,10 @@ class DocumentRAGRetriever:
             "table", "contents", "content", "provide", "list", "show", "give",
             "from", "form", "page", "fetch", "document", "summary", "about",
             "please", "could", "would", "should", "entire", "complete", "whole",
+            "languages", "language", "online", "training", "course", "translated",
+            "translation", "international", "regional", "national", "network",
+            "networks", "epidemiology", "distinct", "explicitly", "mentioned",
+            "partners", "collaborators", "document", "report", "annual",
         }
         for t in re.findall(r"[\w'-]{6,}", q_lower):
             if t in _KEYWORD_STOP or t in _generic:

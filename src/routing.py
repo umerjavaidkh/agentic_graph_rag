@@ -13,10 +13,10 @@ from typing import Any, Callable, Optional
 from .auth.roles import UserContext
 from .config.prompts import load_prompt
 from .config.settings import (
-    CHAT_MODEL,
     FAST_ROUTE_QUERIES,
     MODEL_PROVIDER,
     OPENAI_API_KEY,
+    ROUTING_MODEL,
     estimate_route_max_tokens,
 )
 from .model_providers.factory import get_model_provider
@@ -31,7 +31,7 @@ MCP_ROUTE_TOOLS: list[dict[str, Any]] = [
             "name": "search_documents",
             "description": (
                 "Search ingested PDF/DOCX documents: policies, annual reports, manuals, "
-                "photo credits, appendices, WHO publications, Go.Data report text, sections, "
+                "photo credits, appendices, annual reports, manuals, sections, "
                 "tables in documents, and any factual answer that comes from document content—not "
                 "the Northwind product/order database."
             ),
@@ -51,7 +51,7 @@ MCP_ROUTE_TOOLS: list[dict[str, Any]] = [
             "description": (
                 "Query the Northwind-style business graph ONLY: products, orders, customers, "
                 "suppliers, sales analytics, Cypher/schema. Never use for PDF text, photo credits, "
-                "photographers, or WHO/Go.Data report content."
+                "photographers, or ingested report/PDF content."
             ),
             "parameters": {
                 "type": "object",
@@ -108,15 +108,11 @@ def has_document_cue(question: str) -> bool:
 _DOC_ROUTE = re.compile(
     r"\b(?:policy|policies|document|documents|pdf|manual|protocol|section\s+\d|"
     r"whistleblow|compliance\s+officer|procedure|page\s+\d+|figure|table\s+on|"
-    r"table\s+of\s+contents?|toc|annex|"
-    r"godata|go\.?\s*data|openwho|unicef|budget|allocation|funding|workshop|translated|translation|languages?|"
-    r"annual\s+report|community\s+of\s+practice|dhis2|who\s+github|"
-    r"goarn|institution|hosted|"
-    r"case[\s-]control|hospital|health\s*care\s*workers?|healthcare|sars[\s-]?cov|"
-    r"infection\s+risk|hcw\s*study|member\s+state|pandemic|outbreak|"
-    r"photo|photograph|credit|noor|photographer|illustration|attribution|"
-    r"identify\s+all|list\s+all|enumerate|appendix|acknowledgement|preface|"
-    r"\bwho\s*/|annual\s+report)\b",
+    r"table\s+of\s+contents?|toc|annex|appendix|acknowledgement|preface|chapter|"
+    r"report|reports|annual\s+report|workshop|translated|translation|languages?|"
+    r"institution|hosted|"
+    r"photo|photograph|credit|photographer|illustration|attribution|caption|"
+    r"identify\s+all|list\s+all|enumerate)\b",
     re.I,
 )
 
@@ -152,7 +148,7 @@ def select_mcp_tool(
     *,
     provider_name: str = MODEL_PROVIDER,
     api_key: str = OPENAI_API_KEY,
-    model: str = CHAT_MODEL,
+    model: str = ROUTING_MODEL,
 ) -> str:
     """
     Ask the LLM which MCP tool to invoke. Returns tool name (e.g. search_documents).

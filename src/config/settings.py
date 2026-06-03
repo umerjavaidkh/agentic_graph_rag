@@ -11,9 +11,10 @@ MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "openai").lower()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "gpt-4o-mini")
-# Optional override for structured-only calls (Text-to-Cypher + multistep planning + structured synthesis).
-# This lets you keep a cheaper CHAT_MODEL for documents/UI while using a stronger model for Cypher.
-STRUCTURED_MODEL = os.environ.get("STRUCTURED_MODEL", CHAT_MODEL)
+# Per-pipeline overrides (each defaults to CHAT_MODEL when unset).
+STRUCTURED_MODEL = os.environ.get("STRUCTURED_MODEL", CHAT_MODEL)  # Text-to-Cypher + structured synthesis
+ROUTING_MODEL = os.environ.get("ROUTING_MODEL", CHAT_MODEL)  # MCP tool selection (search_documents vs query_data)
+AXIS2_MODEL = os.environ.get("AXIS2_MODEL", CHAT_MODEL)  # Ingestion NER + optional relationship LLM pass
 
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
@@ -60,6 +61,21 @@ RETRIEVAL_MIN_RERANK_SCORE = float(os.environ.get("RETRIEVAL_MIN_RERANK_SCORE", 
 # Page vision fallback (cheap model, selective pages) — tables/charts/diagrams → visual_content
 ENABLE_PAGE_VISION = os.environ.get("ENABLE_PAGE_VISION", "false").lower() in ("1", "true", "yes")
 VISION_MODEL = os.environ.get("VISION_MODEL", "gpt-4o-mini")
+
+
+def get_model_config() -> dict[str, str]:
+    """Active model IDs per pipeline stage (for /config/models and ops dashboards)."""
+    return {
+        "provider": MODEL_PROVIDER,
+        "chat": CHAT_MODEL,
+        "structured": STRUCTURED_MODEL,
+        "routing": ROUTING_MODEL,
+        "embedding": EMBEDDING_MODEL,
+        "axis2": AXIS2_MODEL,
+        "vision": VISION_MODEL,
+    }
+
+
 VISION_DPI = int(os.environ.get("VISION_DPI", "120"))
 VISION_IMAGE_DETAIL = os.environ.get("VISION_IMAGE_DETAIL", "low")  # low | high (cost)
 VISION_MAX_PAGES_PER_DOC = int(os.environ.get("VISION_MAX_PAGES_PER_DOC", "25"))
@@ -99,6 +115,9 @@ def llm_max_tokens(env_key: str, default: int, *, minimum: int = 1, maximum: int
 
 # ── LLM max_tokens budgets (per call site) ───────────────────────────────
 STRUCTURED_SYNTHESIS_MAX_TOKENS = llm_max_tokens("STRUCTURED_SYNTHESIS_MAX_TOKENS", 600, minimum=100)
+STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS = llm_max_tokens(
+    "STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS", 4096, minimum=500
+)
 STRUCTURED_TEXT2CYPHER_MAX_TOKENS = llm_max_tokens("STRUCTURED_TEXT2CYPHER_MAX_TOKENS", 500)
 STRUCTURED_TEXT2CYPHER_LONG_MAX_TOKENS = llm_max_tokens("STRUCTURED_TEXT2CYPHER_LONG_MAX_TOKENS", 900)
 STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS = int(

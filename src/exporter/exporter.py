@@ -22,7 +22,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
 
-from neo4j import GraphDatabase
+from ..graph.driver import get_neo4j_driver
 
 from ..config.settings import NEO4J_WRITE_BATCH
 from ..document.versioning import DocumentRevisionPlan
@@ -79,38 +79,35 @@ class Neo4jExporter:
         (expire prior ACTIVE revision, purge its content subgraph, load snapshot).
         Returns metadata dict: skipped_duplicate, revision_id, logical_doc_id, version_number.
         """
-        driver = GraphDatabase.driver(uri, auth=(user, password))
+        driver = get_neo4j_driver(uri, user, password)
         meta: dict = {
             "skipped_duplicate": False,
             "revision_id": None,
             "logical_doc_id": None,
             "version_number": None,
         }
-        try:
-            with driver.session() as session:
-                self._ensure_constraints(session, nodes)
-                self._ensure_versioning_constraints(session)
-                self._ensure_indexes(session)
+        with driver.session() as session:
+            self._ensure_constraints(session, nodes)
+            self._ensure_versioning_constraints(session)
+            self._ensure_indexes(session)
 
-                if revision_plan is not None:
-                    meta["logical_doc_id"] = revision_plan.logical_id
-                    meta["revision_id"] = revision_plan.revision_id
-                    meta["version_number"] = revision_plan.version_number
-                    if skip_if_duplicate_hash and self.active_revision_has_hash(
-                        session, revision_plan.logical_id, revision_plan.content_hash
-                    ):
-                        meta["skipped_duplicate"] = True
-                        return meta
-                    self._install_revision_snapshot(
-                        session, revision_plan, nodes, edges
-                    )
-                else:
-                    for node in nodes:
-                        self._merge_node(session, node)
-                    for edge in edges:
-                        self._merge_edge(session, edge)
-        finally:
-            driver.close()
+            if revision_plan is not None:
+                meta["logical_doc_id"] = revision_plan.logical_id
+                meta["revision_id"] = revision_plan.revision_id
+                meta["version_number"] = revision_plan.version_number
+                if skip_if_duplicate_hash and self.active_revision_has_hash(
+                    session, revision_plan.logical_id, revision_plan.content_hash
+                ):
+                    meta["skipped_duplicate"] = True
+                    return meta
+                self._install_revision_snapshot(
+                    session, revision_plan, nodes, edges
+                )
+            else:
+                for node in nodes:
+                    self._merge_node(session, node)
+                for edge in edges:
+                    self._merge_edge(session, edge)
         if not meta.get("skipped_duplicate"):
             print("✅ Loaded graph into Neo4j")
         return meta

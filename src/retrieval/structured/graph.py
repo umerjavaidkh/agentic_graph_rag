@@ -8,7 +8,12 @@ from langgraph.graph import END, StateGraph
 
 from .retriever import StructuredRetriever
 from ...config.prompts import load_prompt
-from ...config.settings import STRUCTURED_MODEL, STRUCTURED_SYNTHESIS_MAX_TOKENS
+from ...config.settings import (
+    STRUCTURED_MODEL,
+    STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS,
+    STRUCTURED_SYNTHESIS_MAX_TOKENS,
+)
+from .query_intent import estimate_structured_synthesis_max_tokens
 from ...model_providers.factory import get_model_provider
 from .query_intent import analytics_result_limit
 from .state import StructuredState
@@ -117,7 +122,12 @@ def generate_node(state: StructuredState):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": str(question)},
         ],
-        max_tokens=STRUCTURED_SYNTHESIS_MAX_TOKENS,
+        max_tokens=estimate_structured_synthesis_max_tokens(
+            question,
+            chunk_count=len(chunks),
+            default_max=STRUCTURED_SYNTHESIS_MAX_TOKENS,
+            long_max=STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS,
+        ),
     )
     return {"answer": response.choices[0].message.content.strip(), "low_confidence": False}
 
