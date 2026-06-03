@@ -73,12 +73,19 @@ def _node_scope_cypher(alias: str = "n") -> str:
     Scope any content node (Page/Section/...) to a document without relying on
     variable-length CONTAINS paths (parsers can nest sections far deeper than a
     fixed hop budget). Matches the resolved logical id or a content-root id prefix.
+
+    The current id format is "<logical_id>:r<rev>::doc_<hash>...", so the ':'
+    prefix is the canonical scope. The '_' prefix is only used as a legacy
+    fallback for nodes that predate logical_doc_id — and is guarded by
+    `logical_doc_id IS NULL` so it cannot leak across sibling documents whose
+    logical id is a prefix of another (e.g. "doc_x" vs "doc_x_2").
     """
     return (
         f"($doc_id IS NULL "
         f"OR {alias}.logical_doc_id = $doc_id "
-        f"OR {alias}.id STARTS WITH $doc_id + '_' "
-        f"OR {alias}.id STARTS WITH $doc_id + ':')"
+        f"OR {alias}.id STARTS WITH $doc_id + ':' "
+        f"OR ({alias}.logical_doc_id IS NULL "
+        f"AND {alias}.id STARTS WITH $doc_id + '_'))"
     )
 
 # Structural + semantic edges created at ingest (Axis 1 & Axis 2).
@@ -363,6 +370,34 @@ class DocumentRAGRetriever:
 
         if is_toc_question(query):
             with self.driver.session() as session:
+                # If the user named a specific document but we cannot find it,
+                # return a clarification rather than silently using the wrong doc.
+                doc_terms = self._doc_name_terms(query)
+                if doc_terms:
+                    doc_id, _ = self._resolve_document_for_query_strict(session, query)
+                    if doc_id is None:
+                        docs = self._list_documents(session, limit=8)
+                        if docs:
+                            clar = self._exec.build_doc_choice_clarification(
+                                original_question=query,
+                                documents=docs,
+                            )
+                            return {
+                                "query": query,
+                                "strategy": "graph_rag",
+                                "mode": "needs_clarification",
+                                "original_question": query,
+                                "clarification_kind": clar.kind,
+                                "clarification_options": clar.options,
+                                "chunks": [{
+                                    "id": "clarification",
+                                    "title": "Clarification",
+                                    "text": clar.prompt,
+                                    "score": 1.0,
+                                    "related": [],
+                                }],
+                                "total_available": 1,
+                            }
                 toc_items = self._structural_toc_retrieve(session, query)
             if toc_items:
                 response = self._format_response(query, toc_items, user_context=ctx)
@@ -1008,7 +1043,11 @@ class DocumentRAGRetriever:
         2) Section titled Table of Contents / Contents.
         3) Outline from chapter + major section headings (not boxes/regions).
         """
-        doc_id, doc_title = self._resolve_document_for_query(session, query)
+        # Prefer strict resolution when the user named a specific document, so a
+        # generic term (e.g. "all") can't rank a bigger unrelated doc above it.
+        doc_id, doc_title = self._resolve_document_for_query_strict(session, query)
+        if doc_id is None:
+            doc_id, doc_title = self._resolve_document_for_query(session, query)
         label = doc_title or doc_id or "ingested document"
 
         pdf_page, doc_page = self._parse_page_targets(query)
@@ -1451,6 +1490,97 @@ class DocumentRAGRetriever:
             "related": ["via:structural_page"],
         }]
 
+    def _resolve_document_for_query_strict(
+        self, session, query: str
+    ) -> tuple[Optional[str], Optional[str]]:
+        """
+        Resolve the document a user named, scoring each logical document by how
+        distinctively its content matches the query's document-name terms.
+
+        Returns (None, None) when the query names a document that cannot be
+        confidently resolved (no match, or an ambiguous near-tie), so the caller
+        can ask the user to choose instead of silently guessing.
+
+        Scoring (document-agnostic, no per-document special-casing):
+          - For each term, count the DISTINCT content nodes per document whose
+            title/text contains it (counts, not boolean — a doc that mentions a
+            term many times beats one that mentions it once).
+          - Weight each term by inverse document frequency: terms appearing in
+            only one document are highly distinctive; terms appearing in every
+            document (e.g. "data", "report") contribute almost nothing.
+          - A title / logical-id match is treated as a very strong signal.
+          - The winner must lead the runner-up clearly, else we return None.
+        """
+        terms = self._doc_name_terms(query)
+        if not terms:
+            return None, None
+
+        lc = lifecycle_active("d")
+        lc_n = lifecycle_active("n")
+        rows = session.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]
+                  ->(:{DOC_REVISION_LABEL})-[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})
+            WHERE {lc}
+            WITH dl, d
+            UNWIND $terms AS term
+            OPTIONAL MATCH (d)-[:CONTAINS*1..6]->(n)
+            WHERE {lc_n}
+              AND (toLower(coalesce(n.title, '')) CONTAINS term
+                   OR toLower(coalesce(n.text, '')) CONTAINS term)
+            WITH dl, term, count(DISTINCT n) AS cnt,
+                 (toLower(coalesce(dl.title, '')) CONTAINS term
+                  OR toLower(dl.logical_id) CONTAINS term) AS title_match
+            RETURN dl.logical_id AS id,
+                   coalesce(dl.title, dl.logical_id) AS title,
+                   collect({{term: term, cnt: cnt, title_match: title_match}}) AS term_hits
+            """,
+            terms=terms,
+        )
+
+        docs: list[dict] = [dict(r) for r in rows]
+        if not docs:
+            return None, None
+
+        # Document frequency per term (how many docs contain it at all).
+        term_doc_freq: dict[str, int] = {t: 0 for t in terms}
+        for d in docs:
+            for h in d["term_hits"]:
+                if h["cnt"] > 0 or h["title_match"]:
+                    term_doc_freq[h["term"]] = term_doc_freq.get(h["term"], 0) + 1
+
+        total_docs = len(docs)
+
+        def term_weight(term: str) -> float:
+            df = term_doc_freq.get(term, 0)
+            if df <= 0:
+                return 0.0
+            # Inverse document frequency: distinctive terms (df=1) weigh most.
+            return float(total_docs) / float(df)
+
+        scored: list[tuple[float, str, str]] = []
+        for d in docs:
+            score = 0.0
+            for h in d["term_hits"]:
+                w = term_weight(h["term"])
+                if h["title_match"]:
+                    score += 1000.0 * w  # title/id match dominates
+                score += float(h["cnt"]) * w
+            scored.append((score, str(d["id"]), _clean_doc_title(str(d["title"] or d["id"]))))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top = scored[0]
+        if top[0] <= 0.0:
+            return None, None  # no real match → caller clarifies
+
+        # Require a clear lead over the runner-up to avoid guessing on near-ties.
+        if len(scored) > 1:
+            runner = scored[1][0]
+            if runner > 0.0 and top[0] < runner * 1.5:
+                return None, None  # ambiguous → caller clarifies
+
+        return top[1], top[2]
+
     def _resolve_document_for_query(self, session, query: str) -> tuple[Optional[str], Optional[str]]:
         """Return logical document id (preferred) and display title for doc-scoped retrieval."""
         terms = self._document_match_terms(query)
@@ -1547,6 +1677,51 @@ class DocumentRAGRetriever:
                 continue
             if t not in terms:
                 terms.append(t)
+        return terms[:6]
+
+    def _doc_name_terms(self, query: str) -> list[str]:
+        """
+        Return only the high-confidence document-name tokens from a query.
+
+        Unlike _document_match_terms (which adds generic keywords for broad matching),
+        this returns only:
+          - Explicitly recognised doc names (go.data, stratec)
+          - Capitalised proper-noun tokens from the original query text (not the
+            first word of the sentence, which is always capitalised)
+          - Tokens >= 5 chars that are not common English words / stop words
+
+        Used by the strict document resolver to avoid matching the wrong document
+        via common words like "all", "toc", etc.
+        """
+        q_lower = (query or "").lower()
+        terms: list[str] = []
+
+        if re.search(r"\bg[o\s]*\.?\s*data\b", q_lower) or "godata" in q_lower.replace(" ", "").replace(".", ""):
+            terms.append("godata")
+        if "stratec" in q_lower:
+            terms.append("stratec")
+
+        # Tokens that are capitalised mid-sentence are likely proper nouns / doc names
+        words = re.findall(r"[A-Za-z][\w'-]*", query or "")
+        for i, w in enumerate(words):
+            t = w.lower()
+            if i == 0:
+                continue  # skip sentence-start capitalisation
+            if w[0].isupper() and len(t) >= 3 and t not in _KEYWORD_STOP and t not in terms:
+                terms.append(t)
+
+        # Long tokens (≥6 chars) that survived stop-word filtering are also good candidates
+        _generic = {
+            "table", "contents", "content", "provide", "list", "show", "give",
+            "from", "form", "page", "fetch", "document", "summary", "about",
+            "please", "could", "would", "should", "entire", "complete", "whole",
+        }
+        for t in re.findall(r"[\w'-]{6,}", q_lower):
+            if t in _KEYWORD_STOP or t in _generic:
+                continue
+            if t not in terms:
+                terms.append(t)
+
         return terms[:6]
 
     def _query_keywords(self, question: str) -> list[str]:
