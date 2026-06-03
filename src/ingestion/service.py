@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import csv
+import contextlib
 import shutil
 import uuid
 from dataclasses import dataclass, field
@@ -22,6 +22,7 @@ from ..config.settings import (
     NEO4J_URI,
     NEO4J_USER,
     OPENAI_API_KEY,
+    REDIS_URL,
     STORE_INGESTION_ARTIFACTS,
 )
 from ..document.versioning import (
@@ -35,8 +36,10 @@ from ..models import NodeType
 from ..exporter.exporter import Neo4jExporter
 from ..models import DKGEdge, DKGNode
 from .models import IngestionStatus
+from .job_store import JobStore, get_job_store
 
 from ..auth.rbac_setup import GraphRBAC
+
 
 @dataclass
 class IngestionJob:
@@ -63,13 +66,15 @@ class IngestionJob:
 
 
 class IngestionManager:
-    def __init__(self):
-        self.jobs: Dict[str, IngestionJob] = {}
+    def __init__(self, store: Optional[JobStore] = None):
+        self.store: JobStore = store if store is not None else get_job_store()
         self.temp_dir = Path("tmp_ingest")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.output_base = Path("output/ingestion")
         if STORE_INGESTION_ARTIFACTS:
             self.output_base.mkdir(parents=True, exist_ok=True)
+
+    # ── Public submission API ──────────────────────────────────────────────
 
     def submit_unstructured(
         self,
@@ -83,7 +88,7 @@ class IngestionManager:
         if STORE_INGESTION_ARTIFACTS:
             job.output_dir = self.output_base / job.id
             job.output_dir.mkdir(parents=True, exist_ok=True)
-        self.jobs[job.id] = job
+        self.store.save(job)
         self._log(job, f"Created unstructured ingestion job: {job.name or job.id}")
         return job
 
@@ -99,20 +104,20 @@ class IngestionManager:
         if STORE_INGESTION_ARTIFACTS:
             job.output_dir = self.output_base / job.id
             job.output_dir.mkdir(parents=True, exist_ok=True)
-        self.jobs[job.id] = job
+        self.store.save(job)
         self._log(job, f"Created cypher ingestion job: {job.name or job.id}")
         return job
 
     def get_job(self, job_id: str) -> Optional[IngestionJob]:
-        return self.jobs.get(job_id)
+        return self.store.get(job_id)
 
-    def has_active_job(self) -> bool:
-        """True while a job is queued or in progress (not completed/failed)."""
-        terminal = {IngestionStatus.completed, IngestionStatus.failed}
-        return any(j.status not in terminal for j in self.jobs.values())
+    def list_job_ids(self, limit: int = 100) -> List[str]:
+        return self.store.list_ids(limit=limit)
+
+    # ── Job execution ──────────────────────────────────────────────────────
 
     def run_job(self, job_id: str) -> None:
-        job = self.jobs.get(job_id)
+        job = self.store.get(job_id)
         if job is None:
             return
 
@@ -137,6 +142,8 @@ class IngestionManager:
         finally:
             self._cleanup_job_inputs(job)
 
+    # ── Internal helpers ───────────────────────────────────────────────────
+
     def _ensure_rbac_schema(self, job: IngestionJob) -> None:
         """Seed RBAC in Neo4j only when the schema is not already present."""
         rbac = GraphRBAC(uri=NEO4J_URI, user=NEO4J_USER, password=NEO4J_PASSWORD)
@@ -159,8 +166,37 @@ class IngestionManager:
                 job.input_path.unlink()
                 self._log(job, f"Cleaned up temp input: {job.input_path}")
         except Exception as exc:
-            # Cleanup failure shouldn't fail the job.
             self._log(job, f"Temp cleanup failed for {job.input_path}: {exc}")
+
+    @contextlib.contextmanager
+    def _doc_lock(self, logical_id: str):
+        """
+        Acquire a per-logical-document Redis lock (if Redis is configured).
+
+        Prevents two workers from racing to install a new revision for the
+        same logical document. Documents with *different* logical IDs are
+        unaffected and process fully in parallel.
+        """
+        if not logical_id or not REDIS_URL:
+            yield
+            return
+
+        try:
+            import redis as _redis
+
+            conn = _redis.from_url(REDIS_URL, decode_responses=False)
+            lock_key = f"ingest:lock:{logical_id}"
+            lock = conn.lock(lock_key, timeout=1800, blocking_timeout=1800)
+            acquired = lock.acquire(blocking=True)
+            try:
+                yield
+            finally:
+                if acquired:
+                    with contextlib.suppress(Exception):
+                        lock.release()
+        except Exception:
+            # Redis unavailable: proceed without lock (best-effort).
+            yield
 
     def _process_unstructured(self, job: IngestionJob) -> None:
         self._set_status(job, IngestionStatus.parsing, "Parsing document")
@@ -174,7 +210,9 @@ class IngestionManager:
             job.input_path, doc_key=job.doc_key, job_id=job.id
         )
         job.logical_doc_id = logical_id
+        self.store.save(job)
 
+        # Fast duplicate check (no lock needed — reading is safe).
         if AUTO_LOAD_TO_NEO4J and DOC_SKIP_DUPLICATE_HASH:
             content_hash = file_content_sha256(job.input_path)
             job.content_hash = content_hash
@@ -238,6 +276,7 @@ class IngestionManager:
         job.revision_id = plan.revision_id
         job.content_hash = plan.content_hash
         job.version_number = plan.version_number
+        self.store.save(job)
         self._log(
             job,
             f"Revision plan: logical={plan.logical_id} rev={plan.revision_id} "
@@ -264,7 +303,6 @@ class IngestionManager:
             except Exception as exc:
                 self._log(job, f"Vision enrichment skipped: {exc}")
 
-        # Always attempt Axis 2 enrichment if OpenAI key is available
         if OPENAI_API_KEY:
             self._set_status(job, IngestionStatus.semantic_enrichment, "Running semantic enrichment (Axis 2)")
             try:
@@ -283,36 +321,39 @@ class IngestionManager:
             self._set_status(job, IngestionStatus.exporting, "Exporting Neo4j import artifacts")
             exporter.export(nodes, edges)
 
+        # Acquire per-logical-doc lock only around the Neo4j revision install.
+        # Workers processing different documents are never blocked.
         if AUTO_LOAD_TO_NEO4J:
             self._set_status(job, IngestionStatus.exporting, "Loading graph into Neo4j")
-            try:
-                load_meta = exporter.load_to_neo4j(
-                    nodes,
-                    edges,
-                    NEO4J_URI,
-                    NEO4J_USER,
-                    NEO4J_PASSWORD,
-                    revision_plan=plan,
-                    skip_if_duplicate_hash=DOC_SKIP_DUPLICATE_HASH,
-                )
-                if load_meta.get("skipped_duplicate"):
-                    job.skipped_duplicate = True
-                    job.neo4j_load_status = "skipped"
-                    job.neo4j_load_message = (
-                        "Identical content already ACTIVE for this logical document; "
-                        "ingest skipped."
+            with self._doc_lock(plan.logical_id):
+                try:
+                    load_meta = exporter.load_to_neo4j(
+                        nodes,
+                        edges,
+                        NEO4J_URI,
+                        NEO4J_USER,
+                        NEO4J_PASSWORD,
+                        revision_plan=plan,
+                        skip_if_duplicate_hash=DOC_SKIP_DUPLICATE_HASH,
                     )
-                    self._log(job, job.neo4j_load_message)
-                else:
-                    job.neo4j_load_status = "success"
-                    job.neo4j_load_message = (
-                        f"Graph loaded (revision {plan.revision_id})"
-                    )
-                    self._log(job, job.neo4j_load_message)
-            except Exception as exc:
-                job.neo4j_load_status = "failed"
-                job.neo4j_load_message = str(exc)
-                self._log(job, f"Neo4j load failed: {exc}")
+                    if load_meta.get("skipped_duplicate"):
+                        job.skipped_duplicate = True
+                        job.neo4j_load_status = "skipped"
+                        job.neo4j_load_message = (
+                            "Identical content already ACTIVE for this logical document; "
+                            "ingest skipped."
+                        )
+                        self._log(job, job.neo4j_load_message)
+                    else:
+                        job.neo4j_load_status = "success"
+                        job.neo4j_load_message = (
+                            f"Graph loaded (revision {plan.revision_id})"
+                        )
+                        self._log(job, job.neo4j_load_message)
+                except Exception as exc:
+                    job.neo4j_load_status = "failed"
+                    job.neo4j_load_message = str(exc)
+                    self._log(job, f"Neo4j load failed: {exc}")
         else:
             job.neo4j_load_status = "skipped"
             job.neo4j_load_message = "AUTO_LOAD_TO_NEO4J disabled"
@@ -331,7 +372,6 @@ class IngestionManager:
         cypher_text = job.input_path.read_text(encoding="utf-8")
         statements, params = self._parse_cypher_script(cypher_text)
         if job.cypher_params:
-            # Prefer explicit job params over any :param directives in the file.
             params = {**params, **job.cypher_params}
         if not statements:
             raise ValueError("Cypher file contained no statements.")
@@ -345,8 +385,6 @@ class IngestionManager:
                     try:
                         session.run(stmt, **params).consume()
                     except ClientError as exc:
-                        # Make common schema operations idempotent when scripts are re-run.
-                        # Examples: CREATE INDEX / CONSTRAINT where equivalent already exists.
                         code = getattr(exc, "code", "") or ""
                         if code in {
                             "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
@@ -367,11 +405,6 @@ class IngestionManager:
         """
         Parse a Cypher script that may include Neo4j Browser directives like:
           :param key => 'value';
-
-        Browser directives are not valid Cypher over the driver. We:
-        - Extract :param directives into a parameters dict
-        - Strip other ':' directives (e.g. :use)
-        - Split remaining Cypher by semicolon into statements
         """
         params: dict = {}
         cypher_lines: list[str] = []
@@ -399,21 +432,15 @@ class IngestionManager:
             if not stripped:
                 cypher_lines.append(line)
                 continue
-
-            # Neo4j Browser directives are prefixed with ':'
             if stripped.startswith(":"):
-                # Support ':param name => value'
                 if stripped.lower().startswith(":param"):
-                    # Example: :param openAIKey => 'sk-...';
                     rest = stripped[len(":param"):].strip()
                     if "=>" in rest:
                         key, value = rest.split("=>", 1)
                         key = key.strip().lstrip("$")
                         if key:
                             params[key] = _parse_param_value(value)
-                # Always skip directive lines (they are not Cypher)
                 continue
-
             cypher_lines.append(line)
 
         cypher_text = "\n".join(cypher_lines)
@@ -422,7 +449,6 @@ class IngestionManager:
             filtered: list[str] = []
             for stmt in statements:
                 s = stmt.lower()
-                # Skip GenAI embedding calls and the most common follow-up write step.
                 if "genai.vector.encode" in s or "ai.text.embed" in s:
                     continue
                 if "db.create.setnodevectorproperty" in s:
@@ -453,10 +479,13 @@ class IngestionManager:
         job.status = status
         if message:
             self._log(job, message)
+        # Persist status change immediately so any observer (API, other worker) can read it.
+        self.store.save(job)
 
     def _log(self, job: IngestionJob, message: str) -> None:
         timestamp = datetime.utcnow().isoformat() + "Z"
         entry = f"{timestamp} - {message}"
         job.logs.append(entry)
-        if len(job.logs) > 100:
-            job.logs = job.logs[-100:]
+        if len(job.logs) > 200:
+            job.logs = job.logs[-200:]
+        self.store.append_log(job.id, entry)

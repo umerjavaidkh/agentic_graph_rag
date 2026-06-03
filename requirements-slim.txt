@@ -22,3 +22,7 @@ scikit-learn>=1.4.0
 
 # ── Neo4j ───────────────────────────────
 neo4j>=5.20.0
+
+# ── Scalable ingestion queue (optional — degrades to in-process if unset) ──
+redis>=5.0.0
+rq>=1.16.0

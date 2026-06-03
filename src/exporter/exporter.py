@@ -18,10 +18,13 @@ Produces:
 """
 import csv
 import json
+from collections import defaultdict
 from pathlib import Path
+from typing import Dict, List
 
 from neo4j import GraphDatabase
 
+from ..config.settings import NEO4J_WRITE_BATCH
 from ..document.versioning import DocumentRevisionPlan
 from ..graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
 from ..models import DKGNode, DKGEdge, NodeType, RelType
@@ -244,27 +247,56 @@ class Neo4jExporter:
             source_filename=plan.source_filename,
         )
 
-        skip = {DOCUMENT_LOGICAL_LABEL, DOC_REVISION_LABEL, "Book"}
+        # ── Batched node writes grouped by label (UNWIND) ─────────────────
+        skip_labels = {DOCUMENT_LOGICAL_LABEL, DOC_REVISION_LABEL, "Book"}
+        nodes_by_label: Dict[str, List[DKGNode]] = defaultdict(list)
         for node in nodes:
-            label = (
-                node.type.value if isinstance(node.type, NodeType) else str(node.type)
-            )
-            if label in skip:
-                continue
-            Neo4jExporter._create_node_tx(tx, node)
+            label = node.type.value if isinstance(node.type, NodeType) else str(node.type)
+            if label not in skip_labels:
+                nodes_by_label[label].append(node)
+
+        for label, label_nodes in nodes_by_label.items():
+            for chunk_start in range(0, len(label_nodes), NEO4J_WRITE_BATCH):
+                chunk = label_nodes[chunk_start : chunk_start + NEO4J_WRITE_BATCH]
+                rows = [Neo4jExporter._node_to_param_dict(n) for n in chunk]
+                tx.run(
+                    f"UNWIND $rows AS row "
+                    f"CREATE (n:{label}) "
+                    "SET n = row",
+                    rows=rows,
+                )
+
+        # ── Batched edge writes grouped by rel_type (UNWIND) ──────────────
+        skip_rels = {
+            RelType.HAS_REVISION.value,
+            RelType.ACTIVE_REVISION.value,
+            RelType.ROOT.value,
+        }
+        edges_by_rel: Dict[str, List[DKGEdge]] = defaultdict(list)
         for edge in edges:
-            rel = (
-                edge.rel_type.value
-                if isinstance(edge.rel_type, RelType)
-                else str(edge.rel_type)
-            )
-            if rel in (
-                RelType.HAS_REVISION.value,
-                RelType.ACTIVE_REVISION.value,
-                RelType.ROOT.value,
-            ):
-                continue
-            Neo4jExporter._merge_edge_tx(tx, edge)
+            rel = edge.rel_type.value if isinstance(edge.rel_type, RelType) else str(edge.rel_type)
+            if rel not in skip_rels:
+                edges_by_rel[rel].append(edge)
+
+        for rel_type, rel_edges in edges_by_rel.items():
+            for chunk_start in range(0, len(rel_edges), NEO4J_WRITE_BATCH):
+                chunk = rel_edges[chunk_start : chunk_start + NEO4J_WRITE_BATCH]
+                rows = [
+                    {
+                        "source_id": e.source_id,
+                        "target_id": e.target_id,
+                        "weight": e.weight,
+                        "properties": json.dumps(e.properties),
+                    }
+                    for e in chunk
+                ]
+                tx.run(
+                    f"UNWIND $rows AS row "
+                    "MATCH (a {id: row.source_id}), (b {id: row.target_id}) "
+                    f"MERGE (a)-[r:{rel_type}]->(b) "
+                    "SET r.weight = row.weight, r.properties = row.properties",
+                    rows=rows,
+                )
 
         tx.run(
             f"""
@@ -275,6 +307,35 @@ class Neo4jExporter:
             revision_id=plan.revision_id,
             root_id=plan.content_root_id,
         )
+
+    @staticmethod
+    def _node_to_param_dict(node: DKGNode) -> dict:
+        """Serialise a DKGNode to a plain dict for use in UNWIND parameters."""
+        return {
+            "id": node.id,
+            "title": node.title,
+            "text": node.text,
+            "order": node.order,
+            "page_start": node.page_start,
+            "page_end": node.page_end,
+            "depth": node.depth,
+            "entities": node.entities,
+            "cluster_id": node.cluster_id,
+            "embedding": node.embedding,
+            "visual_content": node.visual_content,
+            "pdf_page": node.pdf_page,
+            "document_page": node.document_page,
+            "page_tags": node.page_tags or [],
+            "region_kind": node.region_kind,
+            "region_tags": node.region_tags or [],
+            "logical_doc_id": node.logical_doc_id,
+            "revision_id": node.revision_id,
+            "lifecycle_status": node.lifecycle_status,
+            "content_hash": node.content_hash,
+            "version_number": node.version_number,
+            "ingested_at": node.ingested_at,
+            "source_filename": node.source_filename,
+        }
 
     @staticmethod
     def _create_node_tx(tx, node: DKGNode) -> None:

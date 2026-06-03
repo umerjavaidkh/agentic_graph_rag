@@ -122,6 +122,31 @@ VISION_LLM_MAX_TOKENS = llm_max_tokens("VISION_LLM_MAX_TOKENS", 2000, minimum=25
 AXIS2_NER_MAX_TOKENS = llm_max_tokens("AXIS2_NER_MAX_TOKENS", 200)
 AXIS2_RELATION_MAX_TOKENS = llm_max_tokens("AXIS2_RELATION_MAX_TOKENS", 150)
 
+# ── Scalable ingestion pipeline ────────────────────────────────────────────
+# Redis broker URL. When unset, the pipeline falls back to in-process
+# BackgroundTasks (single-process, dev-friendly, no Redis required).
+REDIS_URL = os.environ.get("REDIS_URL", "")
+
+# RQ queue name consumed by `rq worker` containers.
+INGEST_QUEUE_NAME = os.environ.get("INGEST_QUEUE_NAME", "ingest")
+
+# Number of RQ worker threads per worker process (passed to `rq worker --burst`
+# or used by the worker entrypoint). Override per deployment.
+INGEST_WORKER_CONCURRENCY = int(os.environ.get("INGEST_WORKER_CONCURRENCY", "2"))
+
+# Axis 2 — parallel NER: max simultaneous LLM calls for entity extraction.
+AXIS2_NER_CONCURRENCY = int(os.environ.get("AXIS2_NER_CONCURRENCY", "8"))
+
+# Axis 2 — parallel LLM relationship pass: max simultaneous calls.
+AXIS2_LLM_PAIR_CONCURRENCY = int(os.environ.get("AXIS2_LLM_PAIR_CONCURRENCY", "6"))
+
+# Axis 2 — cap on candidate pairs fed to the expensive LLM relationship pass.
+# Pairs are ranked by embedding similarity; only the top-k are sent to the LLM.
+AXIS2_MAX_LLM_PAIRS = int(os.environ.get("AXIS2_MAX_LLM_PAIRS", "300"))
+
+# Neo4j: UNWIND batch size for node/edge bulk writes.
+NEO4J_WRITE_BATCH = int(os.environ.get("NEO4J_WRITE_BATCH", "2000"))
+
 # MCP routing: one tool call; args echo the user question verbatim.
 ROUTE_MAX_TOKENS_MIN = llm_max_tokens("ROUTE_MAX_TOKENS_MIN", 64, minimum=32)
 ROUTE_MAX_TOKENS_BASE = llm_max_tokens("ROUTE_MAX_TOKENS_BASE", 128, minimum=64)

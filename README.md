@@ -725,6 +725,92 @@ Poll `GET /ingest/jobs/{job_id}` for `logical_doc_id`, `revision_id`, `version_n
 
 ---
 
+### Scalable ingestion pipeline (Redis + RQ workers)
+
+The default single-process mode (`REDIS_URL` unset) runs jobs inside FastAPI via `BackgroundTasks` — great for local dev, no extra services required.
+
+For production / high-volume ingestion, set `REDIS_URL` to switch to the **Redis + RQ** path automatically:
+
+```
+REDIS_URL=redis://redis:6379/0
+```
+
+#### What changes with Redis
+
+| Aspect | Default (no Redis) | Redis + Workers |
+|--------|-------------------|-----------------|
+| Job storage | In-process dict | Redis hash (survives restarts) |
+| Dispatch | `BackgroundTasks` | RQ queue → workers |
+| Concurrency | 2 thread pool | N worker processes (scale freely) |
+| Retries | None | 2 retries with 30 s / 2 min back-off |
+| Dead-letter | None | `GET /ingest/queue/status` |
+| Per-doc locking | N/A | Redis lock (same doc serialised, different docs parallel) |
+
+#### Scale workers
+
+```bash
+# Start 3 parallel ingestion workers
+docker compose up --scale worker=3
+
+# Check queue depth and failed jobs
+curl http://localhost:8000/ingest/queue/status
+
+# List recent jobs
+curl http://localhost:8000/ingest/jobs
+```
+
+#### Inspect failed jobs (dead-letter)
+
+```bash
+curl http://localhost:8000/ingest/queue/status | python3 -m json.tool
+```
+
+Returns `failed_jobs[]` with `rq_job_id`, `exc_info`, `ended_at` for each exhausted job.
+
+#### Concurrency knobs
+
+All exposed via `.env` / environment:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | *(unset)* | Redis URL; unset = in-process mode |
+| `INGEST_QUEUE_NAME` | `ingest` | RQ queue name |
+| `INGEST_WORKER_CONCURRENCY` | `2` | Thread pool per worker process |
+| `AXIS2_NER_CONCURRENCY` | `8` | Parallel NER LLM calls per doc |
+| `AXIS2_LLM_PAIR_CONCURRENCY` | `6` | Parallel relationship LLM calls per doc |
+| `AXIS2_MAX_LLM_PAIRS` | `300` | Max candidate pairs sent to LLM relationship pass |
+| `NEO4J_WRITE_BATCH` | `2000` | UNWIND batch size for Neo4j bulk writes |
+
+#### Architecture (with Redis)
+
+```
+Client  ──POST /ingest/unstructured──►  API (FastAPI)
+                                              │
+                                   save upload to shared volume
+                                   create job in Redis
+                                              │
+                                         enqueue job_id
+                                              │
+                    ┌─────────────────────────▼───────────────────┐
+                    │              Redis "ingest" queue            │
+                    └──────┬────────────────────────┬─────────────┘
+                           │                        │
+                        Worker 1                 Worker N
+                           │                        │
+                   run_ingest_job()         run_ingest_job()
+                  ┌────────┴────────┐
+                  │  per-doc lock   │  ← different docs run in parallel
+                  │  (Redis lock)   │    same doc serialised
+                  └────────┬────────┘
+                  parse → Axis2 (parallel NER + LLM)
+                  → batched Neo4j UNWIND writes
+                  → update job status in Redis
+                           │
+Client  ──GET /ingest/jobs/{id}──►  API reads status from Redis ──► 200
+```
+
+---
+
 ## Project structure
 
 ```
