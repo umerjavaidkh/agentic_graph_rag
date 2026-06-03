@@ -19,3 +19,6 @@ output_v3/
 # Editor directories
 .vscode/
 .idea/
+
+# Eval UI runner recordings (large videos)
+eval/ui_runs/

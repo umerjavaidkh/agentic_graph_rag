@@ -246,6 +246,30 @@ pytest tests/test_rag_eval_validators.py -q   # offline validators
 
 Set `EVAL_BASE_URL` (default `http://localhost:8000`) and `EVAL_TIMEOUT` (default `180`) for slow LLM calls. Each case uses a fresh `thread_id`.
 
+### Recorded UI run (video report)
+
+`scripts/run_rag_eval_ui.py` drives the **real `/chat` page** with Playwright: it types each question, waits for the rendered answer (charts, tables, sources, meta chips), and records the whole session to a `.webm`. It also intercepts each `/query` response and runs the same validators, so the video doubles as a pass/fail report with an on-screen `[n/N] case_id — PASS/FAIL` banner.
+
+One-time setup (kept out of the server venv):
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install playwright
+.venv/bin/python -m playwright install chromium
+```
+
+Record a run (server must be up with the corpus ingested):
+
+```bash
+# 20 document questions → eval/ui_runs/<timestamp>/rag_eval_ui_document.webm + report.json
+.venv/bin/python scripts/run_rag_eval_ui.py --suite document
+
+.venv/bin/python scripts/run_rag_eval_ui.py --suite all --pause 2.5   # all 30
+.venv/bin/python scripts/run_rag_eval_ui.py --id godata_a01 --headed  # single case, watch live
+```
+
+Flags: `--pause` (seconds lingered on each answer for pacing), `--headed` (show the browser), `--keep-history` (continuous scroll instead of resetting between questions), `--out-dir`. Output `.webm` plays in any browser or VLC. Recorded artifacts under `eval/ui_runs/` are git-ignored.
+
 ---
 
 ## Architecture
