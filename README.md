@@ -8,6 +8,16 @@ Built with **Neo4j · FastAPI · LangGraph · OpenAI**.
 
 ---
 
+## Demo
+
+A full run of the **30-case eval suite** answering live in the chat UI — 20 unstructured document questions + 10 structured analytics questions (with bar/line/doughnut charts) — each validated with an on-screen PASS/FAIL banner. Final score: **30/30**.
+
+[![Agentic GraphRAG demo — 30/30 eval pass](https://img.youtube.com/vi/7011-xkI1RI/maxresdefault.jpg)](https://youtu.be/7011-xkI1RI)
+
+> ▶️ Watch the full run: https://youtu.be/7011-xkI1RI
+
+---
+
 ## Why this is different
 
 | Typical flat RAG | Agentic GraphRAG |
