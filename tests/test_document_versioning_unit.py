@@ -41,6 +41,12 @@ def test_resolve_logical_id_from_doc_key(v):
     assert v.resolve_logical_id(Path("Any Name.pdf"), doc_key="Go.Data Manual") == "go.data_manual"
 
 
+def test_resolve_logical_id_strips_job_prefix(v):
+    jid = "41f2877d939649e9ab08d82ed017950a"
+    path = Path(f"tmp_ingest/{jid}_rag_document_2.pdf")
+    assert v.resolve_logical_id(path, job_id=jid) == "doc_rag_document_2"
+
+
 def test_build_revision_plan_ids(v, tmp_path: Path):
     f = tmp_path / "sample.pdf"
     f.write_bytes(b"%PDF-1.4 minimal")

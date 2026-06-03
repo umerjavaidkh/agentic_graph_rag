@@ -27,15 +27,32 @@ def slug_logical_key(stem: str) -> str:
     return safe[:120] or "document"
 
 
+def upload_filename_stem(file_path: Path, job_id: str | None = None) -> str:
+    """
+    Stem used for default logical ids.
+
+    Temp uploads are stored as ``{job_id}_{original_name}``; strip the job prefix
+    so re-ingests of the same PDF share one logical document.
+    """
+    stem = file_path.stem
+    if job_id:
+        prefix = f"{job_id}_"
+        if stem.startswith(prefix):
+            return stem[len(prefix) :]
+    return stem
+
+
 def resolve_logical_id(
     file_path: Path,
     *,
     doc_key: str | None = None,
+    job_id: str | None = None,
 ) -> str:
     if doc_key and doc_key.strip():
         safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", doc_key.strip().lower()).strip("_")
-        return safe[:160] or slug_logical_key(file_path.stem)
-    return f"doc_{slug_logical_key(file_path.stem)}"
+        return safe[:160] or slug_logical_key(upload_filename_stem(file_path, job_id))
+    stem = upload_filename_stem(file_path, job_id)
+    return f"doc_{slug_logical_key(stem)}"
 
 
 @dataclass
@@ -53,10 +70,11 @@ def build_revision_plan(
     file_path: Path,
     *,
     doc_key: str | None = None,
+    job_id: str | None = None,
     version_number: int = 1,
     content_root_id: str | None = None,
 ) -> DocumentRevisionPlan:
-    logical_id = resolve_logical_id(file_path, doc_key=doc_key)
+    logical_id = resolve_logical_id(file_path, doc_key=doc_key, job_id=job_id)
     revision_id = f"{logical_id}:r{version_number}"
     root = content_root_id or f"doc_{slug_logical_key(file_path.stem)}"
     return DocumentRevisionPlan(

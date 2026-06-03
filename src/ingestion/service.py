@@ -170,7 +170,9 @@ class IngestionManager:
         if job.input_path.suffix.lower() != ".pdf":
             raise ValueError("Only PDF ingestion is supported by the lightweight parser.")
 
-        logical_id = resolve_logical_id(job.input_path, doc_key=job.doc_key)
+        logical_id = resolve_logical_id(
+            job.input_path, doc_key=job.doc_key, job_id=job.id
+        )
         job.logical_doc_id = logical_id
 
         if AUTO_LOAD_TO_NEO4J and DOC_SKIP_DUPLICATE_HASH:
@@ -227,6 +229,7 @@ class IngestionManager:
         plan = build_revision_plan(
             job.input_path,
             doc_key=job.doc_key,
+            job_id=job.id,
             version_number=version_number,
             content_root_id=content_root_id,
         )
