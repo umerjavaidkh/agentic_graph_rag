@@ -112,6 +112,11 @@ class IngestionStatusResponse(BaseModel):
     neo4j_load_message: Optional[str]
     logs: List[str]
     error: Optional[str]
+    logical_doc_id: Optional[str] = None
+    revision_id: Optional[str] = None
+    content_hash: Optional[str] = None
+    version_number: Optional[int] = None
+    skipped_duplicate: bool = False
 
 
 class QueryRequest(BaseModel):
@@ -191,13 +196,20 @@ async def ingest_unstructured(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     job_name: Optional[str] = Form(None),
+    doc_key: Optional[str] = Form(
+        None,
+        description=(
+            "Stable logical document key (e.g. godata-manual). "
+            "Re-ingests with the same key create a new revision; identical file hash is skipped."
+        ),
+    ),
 ):
     if ingestion_manager.has_active_job():
         raise HTTPException(
             status_code=409,
             detail="Another ingestion job is already running. Wait for it to finish before uploading again.",
         )
-    job = ingestion_manager.submit_unstructured(file, job_name=job_name)
+    job = ingestion_manager.submit_unstructured(file, job_name=job_name, doc_key=doc_key)
     background_tasks.add_task(_run_ingest_job, job.id)
     return IngestionResponse(
         job_id=job.id,
@@ -365,6 +377,11 @@ async def get_ingestion_job(job_id: str):
         neo4j_load_message=job.neo4j_load_message,
         logs=job.logs,
         error=job.error,
+        logical_doc_id=job.logical_doc_id,
+        revision_id=job.revision_id,
+        content_hash=job.content_hash,
+        version_number=job.version_number,
+        skipped_duplicate=job.skipped_duplicate,
     )
 
 

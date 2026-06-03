@@ -30,13 +30,27 @@ from ...config.settings import (
 from ...assets.factory import get_asset_store
 from ...document.page_numbers import parse_page_number_from_query
 from ...document.page_vision import PageVisionEnricher, compact_visual_content
-from ...graph.constants import DOCUMENT_ROOT_CYPHER
+from ...graph.constants import (
+    DOC_REVISION_LABEL,
+    DOCUMENT_LOGICAL_LABEL,
+    DOCUMENT_ROOT_CYPHER,
+)
+from ...graph.versioning import lifecycle_active
 from .visual_retrieval import parse_visual_intent
 from ...model_providers.factory import get_model_provider
 from .executor import DocumentQueryExecutor
 from ...telemetry.context import TelemetryEvent, get_telemetry
 
 provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+
+
+def _doc_scope_cypher(alias: str = "d") -> str:
+    """Match logical document id or revision-prefixed content root id."""
+    return (
+        f"($doc_id IS NULL OR {alias}.logical_doc_id = $doc_id "
+        f"OR {alias}.id = $doc_id "
+        f"OR ($doc_id IS NOT NULL AND {alias}.id STARTS WITH $doc_id + ':'))"
+    )
 
 # Structural + semantic edges created at ingest (Axis 1 & Axis 2).
 _GRAPH_REL_TYPES = (
@@ -420,10 +434,11 @@ class DocumentRAGRetriever:
     def _vector_seed(self, session, embedding: list[float], limit: int) -> list[dict]:
         try:
             rows = session.run(
-                """
+                f"""
                 CALL db.index.vector.queryNodes('section_embedding', $limit, $embedding)
                 YIELD node AS n, score
                 WHERE coalesce(n.text, '') <> ''
+                  AND {lifecycle_active("n")}
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
@@ -456,10 +471,11 @@ class DocumentRAGRetriever:
             return []
         try:
             rows = session.run(
-                """
-                CALL db.index.fulltext.queryNodes('node_text_index', $q, {limit: $limit})
+                f"""
+                CALL db.index.fulltext.queryNodes('node_text_index', $q, {{limit: $limit}})
                 YIELD node AS n, score
                 WHERE coalesce(n.text, '') <> ''
+                  AND {lifecycle_active("n")}
                   AND any(l IN labels(n) WHERE l IN $labels)
                 RETURN
                   coalesce(n.id, '') AS id,
@@ -497,13 +513,15 @@ class DocumentRAGRetriever:
         limit: int,
     ) -> list[dict]:
         if hops == 1:
-            cypher = """
+            cypher = f"""
                 UNWIND $seed_ids AS sid
-                MATCH (seed:Section {id: sid})
+                MATCH (seed:Section {{id: sid}})
+                WHERE {lifecycle_active("seed")}
                 MATCH (seed)-[r]-(related)
                 WHERE type(r) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
                   AND coalesce(related.text, '') <> ''
+                  AND {lifecycle_active("related")}
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
                   coalesce(related.title, '') AS title,
@@ -516,14 +534,16 @@ class DocumentRAGRetriever:
                 LIMIT $limit
             """
         else:
-            cypher = """
+            cypher = f"""
                 UNWIND $seed_ids AS sid
-                MATCH (seed:Section {id: sid})
+                MATCH (seed:Section {{id: sid}})
+                WHERE {lifecycle_active("seed")}
                 MATCH (seed)-[r1]-(mid)-[r2]-(related)
                 WHERE type(r1) IN $rel_types
                   AND type(r2) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
                   AND coalesce(related.text, '') <> ''
+                  AND {lifecycle_active("related")}
                   AND related.id <> sid
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
@@ -856,7 +876,7 @@ class DocumentRAGRetriever:
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND coalesce(n.text, '') <> ''
@@ -915,7 +935,7 @@ class DocumentRAGRetriever:
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND coalesce(n.text, '') <> ''
@@ -964,7 +984,7 @@ class DocumentRAGRetriever:
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (s:Section)
             WHERE s.id STARTS WITH d.id + '_'
                OR EXISTS {{ MATCH (d)-[:CONTAINS*1..5]->(s) }}
@@ -1066,7 +1086,7 @@ class DocumentRAGRetriever:
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (p:Page)
             WHERE p.id STARTS WITH d.id + '_page_'
               AND (
@@ -1262,7 +1282,7 @@ class DocumentRAGRetriever:
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (p:Page)
             WHERE p.id STARTS WITH d.id + '_page_'
               AND (
@@ -1343,20 +1363,51 @@ class DocumentRAGRetriever:
         }]
 
     def _resolve_document_for_query(self, session, query: str) -> tuple[Optional[str], Optional[str]]:
-        """Pick the document root best matching the question (name / content terms)."""
+        """Return logical document id (preferred) and display title for doc-scoped retrieval."""
         terms = self._document_match_terms(query)
+        lc = lifecycle_active("d")
+        lc_n = lifecycle_active("n")
         if terms:
             row = session.run(
                 f"""
                 UNWIND $terms AS term
+                MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
+                WHERE toLower(coalesce(dl.title, '')) CONTAINS term
+                   OR toLower(dl.logical_id) CONTAINS term
+                   OR EXISTS {{
+                     MATCH (dl)-[:ACTIVE_REVISION]->(:{DOC_REVISION_LABEL})
+                           -[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})
+                     WHERE {lc}
+                     MATCH (d)-[:CONTAINS*1..5]->(n)
+                     WHERE {lc_n}
+                       AND (toLower(coalesce(n.title, '')) CONTAINS term
+                            OR toLower(coalesce(n.text, '')) CONTAINS term)
+                   }}
+                RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title,
+                       count(*) AS hits
+                ORDER BY hits DESC
+                LIMIT 1
+                """,
+                terms=terms,
+            ).single()
+            if row and row.get("id"):
+                return str(row["id"]), str(row.get("title") or row["id"])
+
+            row = session.run(
+                f"""
+                UNWIND $terms AS term
                 MATCH (d:{DOCUMENT_ROOT_CYPHER})
-                WHERE toLower(d.title) CONTAINS term
+                WHERE {lc}
+                  AND (toLower(coalesce(d.title, '')) CONTAINS term
                    OR EXISTS {{
                      MATCH (d)-[:CONTAINS*1..5]->(n)
-                     WHERE toLower(coalesce(n.title, '')) CONTAINS term
-                        OR toLower(coalesce(n.text, '')) CONTAINS term
-                   }}
-                RETURN d.id AS id, coalesce(d.title, d.id) AS title, count(*) AS hits
+                     WHERE {lc_n}
+                       AND (toLower(coalesce(n.title, '')) CONTAINS term
+                            OR toLower(coalesce(n.text, '')) CONTAINS term)
+                   }})
+                RETURN coalesce(d.logical_doc_id, d.id) AS id,
+                       coalesce(d.title, d.id) AS title,
+                       count(*) AS hits
                 ORDER BY hits DESC
                 LIMIT 1
                 """,
@@ -1367,11 +1418,26 @@ class DocumentRAGRetriever:
 
         row = session.run(
             f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]->(:{DOC_REVISION_LABEL})
+                  -[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})-[:CONTAINS*1..4]->(s:Section)
+            WHERE {lc} AND {lifecycle_active("s")}
+            WITH dl, count(s) AS n
+            ORDER BY n DESC
+            LIMIT 1
+            RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title
+            """
+        ).single()
+        if row and row.get("id"):
+            return str(row["id"]), str(row.get("title") or row["id"])
+
+        row = session.run(
+            f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})-[:CONTAINS*1..4]->(s:Section)
+            WHERE {lc} AND {lifecycle_active("s")}
             WITH d, count(s) AS n
             ORDER BY n DESC
             LIMIT 1
-            RETURN d.id AS id, coalesce(d.title, d.id) AS title
+            RETURN coalesce(d.logical_doc_id, d.id) AS id, coalesce(d.title, d.id) AS title
             """
         ).single()
         if row and row.get("id"):
@@ -1430,9 +1496,23 @@ class DocumentRAGRetriever:
             return None
         row = session.run(
             f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
+            WHERE toLower(coalesce(dl.title, '')) CONTAINS toLower($name)
+               OR toLower(dl.logical_id) CONTAINS toLower($name)
+            RETURN dl.logical_id AS id
+            LIMIT 1
+            """,
+            name=name.strip(),
+        ).single()
+        if row and row.get("id"):
+            return str(row["id"])
+        row = session.run(
+            f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE d.title IS NOT NULL AND toLower(d.title) CONTAINS toLower($name)
-            RETURN d.id AS id
+            WHERE {lifecycle_active("d")}
+              AND d.title IS NOT NULL
+              AND toLower(d.title) CONTAINS toLower($name)
+            RETURN coalesce(d.logical_doc_id, d.id) AS id
             LIMIT 1
             """,
             name=name.strip(),
@@ -1442,9 +1522,25 @@ class DocumentRAGRetriever:
     def _list_documents(self, session, limit: int = 5) -> list[dict[str, str]]:
         rows = session.run(
             f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
+            RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title
+            ORDER BY title
+            LIMIT $limit
+            """,
+            limit=max(1, int(limit)),
+        )
+        out: list[dict[str, str]] = []
+        for r in rows:
+            if r.get("id"):
+                out.append({"id": str(r["id"]), "title": str(r.get("title") or r["id"])})
+        if out:
+            return out
+        rows = session.run(
+            f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            RETURN d.id AS id, coalesce(d.title, d.id) AS title
-            ORDER BY coalesce(d.title, d.id)
+            WHERE {lifecycle_active("d")}
+            RETURN coalesce(d.logical_doc_id, d.id) AS id, coalesce(d.title, d.id) AS title
+            ORDER BY title
             LIMIT $limit
             """,
             limit=max(1, int(limit)),
@@ -1467,7 +1563,7 @@ class DocumentRAGRetriever:
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (s:Section)
             WHERE (s.id STARTS WITH d.id + '_' OR EXISTS {{ MATCH (d)-[:CONTAINS*1..6]->(s) }})
               AND s.title IS NOT NULL
@@ -1520,7 +1616,7 @@ class DocumentRAGRetriever:
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND (
@@ -1576,7 +1672,7 @@ class DocumentRAGRetriever:
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND (
@@ -1643,7 +1739,7 @@ class DocumentRAGRetriever:
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (p:Page)
             WHERE p.id STARTS WITH d.id + '_page_'
               AND toLower(coalesce(p.text, '')) CONTAINS $box_phrase

@@ -9,3 +9,6 @@ DOCUMENT_ROOT_CYPHER = f"{DOCUMENT_ROOT_LABEL}|{LEGACY_DOCUMENT_ROOT_LABEL}"
 
 # Node types that participate in full-text / vector indexes with the document tree.
 INDEXED_NODE_CYPHER = f"{DOCUMENT_ROOT_CYPHER}|Chapter|Section|Page|Region|Concept"
+
+DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
+DOC_REVISION_LABEL = "DocRevision"

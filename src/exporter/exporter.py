@@ -22,6 +22,8 @@ from pathlib import Path
 
 from neo4j import GraphDatabase
 
+from ..document.versioning import DocumentRevisionPlan
+from ..graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
 from ..models import DKGNode, DKGEdge, NodeType, RelType
 
 
@@ -65,17 +67,269 @@ class Neo4jExporter:
         uri: str,
         user: str,
         password: str,
-    ) -> None:
+        *,
+        revision_plan: DocumentRevisionPlan | None = None,
+        skip_if_duplicate_hash: bool = True,
+    ) -> dict:
+        """
+        Load graph into Neo4j. When revision_plan is set, runs versioned ingest
+        (expire prior ACTIVE revision, purge its content subgraph, load snapshot).
+        Returns metadata dict: skipped_duplicate, revision_id, logical_doc_id, version_number.
+        """
         driver = GraphDatabase.driver(uri, auth=(user, password))
-        with driver.session() as session:
-            self._ensure_constraints(session, nodes)
-            self._ensure_indexes(session)          # ← ADD THIS LINE
-            for node in nodes:
-                self._merge_node(session, node)
-            for edge in edges:
-                self._merge_edge(session, edge)
-        driver.close()
-        print("✅ Loaded graph into Neo4j")
+        meta: dict = {
+            "skipped_duplicate": False,
+            "revision_id": None,
+            "logical_doc_id": None,
+            "version_number": None,
+        }
+        try:
+            with driver.session() as session:
+                self._ensure_constraints(session, nodes)
+                self._ensure_versioning_constraints(session)
+                self._ensure_indexes(session)
+
+                if revision_plan is not None:
+                    meta["logical_doc_id"] = revision_plan.logical_id
+                    meta["revision_id"] = revision_plan.revision_id
+                    meta["version_number"] = revision_plan.version_number
+                    if skip_if_duplicate_hash and self.active_revision_has_hash(
+                        session, revision_plan.logical_id, revision_plan.content_hash
+                    ):
+                        meta["skipped_duplicate"] = True
+                        return meta
+                    self._install_revision_snapshot(
+                        session, revision_plan, nodes, edges
+                    )
+                else:
+                    for node in nodes:
+                        self._merge_node(session, node)
+                    for edge in edges:
+                        self._merge_edge(session, edge)
+        finally:
+            driver.close()
+        if not meta.get("skipped_duplicate"):
+            print("✅ Loaded graph into Neo4j")
+        return meta
+
+    def _ensure_versioning_constraints(self, session) -> None:
+        session.run(
+            f"CREATE CONSTRAINT document_logical_id IF NOT EXISTS "
+            f"FOR (n:{DOCUMENT_LOGICAL_LABEL}) REQUIRE n.logical_id IS UNIQUE"
+        )
+        session.run(
+            f"CREATE CONSTRAINT doc_revision_id IF NOT EXISTS "
+            f"FOR (n:{DOC_REVISION_LABEL}) REQUIRE n.id IS UNIQUE"
+        )
+        session.run(
+            "CREATE INDEX doc_revision_logical IF NOT EXISTS "
+            f"FOR (n:{DOC_REVISION_LABEL}) ON (n.logical_doc_id)"
+        )
+        session.run(
+            "CREATE INDEX content_logical_lifecycle IF NOT EXISTS "
+            "FOR (n:Section) ON (n.logical_doc_id, n.lifecycle_status)"
+        )
+        session.run(
+            "CREATE INDEX page_logical_lifecycle IF NOT EXISTS "
+            "FOR (n:Page) ON (n.logical_doc_id, n.lifecycle_status)"
+        )
+        session.run(
+            "CREATE INDEX section_revision IF NOT EXISTS "
+            "FOR (n:Section) ON (n.revision_id)"
+        )
+
+    def active_revision_has_hash(
+        self, session, logical_id: str, content_hash: str
+    ) -> bool:
+        row = session.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
+                  -[:ACTIVE_REVISION]->(rev:{DOC_REVISION_LABEL})
+            WHERE rev.content_hash = $content_hash AND rev.status = 'ACTIVE'
+            RETURN rev.id AS id LIMIT 1
+            """,
+            logical_id=logical_id,
+            content_hash=content_hash,
+        ).single()
+        return bool(row and row.get("id"))
+
+    def next_version_number(self, session, logical_id: str) -> int:
+        row = session.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
+                  -[:HAS_REVISION]->(rev:{DOC_REVISION_LABEL})
+            RETURN max(rev.version_number) AS mx
+            """,
+            logical_id=logical_id,
+        ).single()
+        mx = row.get("mx") if row else None
+        return int(mx or 0) + 1
+
+    def _install_revision_snapshot(
+        self,
+        session,
+        plan: DocumentRevisionPlan,
+        nodes: list[DKGNode],
+        edges: list[DKGEdge],
+    ) -> None:
+        session.execute_write(self._install_revision_tx, plan, nodes, edges)
+
+    @staticmethod
+    def _install_revision_tx(tx, plan: DocumentRevisionPlan, nodes, edges) -> None:
+        tx.run(
+            f"""
+            MERGE (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
+            ON CREATE SET dl.title = $title, dl.created_at = timestamp()
+            ON MATCH SET dl.title = coalesce(dl.title, $title),
+                         dl.updated_at = timestamp()
+            """,
+            logical_id=plan.logical_id,
+            title=plan.title,
+        )
+        row = tx.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
+            OPTIONAL MATCH (dl)-[:ACTIVE_REVISION]->(prev:{DOC_REVISION_LABEL})
+            RETURN prev.id AS prev_id, prev.version_number AS prev_ver
+            """,
+            logical_id=plan.logical_id,
+        ).single()
+        prev_id = row.get("prev_id") if row else None
+        if prev_id:
+            tx.run(
+                f"""
+                MATCH (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
+                      -[ar:ACTIVE_REVISION]->(prev:{DOC_REVISION_LABEL} {{id: $prev_id}})
+                DELETE ar
+                SET prev.status = 'EXPIRED',
+                    prev.expired_at = timestamp(),
+                    prev.lifecycle_status = 'EXPIRED'
+                WITH prev
+                MATCH (n)
+                WHERE n.revision_id = $prev_id
+                  AND NOT n:{DOC_REVISION_LABEL}
+                  AND NOT n:{DOCUMENT_LOGICAL_LABEL}
+                DETACH DELETE n
+                """,
+                logical_id=plan.logical_id,
+                prev_id=prev_id,
+            )
+
+        tx.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
+            CREATE (rev:{DOC_REVISION_LABEL} {{
+                id: $revision_id,
+                logical_id: $logical_id,
+                logical_doc_id: $logical_id,
+                revision_id: $revision_id,
+                version_number: $version_number,
+                status: 'ACTIVE',
+                lifecycle_status: 'ACTIVE',
+                content_hash: $content_hash,
+                title: $title,
+                text: $source_filename,
+                source_filename: $source_filename,
+                ingested_at: timestamp(),
+                uploaded_at: timestamp()
+            }})
+            MERGE (dl)-[:HAS_REVISION]->(rev)
+            CREATE (dl)-[:ACTIVE_REVISION]->(rev)
+            """,
+            logical_id=plan.logical_id,
+            revision_id=plan.revision_id,
+            version_number=plan.version_number,
+            content_hash=plan.content_hash,
+            title=plan.title,
+            source_filename=plan.source_filename,
+        )
+
+        skip = {DOCUMENT_LOGICAL_LABEL, DOC_REVISION_LABEL, "Book"}
+        for node in nodes:
+            label = (
+                node.type.value if isinstance(node.type, NodeType) else str(node.type)
+            )
+            if label in skip:
+                continue
+            Neo4jExporter._create_node_tx(tx, node)
+        for edge in edges:
+            rel = (
+                edge.rel_type.value
+                if isinstance(edge.rel_type, RelType)
+                else str(edge.rel_type)
+            )
+            if rel in (
+                RelType.HAS_REVISION.value,
+                RelType.ACTIVE_REVISION.value,
+                RelType.ROOT.value,
+            ):
+                continue
+            Neo4jExporter._merge_edge_tx(tx, edge)
+
+        tx.run(
+            f"""
+            MATCH (rev:{DOC_REVISION_LABEL} {{id: $revision_id}})
+            MATCH (root {{id: $root_id}})
+            MERGE (rev)-[:ROOT]->(root)
+            """,
+            revision_id=plan.revision_id,
+            root_id=plan.content_root_id,
+        )
+
+    @staticmethod
+    def _create_node_tx(tx, node: DKGNode) -> None:
+        label = node.type.value if isinstance(node.type, NodeType) else str(node.type)
+        tx.run(
+            f"CREATE (n:{label} {{id: $id}}) "
+            "SET n.title = $title, n.text = $text, n.order = $order,"
+            " n.page_start = $page_start, n.page_end = $page_end,"
+            " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
+            " n.embedding = $embedding, n.visual_content = $visual_content,"
+            " n.pdf_page = $pdf_page, n.document_page = $document_page,"
+            " n.page_tags = $page_tags, n.image_key = $image_key,"
+            " n.region_kind = $region_kind, n.region_tags = $region_tags,"
+            " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
+            " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash,"
+            " n.version_number = $version_number, n.ingested_at = $ingested_at,"
+            " n.source_filename = $source_filename",
+            id=node.id,
+            title=node.title,
+            text=node.text,
+            order=node.order,
+            page_start=node.page_start,
+            page_end=node.page_end,
+            depth=node.depth,
+            entities=node.entities,
+            cluster_id=node.cluster_id,
+            embedding=node.embedding,
+            visual_content=node.visual_content,
+            pdf_page=node.pdf_page,
+            document_page=node.document_page,
+            page_tags=node.page_tags or [],
+            image_key=node.image_key,
+            region_kind=node.region_kind,
+            region_tags=node.region_tags or [],
+            logical_doc_id=node.logical_doc_id,
+            revision_id=node.revision_id,
+            lifecycle_status=node.lifecycle_status,
+            content_hash=node.content_hash,
+            version_number=node.version_number,
+            ingested_at=node.ingested_at,
+            source_filename=node.source_filename,
+        )
+
+    @staticmethod
+    def _merge_edge_tx(tx, edge: DKGEdge) -> None:
+        rel_type = edge.rel_type.value if isinstance(edge.rel_type, RelType) else str(edge.rel_type)
+        tx.run(
+            "MATCH (a {id: $source_id}), (b {id: $target_id}) "
+            f"MERGE (a)-[r:{rel_type}]->(b) "
+            "SET r.weight = $weight, r.properties = $properties",
+            source_id=edge.source_id,
+            target_id=edge.target_id,
+            weight=edge.weight,
+            properties=json.dumps(edge.properties),
+        )
 
     def _ensure_indexes(self, session) -> None:
         """Idempotently create full-text + vector indexes on every ingestion."""
@@ -96,6 +350,8 @@ class Neo4jExporter:
             """CREATE VECTOR INDEX section_embedding IF NOT EXISTS
             FOR (n:Section) ON (n.embedding)
             OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}""",
+            "CREATE INDEX section_logical_rev IF NOT EXISTS "
+            "FOR (n:Section) ON (n.logical_doc_id, n.revision_id)",
         ]
         for stmt in statements:
             try:
@@ -128,7 +384,9 @@ class Neo4jExporter:
             " n.embedding = $embedding, n.visual_content = $visual_content,"
             " n.pdf_page = $pdf_page, n.document_page = $document_page,"
             " n.page_tags = $page_tags, n.image_key = $image_key,"
-            " n.region_kind = $region_kind, n.region_tags = $region_tags",
+            " n.region_kind = $region_kind, n.region_tags = $region_tags,"
+            " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
+            " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash",
             id=node.id,
             title=node.title,
             text=node.text,
@@ -146,6 +404,10 @@ class Neo4jExporter:
             image_key=node.image_key,
             region_kind=node.region_kind,
             region_tags=node.region_tags or [],
+            logical_doc_id=node.logical_doc_id,
+            revision_id=node.revision_id,
+            lifecycle_status=node.lifecycle_status,
+            content_hash=node.content_hash,
         )
 
     def _merge_edge(self, session, edge: DKGEdge) -> None:

@@ -17,12 +17,19 @@ from ..config.settings import (
     CLEANUP_BOOK_ASSETS_ON_INGEST,
     CLEANUP_TMP_INGEST,
     CYPHER_INGEST_SKIP_GENAI,
+    DOC_SKIP_DUPLICATE_HASH,
     ENABLE_PAGE_VISION,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
     OPENAI_API_KEY,
     STORE_INGESTION_ARTIFACTS,
+)
+from ..document.versioning import (
+    apply_revision_to_graph,
+    build_revision_plan,
+    file_content_sha256,
+    resolve_logical_id,
 )
 from ..assets.cleanup import cleanup_document_assets
 from ..document.parser import LightPdfParser
@@ -38,6 +45,7 @@ class IngestionJob:
     id: str
     type: str
     name: Optional[str] = None
+    doc_key: Optional[str] = None
     status: IngestionStatus = IngestionStatus.queued
     created_at: datetime = field(default_factory=datetime.utcnow)
     started_at: Optional[datetime] = None
@@ -49,6 +57,11 @@ class IngestionJob:
     neo4j_load_message: Optional[str] = None
     logs: List[str] = field(default_factory=list)
     error: Optional[str] = None
+    logical_doc_id: Optional[str] = None
+    revision_id: Optional[str] = None
+    content_hash: Optional[str] = None
+    version_number: Optional[int] = None
+    skipped_duplicate: bool = False
 
 
 class IngestionManager:
@@ -64,8 +77,10 @@ class IngestionManager:
         self,
         upload: UploadFile,
         job_name: Optional[str] = None,
+        doc_key: Optional[str] = None,
     ) -> IngestionJob:
         job = self._create_job("unstructured", job_name=job_name)
+        job.doc_key = doc_key
         job.input_path = self._save_upload(upload, job.id)
         if STORE_INGESTION_ARTIFACTS:
             job.output_dir = self.output_base / job.id
@@ -157,14 +172,78 @@ class IngestionManager:
         if job.input_path.suffix.lower() != ".pdf":
             raise ValueError("Only PDF ingestion is supported by the lightweight parser.")
 
+        logical_id = resolve_logical_id(job.input_path, doc_key=job.doc_key)
+        job.logical_doc_id = logical_id
+
+        if AUTO_LOAD_TO_NEO4J and DOC_SKIP_DUPLICATE_HASH:
+            content_hash = file_content_sha256(job.input_path)
+            job.content_hash = content_hash
+            exporter_probe = Neo4jExporter(
+                output_dir=str(job.output_dir) if job.output_dir else Path(".")
+            )
+            driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+            try:
+                with driver.session() as session:
+                    if exporter_probe.active_revision_has_hash(
+                        session, logical_id, content_hash
+                    ):
+                        job.skipped_duplicate = True
+                        job.neo4j_load_status = "skipped"
+                        job.neo4j_load_message = (
+                            "Identical content already ACTIVE for this logical document; "
+                            "ingest skipped (no parse)."
+                        )
+                        self._log(job, job.neo4j_load_message)
+                        return
+            finally:
+                driver.close()
+
         parser = LightPdfParser()
         nodes, edges = parser.parse(str(job.input_path))
         self._log(job, f"Parsed {len(nodes)} nodes and {len(edges)} edges")
 
-        document_id = next(
-            (n.id for n in nodes if n.type in (NodeType.DOCUMENT, NodeType.DOCUMENT.value, NodeType.BOOK, NodeType.BOOK.value)),
+        content_root_id = next(
+            (
+                n.id
+                for n in nodes
+                if n.type
+                in (
+                    NodeType.DOCUMENT,
+                    NodeType.DOCUMENT.value,
+                    NodeType.BOOK,
+                    NodeType.BOOK.value,
+                )
+            ),
             f"doc_{job.id}",
         )
+        exporter = Neo4jExporter(output_dir=str(job.output_dir) if job.output_dir else Path("."))
+        version_number = 1
+        if AUTO_LOAD_TO_NEO4J:
+            driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+            try:
+                with driver.session() as session:
+                    version_number = exporter.next_version_number(session, logical_id)
+            finally:
+                driver.close()
+
+        plan = build_revision_plan(
+            job.input_path,
+            doc_key=job.doc_key,
+            version_number=version_number,
+            content_root_id=content_root_id,
+        )
+        nodes, edges = apply_revision_to_graph(nodes, edges, plan)
+        job.logical_doc_id = plan.logical_id
+        job.revision_id = plan.revision_id
+        job.content_hash = plan.content_hash
+        job.version_number = plan.version_number
+        self._log(
+            job,
+            f"Revision plan: logical={plan.logical_id} rev={plan.revision_id} "
+            f"v{plan.version_number} hash={plan.content_hash[:12]}…",
+        )
+
+        document_id = plan.logical_id
         if CLEANUP_BOOK_ASSETS_ON_INGEST:
             try:
                 removed = cleanup_document_assets(document_id)
@@ -230,7 +309,6 @@ class IngestionManager:
         else:
             self._log(job, "OPENAI_API_KEY not configured; skipping semantic enrichment")
 
-        exporter = Neo4jExporter(output_dir=str(job.output_dir) if job.output_dir else Path("."))
         if STORE_INGESTION_ARTIFACTS and job.output_dir:
             self._set_status(job, IngestionStatus.exporting, "Exporting Neo4j import artifacts")
             exporter.export(nodes, edges)
@@ -238,10 +316,29 @@ class IngestionManager:
         if AUTO_LOAD_TO_NEO4J:
             self._set_status(job, IngestionStatus.exporting, "Loading graph into Neo4j")
             try:
-                exporter.load_to_neo4j(nodes, edges, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-                job.neo4j_load_status = "success"
-                job.neo4j_load_message = "Graph loaded into Neo4j successfully"
-                self._log(job, job.neo4j_load_message)
+                load_meta = exporter.load_to_neo4j(
+                    nodes,
+                    edges,
+                    NEO4J_URI,
+                    NEO4J_USER,
+                    NEO4J_PASSWORD,
+                    revision_plan=plan,
+                    skip_if_duplicate_hash=DOC_SKIP_DUPLICATE_HASH,
+                )
+                if load_meta.get("skipped_duplicate"):
+                    job.skipped_duplicate = True
+                    job.neo4j_load_status = "skipped"
+                    job.neo4j_load_message = (
+                        "Identical content already ACTIVE for this logical document; "
+                        "ingest skipped."
+                    )
+                    self._log(job, job.neo4j_load_message)
+                else:
+                    job.neo4j_load_status = "success"
+                    job.neo4j_load_message = (
+                        f"Graph loaded (revision {plan.revision_id})"
+                    )
+                    self._log(job, job.neo4j_load_message)
             except Exception as exc:
                 job.neo4j_load_status = "failed"
                 job.neo4j_load_message = str(exc)

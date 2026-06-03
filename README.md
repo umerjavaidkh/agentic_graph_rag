@@ -358,7 +358,8 @@ Example upload from the repo root:
 ```bash
 # Unstructured PDF (full stack)
 curl -X POST http://localhost:8000/ingest/unstructured \
-  -F "file=@sample_data_to_test/unstructured/rag_document.pdf"
+  -F "file=@sample_data_to_test/unstructured/rag_document.pdf" \
+  -F "doc_key=rag-document"
 
 # Structured Cypher (when ALLOW_CYPHER_INGEST=true)
 curl -X POST http://localhost:8000/ingest/cypher \
@@ -504,7 +505,8 @@ curl http://localhost:8000/health
 
 ```bash
 curl -X POST http://localhost:8000/ingest/unstructured \
-  -F "file=@sample_data_to_test/unstructured/rag_document.pdf"
+  -F "file=@sample_data_to_test/unstructured/rag_document.pdf" \
+  -F "doc_key=rag-document"
 ```
 
 See **`sample_data_to_test/`** for all sample PDFs and Cypher scripts.
@@ -721,6 +723,20 @@ flowchart TB
 | `AUTO_LOAD_TO_NEO4J` | Load graph after export |
 | `STORE_INGESTION_ARTIFACTS` | Write `output/ingestion/<job_id>` |
 | `OPENAI_API_KEY` | Chat, routing, embeddings; enables Axis 2 and optional vision |
+| `DOC_SKIP_DUPLICATE_HASH` | Skip parse/load when the ACTIVE revision already has the same file SHA-256 |
+| `DOC_VERSION_RETAIN_METADATA` | Keep expired `DocRevision` nodes (content subgraph is still purged on new revision) |
+
+### Document versioning (millions-of-docs ready)
+
+Each upload is keyed by a **logical document** (`doc_key` form field, or filename slug) and stored as an immutable **revision snapshot**:
+
+- `DocumentLogical` — stable id (`godata-manual`, `rag-document`, …)
+- `DocRevision` — `v1`, `v2`, … with `content_hash`, `ACTIVE` / `EXPIRED`
+- Content nodes (`Document`, `Section`, `Page`, …) carry `logical_doc_id`, `revision_id`, `lifecycle_status`
+
+Re-ingest the same file → skipped when `DOC_SKIP_DUPLICATE_HASH=true`. Upload a changed PDF under the same `doc_key` → previous revision expired, new subgraph loaded. Retrieval only sees `lifecycle_status = ACTIVE` (legacy nodes without the field still match).
+
+Poll `GET /ingest/jobs/{job_id}` for `logical_doc_id`, `revision_id`, `version_number`, `skipped_duplicate`.
 
 ---
 

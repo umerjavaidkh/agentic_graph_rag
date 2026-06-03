@@ -20,6 +20,18 @@ NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "password123")
 AUTO_LOAD_TO_NEO4J = os.environ.get("AUTO_LOAD_TO_NEO4J", "true").lower() in ("1", "true", "yes")
 
+# Document versioning (logical doc + revision snapshots)
+DOC_SKIP_DUPLICATE_HASH = os.environ.get("DOC_SKIP_DUPLICATE_HASH", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+DOC_VERSION_RETAIN_METADATA = os.environ.get("DOC_VERSION_RETAIN_METADATA", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 # Store ingestion artifacts (CSV/Cypher) on local disk under output/.
 # Default OFF for scalable deployments; enable for debugging/auditing.
 STORE_INGESTION_ARTIFACTS = os.environ.get("STORE_INGESTION_ARTIFACTS", "false").lower() in ("1", "true", "yes")
