@@ -1,11 +1,9 @@
-# PDF ingest — Docling + PyTorch (~8–10 GB app image).
-# Give Docker Desktop ≥ 8 GB RAM or large PDFs may OOM-kill the app (exit 137).
-#   docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
+# Backwards-compatible override for PDF ingest commands.
+# PDF ingest is now lightweight in the default image too.
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile.full
-    mem_limit: 8g
     environment:
       ENABLE_PDF_INGEST: "true"

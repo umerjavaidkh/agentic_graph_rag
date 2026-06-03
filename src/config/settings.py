@@ -20,6 +20,18 @@ NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "password123")
 AUTO_LOAD_TO_NEO4J = os.environ.get("AUTO_LOAD_TO_NEO4J", "true").lower() in ("1", "true", "yes")
 
+# Document versioning (logical doc + revision snapshots)
+DOC_SKIP_DUPLICATE_HASH = os.environ.get("DOC_SKIP_DUPLICATE_HASH", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+DOC_VERSION_RETAIN_METADATA = os.environ.get("DOC_VERSION_RETAIN_METADATA", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 # Store ingestion artifacts (CSV/Cypher) on local disk under output/.
 # Default OFF for scalable deployments; enable for debugging/auditing.
 STORE_INGESTION_ARTIFACTS = os.environ.get("STORE_INGESTION_ARTIFACTS", "false").lower() in ("1", "true", "yes")
@@ -54,31 +66,14 @@ VISION_MAX_PAGES_PER_DOC = int(os.environ.get("VISION_MAX_PAGES_PER_DOC", "25"))
 VISION_SELECTIVE = os.environ.get("VISION_SELECTIVE", "true").lower() in ("1", "true", "yes")
 VISION_MIN_TEXT_CHARS = int(os.environ.get("VISION_MIN_TEXT_CHARS", "350"))
 
-# Page images (JPEG) — local dir or MinIO; Neo4j stores image_key only
-ASSET_STORAGE_BACKEND = os.environ.get("ASSET_STORAGE_BACKEND", "local")  # local | minio
-ASSETS_DIR = os.environ.get("ASSETS_DIR", str(PROJECT_ROOT / "data" / "assets"))
-ASSETS_PUBLIC_PREFIX = os.environ.get("ASSETS_PUBLIC_PREFIX", "/assets")
-ENABLE_PAGE_IMAGES = os.environ.get("ENABLE_PAGE_IMAGES", "true").lower() in ("1", "true", "yes")
-PAGE_IMAGE_JPEG_QUALITY = int(os.environ.get("PAGE_IMAGE_JPEG_QUALITY", "60"))
-PAGE_IMAGE_MAX_PAGES = int(os.environ.get("PAGE_IMAGE_MAX_PAGES", "0"))  # 0 = no cap
-# false (default) = save a full-page JPEG for every Page node (every PDF page at ingest).
-PAGE_IMAGE_SELECTIVE = os.environ.get("PAGE_IMAGE_SELECTIVE", "false").lower() in ("1", "true", "yes")
-PAGE_IMAGE_SKIP_WHEN_REGIONS = os.environ.get("PAGE_IMAGE_SKIP_WHEN_REGIONS", "true").lower() in ("1", "true", "yes")
-ENABLE_REGION_IMAGES = os.environ.get("ENABLE_REGION_IMAGES", "true").lower() in ("1", "true", "yes")
-# Remove prior JPEG crops for a document before re-ingesting the same document_id folder.
-CLEANUP_BOOK_ASSETS_ON_INGEST = os.environ.get(
-    "CLEANUP_BOOK_ASSETS_ON_INGEST", "true"
-).lower() in ("1", "true", "yes")
-# When admin wipes Neo4j, also empty data/assets (or MinIO bucket objects).
-CLEANUP_ASSETS_ON_DB_RESET = os.environ.get(
-    "CLEANUP_ASSETS_ON_DB_RESET", "true"
-).lower() in ("1", "true", "yes")
-
-MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
-MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
-MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "rag-assets")
-MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() in ("1", "true", "yes")
+# Lightweight PDF parser
+PDF_PARSER_BACKEND = os.environ.get("PDF_PARSER_BACKEND", "light").lower()
+PDF_ENABLE_PDFPLUMBER = os.environ.get("PDF_ENABLE_PDFPLUMBER", "true").lower() in ("1", "true", "yes")
+PDF_LOW_TEXT_CHARS = int(os.environ.get("PDF_LOW_TEXT_CHARS", "120"))
+# Per-page cap for pdfplumber fallback (find_tables/layout can hang on some PDFs).
+PDF_PLUMBER_PAGE_TIMEOUT_SEC = int(os.environ.get("PDF_PLUMBER_PAGE_TIMEOUT_SEC", "25"))
+PDF_ENABLE_OCR = os.environ.get("PDF_ENABLE_OCR", "false").lower() in ("1", "true", "yes")
+PDF_OCR_BACKEND = os.environ.get("PDF_OCR_BACKEND", "none").lower()
 
 # Structured queries: skip LLM synthesis when Cypher rows are self-explanatory (table/chart UI).
 STRUCTURED_FAST_ANSWER = os.environ.get("STRUCTURED_FAST_ANSWER", "true").lower() in ("1", "true", "yes")
@@ -126,6 +121,31 @@ VISION_LLM_MAX_TOKENS = llm_max_tokens("VISION_LLM_MAX_TOKENS", 2000, minimum=25
 
 AXIS2_NER_MAX_TOKENS = llm_max_tokens("AXIS2_NER_MAX_TOKENS", 200)
 AXIS2_RELATION_MAX_TOKENS = llm_max_tokens("AXIS2_RELATION_MAX_TOKENS", 150)
+
+# ── Scalable ingestion pipeline ────────────────────────────────────────────
+# Redis broker URL. When unset, the pipeline falls back to in-process
+# BackgroundTasks (single-process, dev-friendly, no Redis required).
+REDIS_URL = os.environ.get("REDIS_URL", "")
+
+# RQ queue name consumed by `rq worker` containers.
+INGEST_QUEUE_NAME = os.environ.get("INGEST_QUEUE_NAME", "ingest")
+
+# Number of RQ worker threads per worker process (passed to `rq worker --burst`
+# or used by the worker entrypoint). Override per deployment.
+INGEST_WORKER_CONCURRENCY = int(os.environ.get("INGEST_WORKER_CONCURRENCY", "2"))
+
+# Axis 2 — parallel NER: max simultaneous LLM calls for entity extraction.
+AXIS2_NER_CONCURRENCY = int(os.environ.get("AXIS2_NER_CONCURRENCY", "8"))
+
+# Axis 2 — parallel LLM relationship pass: max simultaneous calls.
+AXIS2_LLM_PAIR_CONCURRENCY = int(os.environ.get("AXIS2_LLM_PAIR_CONCURRENCY", "6"))
+
+# Axis 2 — cap on candidate pairs fed to the expensive LLM relationship pass.
+# Pairs are ranked by embedding similarity; only the top-k are sent to the LLM.
+AXIS2_MAX_LLM_PAIRS = int(os.environ.get("AXIS2_MAX_LLM_PAIRS", "300"))
+
+# Neo4j: UNWIND batch size for node/edge bulk writes.
+NEO4J_WRITE_BATCH = int(os.environ.get("NEO4J_WRITE_BATCH", "2000"))
 
 # MCP routing: one tool call; args echo the user question verbatim.
 ROUTE_MAX_TOKENS_MIN = llm_max_tokens("ROUTE_MAX_TOKENS_MIN", 64, minimum=32)

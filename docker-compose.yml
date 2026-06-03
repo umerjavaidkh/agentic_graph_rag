@@ -6,6 +6,20 @@
 #   docker compose -f docker-compose.yml -f docker-compose.external-neo4j.yml up --build
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: graphrag-redis
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   neo4j:
     image: neo4j:5.26-community
     container_name: graphrag-neo4j
@@ -45,35 +59,51 @@ services:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: ${NEO4J_USER:-neo4j}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-password123}
-      ASSETS_DIR: /app/data/assets
+      REDIS_URL: redis://redis:6379/0
       ENABLE_PAGE_VISION: "false"
       FAST_ROUTE_QUERIES: "true"
       STRUCTURED_FAST_ANSWER: "true"
-      CLEANUP_BOOK_ASSETS_ON_INGEST: "true"
       LOAD_NORTHWIND_DEMO: "true"
-      ENABLE_PDF_INGEST: "false"
+      ENABLE_PDF_INGEST: "true"
     volumes:
-      - app_assets:/app/data/assets
       - app_tmp:/app/tmp_ingest
     depends_on:
       neo4j:
         condition: service_healthy
+      redis:
+        condition: service_healthy
 
-  minio:
-    profiles: ["minio"]
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+  # ── Horizontally-scalable ingestion workers ─────────────────────────────
+  # Scale up with: docker compose up --scale worker=N
+  # Each worker picks jobs from the Redis "ingest" queue.
+  worker:
+    build: .
+    # No container_name so Docker can create graphrag-worker-1, -2, etc. on scale
+    command: >
+      sh -c "
+        python -m pip install --quiet rq redis &&
+        rq worker ingest
+          --url redis://redis:6379/0
+          --with-scheduler
+      "
+    env_file:
+      - .env
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-password123}
+      REDIS_URL: redis://redis:6379/0
+      INGEST_QUEUE_NAME: ingest
     volumes:
-      - minio_data:/data
+      - app_tmp:/app/tmp_ingest
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   neo4j_data:
-  app_assets:
+  redis_data:
   app_tmp:
-  minio_data:

@@ -85,6 +85,20 @@ An **MCP-style routing layer** (`routing.py`) decides which retrieval strategy�
 
 ---
 
+## What's new (June 2026)
+
+| Change | Details |
+|--------|---------|
+| **Lightweight PDF parser** | Replaced heavy parser with PyMuPDF + pdfplumber fallback. ~1 GB image, no Java/Docker-in-Docker. |
+| **Image storage removed** | Binary page JPEGs are gone. Visual content (tables, charts, diagrams) is stored as `Page.visual_content` text in Neo4j and retrieved like any other node. |
+| **Document versioning** | Every upload creates an immutable `DocRevision`. Re-ingesting the same file is a no-op. Changed files expire the old revision automatically. Fully supports millions of documents. |
+| **Scalable ingestion pipeline** | Redis + RQ workers: concurrent uploads, durable job state, auto-retry with dead-letter, per-document Redis lock. Falls back to in-process `BackgroundTasks` when `REDIS_URL` is unset. |
+| **Parallel Axis 2** | NER and LLM relationship passes run in parallel thread pools (8 NER / 6 LLM calls concurrently per doc). Candidate pairs capped by similarity score before hitting the LLM. |
+| **Batched Neo4j writes** | `UNWIND` grouped by node label and relationship type replaces per-node transactions. Default chunk size 2 000. |
+| **New API endpoints** | `GET /ingest/jobs` (list), `GET /ingest/queue/status` (depth + dead-letter). No more 409 on concurrent uploads. |
+
+---
+
 ## Key features
 
 ### Agentic query routing
@@ -186,7 +200,7 @@ Open:
 | **Upload** | http://localhost:8000/upload |
 | **API docs** | http://localhost:8000/docs |
 
-For PDF ingest, use the full stack: `docker compose -f docker-compose.yml -f docker-compose.full.yml up --build` (see [Docker variants](#docker-variants) below).
+PDF ingest is available in the default lightweight stack via PyMuPDF/pdfplumber.
 
 ---
 
@@ -237,14 +251,16 @@ the related policy guidance.
 
 ## Tech stack
 
-- Neo4j
-- LangGraph
-- FastAPI
-- OpenAI
-- Docker
-- Docling
-- PyTorch (full image — PDF ingest)
-- Cypher
+| Layer | Technology |
+|-------|------------|
+| Graph database | Neo4j 5.x |
+| AI orchestration | LangGraph |
+| API | FastAPI + Uvicorn |
+| LLM / Embeddings | OpenAI (gpt-4o-mini, text-embedding-3-small) |
+| PDF parsing | PyMuPDF + pdfplumber |
+| Job queue | Redis + RQ (optional; in-process fallback when unset) |
+| Container runtime | Docker / Docker Compose |
+| Query language | Cypher |
 
 ---
 
@@ -288,13 +304,35 @@ OPENAI_API_KEY=sk-your-real-key-here
 
 ### 3. Start the stack
 
-**Slim image (~1 GB)** — chat + structured queries, no PDF upload:
+**Default (dev mode — no Redis, in-process jobs):**
 
 ```bash
 docker compose up --build
 ```
 
-**Full image (~8–10 GB)** — includes PDF ingest (Docling + PyTorch):
+Starts: Neo4j + API. Jobs run in a background thread inside FastAPI. Good for local development.
+
+**With Redis workers (production / parallel ingestion):**
+
+Add to `.env`:
+
+```env
+REDIS_URL=redis://redis:6379/0
+```
+
+Then start:
+
+```bash
+docker compose up --build
+```
+
+This starts: Neo4j + Redis + API + 1 worker. Scale workers:
+
+```bash
+docker compose up --scale worker=3
+```
+
+**Legacy full override** — backwards-compatible compose path, same lightweight parser:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
@@ -358,7 +396,8 @@ Example upload from the repo root:
 ```bash
 # Unstructured PDF (full stack)
 curl -X POST http://localhost:8000/ingest/unstructured \
-  -F "file=@sample_data_to_test/unstructured/rag_document.pdf"
+  -F "file=@sample_data_to_test/unstructured/rag_document.pdf" \
+  -F "doc_key=rag-document"
 
 # Structured Cypher (when ALLOW_CYPHER_INGEST=true)
 curl -X POST http://localhost:8000/ingest/cypher \
@@ -402,16 +441,44 @@ docker exec -it graphrag-neo4j cypher-shell -u neo4j -p password123
 
 Copy `.env.example` → `.env`. Key settings:
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENAI_API_KEY` | **Yes** | OpenAI API key for chat, routing, and embeddings |
-| `NEO4J_USER` | No | Default: `neo4j` |
-| `NEO4J_PASSWORD` | No | Default: `password123` |
-| `CHAT_MODEL` | No | Default: `gpt-4o-mini` |
-| `EMBEDDING_MODEL` | No | Default: `text-embedding-3-small` |
-| `APP_PORT` | No | API port on host (default: `8000`) |
-| `NEO4J_HTTP_PORT` | No | Neo4j Browser port (default: `17474`) |
-| `NEO4J_BOLT_PORT` | No | Neo4j Bolt port (default: `17687`) |
+### Core
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OPENAI_API_KEY` | **Yes** | — | OpenAI key for chat, routing, and embeddings |
+| `NEO4J_USER` | No | `neo4j` | Neo4j username |
+| `NEO4J_PASSWORD` | No | `password123` | Neo4j password |
+| `CHAT_MODEL` | No | `gpt-4o-mini` | LLM for chat and Axis 2 |
+| `EMBEDDING_MODEL` | No | `text-embedding-3-small` | Embedding model |
+| `APP_PORT` | No | `8000` | API port on host |
+| `NEO4J_HTTP_PORT` | No | `17474` | Neo4j Browser port on host |
+| `NEO4J_BOLT_PORT` | No | `17687` | Neo4j Bolt port on host |
+
+### Ingestion pipeline (scalable mode)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | *(unset = dev mode)* | Set to `redis://redis:6379/0` to enable workers |
+| `INGEST_QUEUE_NAME` | `ingest` | RQ queue name |
+| `AXIS2_NER_CONCURRENCY` | `8` | Parallel NER LLM calls per document |
+| `AXIS2_LLM_PAIR_CONCURRENCY` | `6` | Parallel relationship LLM calls per document |
+| `AXIS2_MAX_LLM_PAIRS` | `300` | Cap on candidate pairs sent to the LLM pass |
+| `NEO4J_WRITE_BATCH` | `2000` | UNWIND chunk size for Neo4j bulk writes |
+
+### Document versioning
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOC_SKIP_DUPLICATE_HASH` | `true` | Skip ingest when ACTIVE revision already has the same SHA-256 |
+| `DOC_VERSION_RETAIN_METADATA` | `true` | Keep expired `DocRevision` nodes for audit trail |
+
+### PDF parser
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_PAGE_VISION` | `false` | Send selected pages to a vision model; stores descriptions in `Page.visual_content` |
+| `PDF_ENABLE_PDFPLUMBER` | `true` | Use pdfplumber as fallback on low-text pages |
+| `PDF_ENABLE_OCR` | `false` | Enable OCR fallback (requires Tesseract) |
 
 ### When to set `NEO4J_URI`
 
@@ -436,14 +503,26 @@ docker compose up -d --build
 # Rebuild app only (after code changes — fast, uses cache)
 docker compose up -d --build app
 
+# Scale to 3 parallel ingestion workers (requires REDIS_URL in .env)
+docker compose up --scale worker=3
+
 # Stop
 docker compose down
 
-# Stop and wipe database + uploaded assets
+# Stop and wipe DB volumes
 docker compose down -v
 
 # View app logs
 docker logs -f graphrag-app
+
+# View worker logs
+docker logs -f $(docker ps --filter name=worker --format '{{.Names}}' | head -1)
+
+# Check queue depth and failed jobs
+curl http://localhost:8000/ingest/queue/status | python3 -m json.tool
+
+# List recent ingestion jobs
+curl http://localhost:8000/ingest/jobs | python3 -m json.tool
 ```
 
 ---
@@ -458,16 +537,16 @@ docker compose up --build
 
 - ~1 GB app image
 - Northwind structured queries + chat
-- No PDF upload
+- Lightweight PDF upload enabled
 
-### Full (PDF ingest)
+### Legacy full override
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
 ```
 
-- ~8–10 GB app image (Docling + PyTorch)
-- PDF upload enabled
+- Backwards-compatible compose override
+- Lightweight PDF upload enabled
 
 ### External Neo4j (already running on your machine)
 
@@ -500,12 +579,30 @@ curl -X POST http://localhost:8000/query \
 curl http://localhost:8000/health
 ```
 
-### Upload a document
+### Upload a PDF
 
 ```bash
 curl -X POST http://localhost:8000/ingest/unstructured \
-  -F "file=@sample_data_to_test/unstructured/rag_document.pdf"
+  -F "file=@sample_data_to_test/unstructured/rag_document.pdf" \
+  -F "doc_key=rag-document"
 ```
+
+The `doc_key` field is optional but recommended. Re-ingesting the same key with the same file → skipped (duplicate hash). Re-ingesting with a changed file → previous revision expired, new one loaded.
+
+### Poll job status
+
+```bash
+# Single job
+curl http://localhost:8000/ingest/jobs/{job_id} | python3 -m json.tool
+
+# All recent jobs
+curl http://localhost:8000/ingest/jobs | python3 -m json.tool
+
+# Queue depth + dead-letter (failed) jobs
+curl http://localhost:8000/ingest/queue/status | python3 -m json.tool
+```
+
+Job status response includes: `status`, `logical_doc_id`, `revision_id`, `version_number`, `skipped_duplicate`, `logs[]`, `dispatch` (`worker` or `background_task`).
 
 See **`sample_data_to_test/`** for all sample PDFs and Cypher scripts.
 
@@ -527,15 +624,13 @@ flowchart TB
     subgraph Ingest["Ingestion (write path)"]
         direction TB
         UP --> IM["IngestionManager"]
-        IM --> U["Unstructured job<br/>(PDF / DOCX)"]
+        IM --> U["Unstructured job<br/>(PDF)"]
         IM --> C["Cypher job<br/>(.cypher file)"]
 
-        U --> A1["Axis 1 — Document structure<br/>(DoclingParser, always)"]
-        A1 --> ASSETS["Page & region JPEGs<br/>data/assets/ or MinIO"]
+        U --> A1["Axis 1 — Document structure<br/>(LightPdfParser, always)"]
         A1 --> VISION["Page vision (optional)<br/>ENABLE_PAGE_VISION=true"]
         A1 --> A2["Axis 2 — Semantic enrichment<br/>(if OPENAI_API_KEY set)"]
-        ASSETS --> EXP["Neo4jExporter"]
-        VISION --> EXP
+        VISION --> EXP["Neo4jExporter"]
         A2 --> EXP
         EXP --> ART["Artifacts<br/>output/ingestion/&lt;job_id&gt;"]
         EXP --> NEO4J[("Neo4j")]
@@ -579,21 +674,12 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    PDF["PDF / DOCX upload"] --> P["DoclingParser"]
+    PDF["PDF upload"] --> P["LightPdfParser<br/>(PyMuPDF + pdfplumber fallback)"]
 
     subgraph A1["Axis 1 — Document structure (always)"]
         P --> TREE["Document → Chapter → Section → Page → Region<br/>(TABLE / FIGURE crops)"]
         TREE --> PN["Printed page labels<br/>document_page, page_tags"]
         TREE --> IDS["Namespaced node IDs<br/>doc_&lt;job&gt;_section_* / _page_*"]
-    end
-
-    subgraph Media["Binary assets (Neo4j stores image_key only)"]
-        TREE --> PI["Full-page JPEGs<br/>~60% quality"]
-        TREE --> RI["Region JPEGs<br/>tables / figures"]
-        PI --> STORE["data/assets/ or MinIO"]
-        RI --> STORE
-        PI --> CLEAN1["Re-ingest: delete doc folder<br/>CLEANUP_BOOK_ASSETS_ON_INGEST"]
-        CLEAN1 --> STORE
     end
 
     subgraph OptVision["Optional — ENABLE_PAGE_VISION=true"]
@@ -616,11 +702,10 @@ flowchart LR
     EXP --> LOAD["AUTO_LOAD_TO_NEO4J → Neo4j MERGE"]
 ```
 
-**Axis 1 (document structure)** is always built first from the Docling parser:
+**Axis 1 (document structure)** is always built first from the lightweight PDF parser:
 
 - Hierarchy: `Document → Chapter → Section → Page → Region` (tables/figures).
-- **Page vision** (optional): when `ENABLE_PAGE_VISION=true`, selected PDF pages are sent to a cheap vision model; tables, charts, diagrams, maps, and shapes are stored as `Page.visual_content` for retrieval when normal text is missing or incomplete.
-- **Page images**: JPEG (~60% quality) under `data/assets/` or MinIO; Neo4j stores `image_key` only. Re-ingest deletes that document’s asset folder first (`CLEANUP_BOOK_ASSETS_ON_INGEST`, default on). DB reset can wipe all assets (`CLEANUP_ASSETS_ON_DB_RESET`).
+- **Page vision** (optional): when `ENABLE_PAGE_VISION=true`, selected PDF pages are sent to a cheap vision model; tables, charts, diagrams, maps, and shapes are stored as `Page.visual_content` (text in Neo4j) for retrieval when normal text is missing or incomplete. The RAG stack does not store or serve binary page/region JPEGs.
 
 **Axis 2 (semantic enrichment)** runs automatically when the server has an OpenAI key configured (embeddings, entity links, clustering, optional LLM relationship pass).
 
@@ -715,12 +800,109 @@ flowchart TB
 | Variable | Effect |
 |----------|--------|
 | `ENABLE_PAGE_VISION` | Vision text on selected PDF pages |
-| `ENABLE_PAGE_IMAGES` | Full-page JPEG extraction |
-| `CLEANUP_BOOK_ASSETS_ON_INGEST` | Delete prior `data/assets/<doc>/` before re-ingest |
-| `CLEANUP_ASSETS_ON_DB_RESET` | Wipe all assets on DB reset |
 | `AUTO_LOAD_TO_NEO4J` | Load graph after export |
 | `STORE_INGESTION_ARTIFACTS` | Write `output/ingestion/<job_id>` |
 | `OPENAI_API_KEY` | Chat, routing, embeddings; enables Axis 2 and optional vision |
+| `DOC_SKIP_DUPLICATE_HASH` | Skip parse/load when the ACTIVE revision already has the same file SHA-256 |
+| `DOC_VERSION_RETAIN_METADATA` | Keep expired `DocRevision` nodes (content subgraph is still purged on new revision) |
+
+### Document versioning (millions-of-docs ready)
+
+Each upload is keyed by a **logical document** (`doc_key` form field, or filename slug) and stored as an immutable **revision snapshot**:
+
+- `DocumentLogical` — stable id (`godata-manual`, `rag-document`, …)
+- `DocRevision` — `v1`, `v2`, … with `content_hash`, `ACTIVE` / `EXPIRED`
+- Content nodes (`Document`, `Section`, `Page`, …) carry `logical_doc_id`, `revision_id`, `lifecycle_status`
+
+Re-ingest the same file → skipped when `DOC_SKIP_DUPLICATE_HASH=true`. Upload a changed PDF under the same `doc_key` → previous revision expired, new subgraph loaded. Retrieval only sees `lifecycle_status = ACTIVE` (legacy nodes without the field still match).
+
+Poll `GET /ingest/jobs/{job_id}` for `logical_doc_id`, `revision_id`, `version_number`, `skipped_duplicate`.
+
+---
+
+### Scalable ingestion pipeline (Redis + RQ workers)
+
+The default single-process mode (`REDIS_URL` unset) runs jobs inside FastAPI via `BackgroundTasks` — great for local dev, no extra services required.
+
+For production / high-volume ingestion, set `REDIS_URL` to switch to the **Redis + RQ** path automatically:
+
+```
+REDIS_URL=redis://redis:6379/0
+```
+
+#### What changes with Redis
+
+| Aspect | Default (no Redis) | Redis + Workers |
+|--------|-------------------|-----------------|
+| Job storage | In-process dict | Redis hash (survives restarts) |
+| Dispatch | `BackgroundTasks` | RQ queue → workers |
+| Concurrency | 2 thread pool | N worker processes (scale freely) |
+| Retries | None | 2 retries with 30 s / 2 min back-off |
+| Dead-letter | None | `GET /ingest/queue/status` |
+| Per-doc locking | N/A | Redis lock (same doc serialised, different docs parallel) |
+
+#### Scale workers
+
+```bash
+# Start 3 parallel ingestion workers
+docker compose up --scale worker=3
+
+# Check queue depth and failed jobs
+curl http://localhost:8000/ingest/queue/status
+
+# List recent jobs
+curl http://localhost:8000/ingest/jobs
+```
+
+#### Inspect failed jobs (dead-letter)
+
+```bash
+curl http://localhost:8000/ingest/queue/status | python3 -m json.tool
+```
+
+Returns `failed_jobs[]` with `rq_job_id`, `exc_info`, `ended_at` for each exhausted job.
+
+#### Concurrency knobs
+
+All exposed via `.env` / environment:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | *(unset)* | Redis URL; unset = in-process mode |
+| `INGEST_QUEUE_NAME` | `ingest` | RQ queue name |
+| `INGEST_WORKER_CONCURRENCY` | `2` | Thread pool per worker process |
+| `AXIS2_NER_CONCURRENCY` | `8` | Parallel NER LLM calls per doc |
+| `AXIS2_LLM_PAIR_CONCURRENCY` | `6` | Parallel relationship LLM calls per doc |
+| `AXIS2_MAX_LLM_PAIRS` | `300` | Max candidate pairs sent to LLM relationship pass |
+| `NEO4J_WRITE_BATCH` | `2000` | UNWIND batch size for Neo4j bulk writes |
+
+#### Architecture (with Redis)
+
+```
+Client  ──POST /ingest/unstructured──►  API (FastAPI)
+                                              │
+                                   save upload to shared volume
+                                   create job in Redis
+                                              │
+                                         enqueue job_id
+                                              │
+                    ┌─────────────────────────▼───────────────────┐
+                    │              Redis "ingest" queue            │
+                    └──────┬────────────────────────┬─────────────┘
+                           │                        │
+                        Worker 1                 Worker N
+                           │                        │
+                   run_ingest_job()         run_ingest_job()
+                  ┌────────┴────────┐
+                  │  per-doc lock   │  ← different docs run in parallel
+                  │  (Redis lock)   │    same doc serialised
+                  └────────┬────────┘
+                  parse → Axis2 (parallel NER + LLM)
+                  → batched Neo4j UNWIND writes
+                  → update job status in Redis
+                           │
+Client  ──GET /ingest/jobs/{id}──►  API reads status from Redis ──► 200
+```
 
 ---
 
@@ -728,34 +910,52 @@ flowchart TB
 
 ```
 agentic_graph_rag/
-├── sample_data_to_test/       # Sample PDFs + Cypher for upload/ingest tests
-│   ├── unstructured/         # rag_document.pdf, rag_document_2.pdf
-│   └── structured/           # northwind-data.cypher
+├── sample_data_to_test/
+│   ├── unstructured/          # rag_document.pdf, rag_document_2.pdf
+│   └── structured/            # northwind-data.cypher
 ├── src/
-│   ├── api.py                # FastAPI app + web UI routes
-│   ├── bridge.py             # ask() entry point for API
-│   ├── router.py             # MCP handlers: search_documents, query_data, query_hybrid
-│   ├── routing.py            # MCP tool selection (fast route + LLM + RBAC fallback)
+│   ├── api.py                 # FastAPI app — routes, dispatch, job list, queue status
+│   ├── bridge.py              # ask() entry point for API
+│   ├── router.py              # MCP handlers: search_documents, query_data, query_hybrid
+│   ├── routing.py             # MCP tool selection (fast route + LLM + RBAC fallback)
+│   ├── config/
+│   │   └── settings.py        # All env-var settings incl. Redis, Axis 2, Neo4j batch
+│   ├── ingestion/
+│   │   ├── service.py         # IngestionManager (store-backed, per-doc Redis lock)
+│   │   ├── job_store.py       # JobStore ABC, RedisJobStore, InMemoryJobStore
+│   │   ├── queue.py           # RQ queue, enqueue_ingest, dead-letter helpers
+│   │   ├── tasks.py           # run_ingest_job() — RQ worker callable
+│   │   └── models.py          # IngestionStatus enum
+│   ├── document/
+│   │   ├── parser.py          # LightPdfParser (PyMuPDF + pdfplumber fallback)
+│   │   ├── page_vision.py     # PageVisionEnricher (optional, vision model)
+│   │   └── versioning.py      # Logical doc ID, revision plans, content hashing
+│   ├── exporter/
+│   │   └── exporter.py        # Neo4jExporter — UNWIND batched writes
+│   ├── semantic/
+│   │   └── axis2.py           # Axis 2 (parallel NER + LLM relationship pass)
 │   ├── retrieval/
 │   │   ├── unstructured/
-│   │   │   ├── graph.py      # LangGraph agent (retrieve → generate)
-│   │   │   ├── retriever.py  # DocumentRAGRetriever (hybrid + structural paths)
-│   │   │   └── visual_retrieval.py  # Visual intent helpers
+│   │   │   ├── retriever.py   # DocumentRAGRetriever (hybrid + TOC + visual)
+│   │   │   └── toc_retrieval.py  # TOC scoring + outline helpers
 │   │   └── structured/
-│   │       ├── graph.py      # LangGraph agent
-│   │       └── retriever.py  # Schema-driven Text-to-Cypher + repair
-│   ├── presentation/         # UI blocks (markdown, tables, charts, images)
-│   ├── conversation/       # Thread memory + clarification
-│   ├── ingestion/            # Upload pipeline (PDF / Cypher jobs)
-│   ├── document/             # Docling parser, page vision, page numbers
-│   ├── exporter/             # Neo4j export from DKG nodes
-│   ├── semantic/             # Axis 2 enrichment (embeddings, entities)
-│   ├── auth/                 # RBAC (roles, knowledge areas)
-│   └── prompts/              # LLM prompts (route_query, document_*, structured_synthesis)
-├── docker-compose.yml
-├── Dockerfile                # Slim image
-├── Dockerfile.full           # Full image (PDF ingest)
+│   │       └── retriever.py   # Schema-driven Text-to-Cypher + repair
+│   ├── graph/
+│   │   ├── constants.py       # Neo4j label/rel constants
+│   │   └── versioning.py      # lifecycle_active() query helper
+│   ├── presentation/          # UI blocks (markdown, tables, charts)
+│   ├── conversation/          # Thread memory + clarification
+│   ├── auth/                  # RBAC (roles, knowledge areas)
+│   └── prompts/               # LLM prompts
+├── tests/
+│   ├── test_scalable_pipeline_unit.py  # JobStore, queue wiring, Axis 2, exporter batch
+│   ├── test_document_versioning_unit.py
+│   └── test_toc_retrieval_unit.py
 ├── scripts/
+│   └── verify_document_versioning.sh
+├── docker-compose.yml         # Neo4j + Redis + API + worker services
+├── Dockerfile
+├── Dockerfile.full
 └── .env.example
 ```
 
@@ -809,6 +1009,32 @@ docker compose up -d --build app
 ```
 
 Requirements/Dockerfile changes trigger a full pip install again.
+
+### Worker not picking up jobs
+
+If you set `REDIS_URL` but jobs stay in `queued` status:
+
+1. Check that the worker container is running:
+```bash
+docker ps --filter name=worker
+docker logs $(docker ps --filter name=worker -q | head -1) --tail 30
+```
+
+2. Verify Redis is healthy:
+```bash
+docker exec graphrag-redis redis-cli ping  # should return PONG
+```
+
+3. Check queue depth:
+```bash
+curl http://localhost:8000/ingest/queue/status
+```
+
+4. If jobs appear in `failed_jobs[]`, they exhausted 2 retries. Check `exc_info` in the response for the root cause.
+
+### Job status lost after restart (in-process mode)
+
+When `REDIS_URL` is unset, job state lives only in the API process memory. It is lost on restart. Set `REDIS_URL` to use durable Redis storage.
 
 ### Access denied on structured queries
 

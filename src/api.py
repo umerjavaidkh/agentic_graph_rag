@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
@@ -14,32 +14,46 @@ from .bridge import ask
 from .conversation import clear_turn
 from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
-from .assets.cleanup import cleanup_all_document_assets
-from .assets.factory import get_asset_store
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
-    ASSETS_DIR,
-    CLEANUP_ASSETS_ON_DB_RESET,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
     OPENAI_API_KEY,
     PROJECT_ROOT,
+    REDIS_URL,
 )
 from .ingestion.service import IngestionManager
+from .ingestion.job_store import get_job_store
+from .ingestion.queue import enqueue_ingest, list_failed_jobs, queue_depth
 
 app = FastAPI(title="Agentic Graph RAG API")
 
-# ingestion manager state
+# Shared ingestion manager (store-backed — works in both in-process and worker modes).
 ingestion_manager = IngestionManager()
-# One PDF at a time — Docling/PyTorch is CPU+RAM heavy; keeps /health responsive.
-_ingest_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ingest")
+
+# Fallback executor: used only when REDIS_URL is not set (dev / single-process mode).
+_ingest_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ingest")
 
 
-async def _run_ingest_job(job_id: str) -> None:
+async def _run_ingest_job_local(job_id: str) -> None:
+    """In-process fallback: run the job in a thread when Redis is not configured."""
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(_ingest_executor, ingestion_manager.run_job, job_id)
+
+
+def _dispatch_ingest_job(job_id: str, background_tasks: BackgroundTasks) -> str:
+    """
+    Dispatch a job to RQ workers when Redis is configured, or run it
+    locally via BackgroundTasks when it is not.  Returns the dispatch mode.
+    """
+    rq_job = enqueue_ingest(job_id)  # returns None when REDIS_URL not set
+    if rq_job is not None:
+        return "worker"
+    background_tasks.add_task(_run_ingest_job_local, job_id)
+    return "background_task"
+
 
 @app.on_event("startup")
 async def _ensure_rbac_schema_initialized():
@@ -60,21 +74,6 @@ app.mount(
     StaticFiles(directory=Path(__file__).resolve().parent / "static"),
     name="static",
 )
-
-_assets_path = Path(ASSETS_DIR)
-_assets_path.mkdir(parents=True, exist_ok=True)
-
-
-@app.get("/assets/{asset_path:path}")
-async def serve_asset(asset_path: str):
-    """Serve page images from local storage or MinIO (via bytes proxy)."""
-    store = get_asset_store()
-    data = store.get_bytes(asset_path)
-    if not data:
-        raise HTTPException(status_code=404, detail="Asset not found")
-    media = "image/jpeg" if asset_path.lower().endswith(".jpg") else "application/octet-stream"
-    return Response(content=data, media_type=media)
-
 
 @app.get("/")
 async def root():
@@ -98,6 +97,7 @@ class IngestionResponse(BaseModel):
     status: str
     message: str
     output_dir: str
+    dispatch: Optional[str] = None  # "worker" | "background_task"
 
 
 class IngestionStatusResponse(BaseModel):
@@ -112,6 +112,20 @@ class IngestionStatusResponse(BaseModel):
     neo4j_load_message: Optional[str]
     logs: List[str]
     error: Optional[str]
+    logical_doc_id: Optional[str] = None
+    revision_id: Optional[str] = None
+    content_hash: Optional[str] = None
+    version_number: Optional[int] = None
+    skipped_duplicate: bool = False
+
+
+class IngestionJobSummary(BaseModel):
+    job_id: str
+    job_type: str
+    status: str
+    created_at: str
+    name: Optional[str]
+    logical_doc_id: Optional[str]
 
 
 class QueryRequest(BaseModel):
@@ -191,19 +205,25 @@ async def ingest_unstructured(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     job_name: Optional[str] = Form(None),
+    doc_key: Optional[str] = Form(
+        None,
+        description=(
+            "Stable logical document key (e.g. godata-manual). "
+            "Re-ingests with the same key create a new revision; identical file hash is skipped."
+        ),
+    ),
 ):
-    if ingestion_manager.has_active_job():
-        raise HTTPException(
-            status_code=409,
-            detail="Another ingestion job is already running. Wait for it to finish before uploading again.",
-        )
-    job = ingestion_manager.submit_unstructured(file, job_name=job_name)
-    background_tasks.add_task(_run_ingest_job, job.id)
+    # No 409 gate: multiple concurrent uploads are fine. The per-doc Redis lock
+    # (inside IngestionManager._doc_lock) serialises revision installs for the
+    # same logical document while allowing different documents to run in parallel.
+    job = ingestion_manager.submit_unstructured(file, job_name=job_name, doc_key=doc_key)
+    dispatch = _dispatch_ingest_job(job.id, background_tasks)
     return IngestionResponse(
         job_id=job.id,
         status=job.status.value,
         message="Unstructured ingestion job submitted.",
-        output_dir=str(job.output_dir),
+        output_dir=str(job.output_dir) if job.output_dir else "",
+        dispatch=dispatch,
     )
 
 
@@ -243,17 +263,87 @@ async def ingest_cypher(
     cypher_params = {}
     effective_openai_key = openai_key or OPENAI_API_KEY
     if effective_openai_key:
-        # Supports scripts that expect $openAIKey (common in Neo4j Browser examples).
         cypher_params["openAIKey"] = effective_openai_key
 
     job = ingestion_manager.submit_cypher(file, job_name=job_name, cypher_params=cypher_params or None)
-    background_tasks.add_task(_run_ingest_job, job.id)
+    dispatch = _dispatch_ingest_job(job.id, background_tasks)
     return IngestionResponse(
         job_id=job.id,
         status=job.status.value,
         message="Cypher ingestion job submitted.",
-        output_dir=str(job.output_dir),
+        output_dir=str(job.output_dir) if job.output_dir else "",
+        dispatch=dispatch,
     )
+
+
+@app.get("/ingest/jobs", response_model=List[IngestionJobSummary])
+async def list_ingestion_jobs(limit: int = 50):
+    """
+    List recent ingestion jobs (newest first).
+
+    Works in both in-process (InMemoryJobStore) and Redis-backed modes.
+    """
+    store = get_job_store()
+    ids = store.list_ids(limit=limit)
+    summaries = []
+    for jid in reversed(ids):  # newest first
+        job = store.get(jid)
+        if job is None:
+            continue
+        summaries.append(
+            IngestionJobSummary(
+                job_id=job.id,
+                job_type=job.type,
+                status=job.status.value,
+                created_at=job.created_at.isoformat() + "Z",
+                name=job.name,
+                logical_doc_id=job.logical_doc_id,
+            )
+        )
+    return summaries
+
+
+@app.get("/ingest/jobs/{job_id}", response_model=IngestionStatusResponse)
+async def get_ingestion_job(job_id: str):
+    job = ingestion_manager.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return IngestionStatusResponse(
+        job_id=job.id,
+        job_type=job.type,
+        status=job.status.value,
+        created_at=job.created_at.isoformat() + "Z",
+        started_at=job.started_at.isoformat() + "Z" if job.started_at else None,
+        finished_at=job.finished_at.isoformat() + "Z" if job.finished_at else None,
+        output_dir=str(job.output_dir) if job.output_dir else "",
+        neo4j_load_status=job.neo4j_load_status,
+        neo4j_load_message=job.neo4j_load_message,
+        logs=job.logs,
+        error=job.error,
+        logical_doc_id=job.logical_doc_id,
+        revision_id=job.revision_id,
+        content_hash=job.content_hash,
+        version_number=job.version_number,
+        skipped_duplicate=job.skipped_duplicate,
+    )
+
+
+@app.get("/ingest/queue/status")
+async def ingest_queue_status():
+    """
+    Queue depth and dead-letter (failed) job visibility.
+
+    Returns queue depth and recent failed jobs from the RQ FailedJobRegistry.
+    When Redis is not configured all counts are None.
+    """
+    depth = queue_depth()
+    failed = list_failed_jobs(limit=20)
+    return {
+        "redis_configured": bool(REDIS_URL),
+        "queue_depth": depth,
+        "failed_jobs": failed,
+    }
 
 
 @app.post("/admin/reset-neo4j")
@@ -324,48 +414,12 @@ async def reset_neo4j(
     finally:
         driver.close()
 
-    assets_removed = 0
-    if CLEANUP_ASSETS_ON_DB_RESET:
-        try:
-            assets_removed = cleanup_all_document_assets()
-        except Exception:
-            pass
-
     return {
         "status": "ok",
         "dropped_indexes": dropped_indexes,
         "dropped_constraints": dropped_constraints,
-        "assets_removed": assets_removed,
-        "message": (
-            "Neo4j wiped (best-effort). RBAC will be re-initialized on next API startup."
-            + (
-                f" Removed {assets_removed} asset file(s) from storage."
-                if assets_removed
-                else ""
-            )
-        ),
+        "message": "Neo4j wiped (best-effort). RBAC will be re-initialized on next API startup.",
     }
-
-
-@app.get("/ingest/jobs/{job_id}", response_model=IngestionStatusResponse)
-async def get_ingestion_job(job_id: str):
-    job = ingestion_manager.get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    return IngestionStatusResponse(
-        job_id=job.id,
-        job_type=job.type,
-        status=job.status.value,
-        created_at=job.created_at.isoformat() + "Z",
-        started_at=job.started_at.isoformat() + "Z" if job.started_at else None,
-        finished_at=job.finished_at.isoformat() + "Z" if job.finished_at else None,
-        output_dir=str(job.output_dir) if job.output_dir else "",
-        neo4j_load_status=job.neo4j_load_status,
-        neo4j_load_message=job.neo4j_load_message,
-        logs=job.logs,
-        error=job.error,
-    )
 
 
 @app.get("/health")

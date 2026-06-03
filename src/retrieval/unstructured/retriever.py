@@ -27,16 +27,59 @@ from ...config.settings import (
     RETRIEVAL_CANDIDATE_POOL,
     RETRIEVAL_FINAL_LIMIT,
 )
-from ...assets.factory import get_asset_store
 from ...document.page_numbers import parse_page_number_from_query
-from ...document.page_vision import PageVisionEnricher, compact_visual_content
-from ...graph.constants import DOCUMENT_ROOT_CYPHER
+from ...document.page_vision import compact_visual_content
+from ...graph.constants import (
+    DOC_REVISION_LABEL,
+    DOCUMENT_LOGICAL_LABEL,
+    DOCUMENT_ROOT_CYPHER,
+)
+from ...graph.versioning import lifecycle_active
+from .toc_retrieval import (
+    format_outline_chunk,
+    format_toc_chunk,
+    include_in_outline_fallback,
+    score_page_text_as_toc,
+    section_title_is_toc,
+)
 from .visual_retrieval import parse_visual_intent
 from ...model_providers.factory import get_model_provider
 from .executor import DocumentQueryExecutor
 from ...telemetry.context import TelemetryEvent, get_telemetry
 
 provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+
+
+def _doc_scope_cypher(alias: str = "d") -> str:
+    """Match logical document id or revision-prefixed content root id."""
+    return (
+        f"($doc_id IS NULL OR {alias}.logical_doc_id = $doc_id "
+        f"OR {alias}.id = $doc_id "
+        f"OR ($doc_id IS NOT NULL AND {alias}.id STARTS WITH $doc_id + ':'))"
+    )
+
+
+_JOB_PREFIX_RE = re.compile(r"^[0-9a-f]{32}_", re.I)
+
+
+def _clean_doc_title(title: Optional[str]) -> str:
+    """Strip a leading 32-hex job-id prefix left on older ingests' titles."""
+    t = (title or "").strip()
+    return _JOB_PREFIX_RE.sub("", t) or t
+
+
+def _node_scope_cypher(alias: str = "n") -> str:
+    """
+    Scope any content node (Page/Section/...) to a document without relying on
+    variable-length CONTAINS paths (parsers can nest sections far deeper than a
+    fixed hop budget). Matches the resolved logical id or a content-root id prefix.
+    """
+    return (
+        f"($doc_id IS NULL "
+        f"OR {alias}.logical_doc_id = $doc_id "
+        f"OR {alias}.id STARTS WITH $doc_id + '_' "
+        f"OR {alias}.id STARTS WITH $doc_id + ':')"
+    )
 
 # Structural + semantic edges created at ingest (Axis 1 & Axis 2).
 _GRAPH_REL_TYPES = (
@@ -63,6 +106,11 @@ _SYNTHESIS_RE = re.compile(
     r"\b(synthesi[sz]|structural map|escalat|pathway|flowchart|flow chart|"
     r"compare|contrast|relationship between|trace how|build a .{0,20}map|"
     r"how .{0,40} connect|map showing)\b",
+    re.I,
+)
+
+_CONTRAST_COMPARE_RE = re.compile(
+    r"\b(contrast|compare|comparison|versus|vs\.?)\b",
     re.I,
 )
 
@@ -185,8 +233,6 @@ class DocumentRAGRetriever:
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
         self.user_context = user_context or DEFAULT_PUBLIC_CONTEXT
         self.rbac = GraphRBAC(uri, user, password)
-        self._vision_cache: dict[str, str] = {}
-        self._vision_enricher: Optional[PageVisionEnricher] = None
         self._exec = DocumentQueryExecutor()
 
     def close(self) -> None:
@@ -331,10 +377,16 @@ class DocumentRAGRetriever:
             with self.driver.session() as session:
                 visual_items = self._structural_page_visual_retrieve(session, query)
             if visual_items:
-                pdf_page, _ = self._parse_page_targets(query)
+                pdf_page, doc_page = self._parse_page_targets(query)
                 response = self._format_response(query, visual_items, user_context=ctx)
-                response["mode"] = "structural_page_visual"
+                if self._query_wants_all_page_visuals(query) and any(
+                    (c.get("visual_content") or "").strip() for c in visual_items
+                ):
+                    response["mode"] = "page_visual_list"
+                else:
+                    response["mode"] = "structural_page_visual"
                 response["pdf_page"] = pdf_page
+                response["document_page"] = doc_page
                 response["strategy"] = "graph_rag"
                 response["vector_seeds"] = 0
                 response["fulltext_hits"] = 0
@@ -389,6 +441,10 @@ class DocumentRAGRetriever:
                 synthesis=synthesis,
                 limit=max(1, int(fetch_limit)),
             )
+            if synthesis and lexical_hits:
+                items = self._pin_contrast_lexical_chunks(
+                    query, items, lexical_hits, limit=max(1, int(fetch_limit))
+                )
 
         response = self._format_response(query, items, user_context=ctx)
         response["mode"] = "graph_rag"
@@ -405,10 +461,11 @@ class DocumentRAGRetriever:
     def _vector_seed(self, session, embedding: list[float], limit: int) -> list[dict]:
         try:
             rows = session.run(
-                """
+                f"""
                 CALL db.index.vector.queryNodes('section_embedding', $limit, $embedding)
                 YIELD node AS n, score
                 WHERE coalesce(n.text, '') <> ''
+                  AND {lifecycle_active("n")}
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
@@ -441,10 +498,11 @@ class DocumentRAGRetriever:
             return []
         try:
             rows = session.run(
-                """
-                CALL db.index.fulltext.queryNodes('node_text_index', $q, {limit: $limit})
+                f"""
+                CALL db.index.fulltext.queryNodes('node_text_index', $q, {{limit: $limit}})
                 YIELD node AS n, score
                 WHERE coalesce(n.text, '') <> ''
+                  AND {lifecycle_active("n")}
                   AND any(l IN labels(n) WHERE l IN $labels)
                 RETURN
                   coalesce(n.id, '') AS id,
@@ -482,13 +540,15 @@ class DocumentRAGRetriever:
         limit: int,
     ) -> list[dict]:
         if hops == 1:
-            cypher = """
+            cypher = f"""
                 UNWIND $seed_ids AS sid
-                MATCH (seed:Section {id: sid})
+                MATCH (seed:Section {{id: sid}})
+                WHERE {lifecycle_active("seed")}
                 MATCH (seed)-[r]-(related)
                 WHERE type(r) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
                   AND coalesce(related.text, '') <> ''
+                  AND {lifecycle_active("related")}
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
                   coalesce(related.title, '') AS title,
@@ -501,14 +561,16 @@ class DocumentRAGRetriever:
                 LIMIT $limit
             """
         else:
-            cypher = """
+            cypher = f"""
                 UNWIND $seed_ids AS sid
-                MATCH (seed:Section {id: sid})
+                MATCH (seed:Section {{id: sid}})
+                WHERE {lifecycle_active("seed")}
                 MATCH (seed)-[r1]-(mid)-[r2]-(related)
                 WHERE type(r1) IN $rel_types
                   AND type(r2) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
                   AND coalesce(related.text, '') <> ''
+                  AND {lifecycle_active("related")}
                   AND related.id <> sid
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
@@ -582,9 +644,15 @@ class DocumentRAGRetriever:
                     "sources": {source},
                 }
 
-        vector_weight = 1.15 if synthesis else 1.0
-        graph_weight = 1.2 if synthesis else 1.0
-        lexical_weight = 0.82 if synthesis else 1.0
+        is_contrast = bool(_CONTRAST_COMPARE_RE.search(query or ""))
+        vector_weight = 1.15 if synthesis and not is_contrast else 1.0
+        graph_weight = 1.2 if synthesis and not is_contrast else 1.0
+        if is_contrast:
+            lexical_weight = 1.1
+        elif synthesis:
+            lexical_weight = 0.82
+        else:
+            lexical_weight = 1.0
 
         for item in vector_hits:
             _upsert(item, float(item.get("score", 0.0)) * vector_weight, "vector")
@@ -629,6 +697,91 @@ class DocumentRAGRetriever:
             out.append(item)
         return out
 
+    def _contrast_term_groups(self, query: str) -> list[list[str]]:
+        """For compare/contrast questions, require chunks that mention each topic."""
+        if not _CONTRAST_COMPARE_RE.search(query or ""):
+            return []
+        q = (query or "").lower()
+        groups: list[list[str]] = []
+        if re.search(r"proximity|contact\s*trac", q):
+            groups.append(["proximity"])
+        if re.search(r"go\.?\s*data|godata", q):
+            groups.append(["go.data", "godata"])
+        if re.search(r"symptom\s*track", q):
+            groups.append(["symptom tracking", "symptom"])
+        if re.search(r"outbreak\s*response", q):
+            groups.append(["outbreak response"])
+        return groups
+
+    @staticmethod
+    def _text_matches_term_groups(text: str, groups: list[list[str]]) -> bool:
+        if len(groups) < 2:
+            return False
+        norm = (text or "").lower().replace(" ", "").replace(".", "")
+        for group in groups:
+            if not any(g.lower().replace(" ", "").replace(".", "") in norm for g in group):
+                return False
+        return True
+
+    def _pin_contrast_lexical_chunks(
+        self,
+        query: str,
+        items: list[dict],
+        lexical_hits: list[dict],
+        *,
+        limit: int,
+    ) -> list[dict]:
+        """
+        Contrast questions need chunks that mention BOTH sides (e.g. proximity + Go.Data).
+        Vector-only ranking often returns executive-summary pages and drops the intro contrast.
+        """
+        groups = self._contrast_term_groups(query)
+        if len(groups) < 2:
+            return items
+
+        pinned: list[dict] = []
+        for hit in lexical_hits:
+            if self._text_matches_term_groups(hit.get("text") or "", groups):
+                pinned.append(hit)
+
+        if not pinned:
+            return items
+
+        # Prefer the smallest Section chunk (figure callouts are often on one intro section).
+        pinned.sort(
+            key=lambda h: (
+                0 if (h.get("related") or []) and "keyword" in str(h.get("related")) else 1,
+                len(h.get("text") or ""),
+            )
+        )
+
+        seen: set[str] = set()
+        out: list[dict] = []
+        for hit in pinned[:2]:
+            cid = hit.get("id")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            out.append(
+                {
+                    "id": cid,
+                    "title": hit.get("title") or cid,
+                    "text": hit.get("text") or "",
+                    "score": float(hit.get("score", 1.5)) + 0.5,
+                    "related": list(
+                        dict.fromkeys([*(hit.get("related") or []), "via:contrast_pin"])
+                    ),
+                }
+            )
+
+        for item in items:
+            cid = item.get("id")
+            if cid and cid not in seen:
+                out.append(item)
+            if len(out) >= limit:
+                break
+        return out[:limit]
+
     def _search_phrases_from_query(self, query: str) -> list[str]:
         """
         Build document-agnostic search phrases from the question (dates + word n-grams).
@@ -636,6 +789,23 @@ class DocumentRAGRetriever:
         """
         q = (query or "").lower()
         phrases: list[str] = []
+
+        if _CONTRAST_COMPARE_RE.search(q):
+            if re.search(r"proximity", q):
+                phrases.extend(
+                    [
+                        "proximity tracing tools",
+                        "proximity tracing and symptom tracking",
+                        "unlike proximity tracing tools",
+                    ]
+                )
+            if re.search(r"go\.?\s*data|godata", q):
+                phrases.extend(
+                    [
+                        "go.data falls under the outbreak response",
+                        "outbreak response category",
+                    ]
+                )
 
         for m in _MONTH_YEAR_RE.finditer(q):
             phrases.append(f"{m.group(1).lower()} {m.group(2)}")
@@ -673,6 +843,14 @@ class DocumentRAGRetriever:
         keywords: list[str] = []
         if re.search(r"\bg[o\s]*\.?\s*data\b", q) or "godata" in q.replace(" ", "").replace(".", ""):
             keywords.extend(["godata", "go.data"])
+        if re.search(r"proximity\s*trac", q):
+            keywords.extend(
+                ["proximity tracing", "proximity", "bluetooth", "gps", "contact tracing"]
+            )
+        if re.search(r"symptom\s*track", q):
+            keywords.extend(["symptom tracking", "symptom"])
+        if re.search(r"outbreak\s*response", q):
+            keywords.extend(["outbreak response", "outbreak investigation"])
         for m in _MONTH_YEAR_RE.finditer(q):
             keywords.append(f"{m.group(1).lower()} {m.group(2)}")
             keywords.append(m.group(2))
@@ -725,7 +903,7 @@ class DocumentRAGRetriever:
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND coalesce(n.text, '') <> ''
@@ -784,7 +962,7 @@ class DocumentRAGRetriever:
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND coalesce(n.text, '') <> ''
@@ -826,77 +1004,179 @@ class DocumentRAGRetriever:
 
     def _structural_toc_retrieve(self, session, query: str) -> list[dict]:
         """
-        Build TOC from the document graph (Section/Chapter nodes via CONTAINS).
-        Works when the PDF TOC page has no extractable text but structure was ingested.
+        1) TOC page text (printed/PDF page if named in query, else best-scoring early page).
+        2) Section titled Table of Contents / Contents.
+        3) Outline from chapter + major section headings (not boxes/regions).
         """
         doc_id, doc_title = self._resolve_document_for_query(session, query)
+        label = doc_title or doc_id or "ingested document"
+
+        pdf_page, doc_page = self._parse_page_targets(query)
+        if pdf_page is not None or doc_page:
+            page_hit = self._toc_fetch_page(
+                session, doc_id, pdf_page=pdf_page, doc_page=doc_page
+            )
+            if page_hit and (page_hit.get("text") or "").strip():
+                return [
+                    format_toc_chunk(
+                        body=(page_hit["text"] or "").strip(),
+                        doc_title=page_hit.get("doc_title") or label,
+                        source="Table of contents (from requested document page):",
+                        pdf_page=page_hit.get("pdf_page"),
+                        document_page=page_hit.get("document_page"),
+                    )
+                ]
+
+        page_hit = self._toc_find_best_page(session, doc_id)
+        if page_hit:
+            return [
+                format_toc_chunk(
+                    body=(page_hit["text"] or "").strip(),
+                    doc_title=page_hit.get("doc_title") or label,
+                    source="Table of contents (from document TOC page text):",
+                    pdf_page=page_hit.get("pdf_page"),
+                    document_page=page_hit.get("document_page"),
+                )
+            ]
+
+        section_hit = self._toc_find_section(session, doc_id)
+        if section_hit and (section_hit.get("text") or "").strip():
+            return [
+                format_toc_chunk(
+                    body=(section_hit["text"] or "").strip(),
+                    doc_title=section_hit.get("doc_title") or label,
+                    source="Table of contents (from Contents section):",
+                )
+            ]
+
+        outline = self._toc_outline_fallback(session, doc_id)
+        if outline:
+            return [format_outline_chunk(outline, doc_title=label)]
+        return []
+
+    def _toc_fetch_page(
+        self,
+        session,
+        doc_id: Optional[str],
+        *,
+        pdf_page: Optional[int],
+        doc_page: Optional[str],
+    ) -> Optional[dict]:
+        row = session.run(
+            f"""
+            MATCH (p:Page)
+            WHERE {_node_scope_cypher("p")}
+              AND {lifecycle_active("p")}
+              AND trim(coalesce(p.text, '')) <> ''
+              AND (
+                ($pdf_page IS NOT NULL AND p.pdf_page = $pdf_page)
+                OR (
+                  $doc_page IS NOT NULL
+                  AND toLower(coalesce(p.document_page, '')) = toLower($doc_page)
+                )
+              )
+            RETURN
+              coalesce(p.text, '') AS text,
+              p.pdf_page AS pdf_page,
+              p.document_page AS document_page
+            ORDER BY p.order
+            LIMIT 1
+            """,
+            doc_id=doc_id,
+            pdf_page=pdf_page,
+            doc_page=doc_page,
+        ).single()
+        return dict(row) if row else None
+
+    def _toc_find_best_page(
+        self, session, doc_id: Optional[str]
+    ) -> Optional[dict]:
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            MATCH (p:Page)
+            WHERE {_node_scope_cypher("p")}
+              AND {lifecycle_active("p")}
+              AND trim(coalesce(p.text, '')) <> ''
+            RETURN
+              coalesce(p.text, '') AS text,
+              p.pdf_page AS pdf_page,
+              p.document_page AS document_page,
+              coalesce(p.pdf_page, p.order, 9999) AS sort_key
+            ORDER BY sort_key
+            LIMIT 40
+            """,
+            doc_id=doc_id,
+        )
+        best: Optional[dict] = None
+        best_score = 0.42
+        for r in rows:
+            text = (r.get("text") or "").strip()
+            if not text:
+                continue
+            s = score_page_text_as_toc(text)
+            if s > best_score:
+                best_score = s
+                best = dict(r)
+        return best
+
+    def _toc_find_section(
+        self, session, doc_id: Optional[str]
+    ) -> Optional[dict]:
+        rows = session.run(
+            f"""
             MATCH (s:Section)
-            WHERE s.id STARTS WITH d.id + '_'
-               OR EXISTS {{ MATCH (d)-[:CONTAINS*1..5]->(s) }}
-               OR EXISTS {{ MATCH (s)-[:PART_OF*1..5]->(d) }}
-            WITH d, trim(s.title) AS title, min(s.order) AS ord, min(s.depth) AS depth
-            WHERE title <> '' AND NOT toLower(title) IN ['contents', 'content']
-            RETURN title, ord, depth, coalesce(d.title, d.id) AS doc_title
+            WHERE {_node_scope_cypher("s")}
+              AND {lifecycle_active("s")}
+              AND trim(coalesce(s.title, '')) <> ''
+            RETURN
+              trim(s.title) AS title,
+              coalesce(s.text, '') AS text,
+              coalesce(s.order, 0) AS ord
+            ORDER BY ord
+            """,
+            doc_id=doc_id,
+        )
+        for r in rows:
+            if section_title_is_toc(r.get("title") or ""):
+                body = (r.get("text") or "").strip()
+                if len(body) >= 30:
+                    return dict(r)
+        return None
+
+    def _toc_outline_fallback(
+        self, session, doc_id: Optional[str]
+    ) -> list[str]:
+        rows = session.run(
+            f"""
+            MATCH (n)
+            WHERE (n:Chapter OR n:Section)
+              AND {_node_scope_cypher("n")}
+              AND {lifecycle_active("n")}
+            WITH n,
+                 trim(coalesce(n.title, '')) AS title,
+                 coalesce(n.order, 0) AS ord,
+                 coalesce(n.depth, 99) AS depth,
+                 labels(n)[0] AS label
+            WHERE title <> ''
+            RETURN title, ord, depth, label
             ORDER BY ord, depth, title
             """,
             doc_id=doc_id,
         )
         seen: set[str] = set()
-        entries: list[dict] = []
-        resolved_title = doc_title
+        entries: list[str] = []
         for r in rows:
             title = (r.get("title") or "").strip()
-            if not title or title in seen:
+            if not include_in_outline_fallback(
+                title, int(r.get("depth") or 99), str(r.get("label") or "")
+            ):
                 continue
-            seen.add(title)
-            if not resolved_title and r.get("doc_title"):
-                resolved_title = str(r["doc_title"])
-            entries.append(dict(r))
-        if not entries:
-            return []
-
-        lines = [
-            f"Document: {resolved_title or doc_id or 'ingested document'}",
-            "Table of contents (from graph structure — Section/Chapter nodes in reading order):",
-            "",
-        ]
-        for i, e in enumerate(entries, 1):
-            lines.append(f"{i}. {e['title']}")
-
-        toc_text = "\n".join(lines)
-        return [{
-            "id": "structural_toc",
-            "title": f"Table of contents — {resolved_title or 'document'}",
-            "text": toc_text,
-            "score": 1.0,
-            "related": ["via:structural_graph"],
-        }]
-
-    def _vision_enricher_instance(self) -> PageVisionEnricher:
-        if self._vision_enricher is None:
-            self._vision_enricher = PageVisionEnricher()
-        return self._vision_enricher
-
-    def _describe_region_image(self, image_key: str, caption_hint: str = "") -> str:
-        if image_key in self._vision_cache:
-            return self._vision_cache[image_key]
-        store = get_asset_store()
-        data = store.get_bytes(image_key)
-        if not data:
-            return ""
-        hint = caption_hint or "Describe this figure, diagram, or table from the document."
-        raw = self._vision_enricher_instance().describe_image_bytes(
-            data,
-            user_hint=hint,
-        )
-        desc = compact_visual_content(raw)
-        if desc:
-            self._vision_cache[image_key] = desc
-        return desc
+            key = title.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append(title)
+        return entries
 
     @staticmethod
     def _extract_figure_captions(page_text: str) -> dict[str, str]:
@@ -919,19 +1199,21 @@ class DocumentRAGRetriever:
                 return m.group(1)
         return None
 
+    def _query_wants_all_page_visuals(self, query: str) -> bool:
+        return parse_visual_intent(query).list_all
+
     def _structural_page_visual_retrieve(self, session, query: str) -> list[dict]:
-        """
-        Page figures: Region crops + captions from page text + on-demand vision when needed.
-        """
+        """Page figures/diagrams via stored visual_content text (ingest vision enrichment)."""
         pdf_page, doc_page = self._parse_page_targets(query)
         if pdf_page is None and not doc_page:
             return []
 
+        list_all_visuals = self._query_wants_all_page_visuals(query)
         doc_id, doc_title = self._resolve_document_for_query(session, query)
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (p:Page)
             WHERE p.id STARTS WITH d.id + '_page_'
               AND (
@@ -943,7 +1225,10 @@ class DocumentRAGRetriever:
               )
             WITH p, d
             ORDER BY
-              CASE WHEN $pdf_page IS NOT NULL AND p.pdf_page = $pdf_page THEN 0 ELSE 1 END,
+              CASE WHEN $doc_page IS NOT NULL
+                AND toLower(coalesce(p.document_page, '')) = toLower($doc_page) THEN 0
+              WHEN $pdf_page IS NOT NULL AND p.pdf_page = $pdf_page THEN 1
+              ELSE 2 END,
               p.order
             LIMIT 1
             OPTIONAL MATCH (p)-[:CONTAINS]->(r:Region)
@@ -960,7 +1245,6 @@ class DocumentRAGRetriever:
                 title: coalesce(r.title, ''),
                 text: coalesce(r.text, ''),
                 kind: coalesce(r.region_kind, ''),
-                image_key: r.image_key,
                 visual_content: coalesce(r.visual_content, ''),
                 order: coalesce(r.order, 0)
               }}) AS regions
@@ -978,7 +1262,7 @@ class DocumentRAGRetriever:
         want_fig = self._figure_number_from_query(query)
         regions = [
             r for r in (row.get("regions") or [])
-            if r and (r.get("image_key") or (r.get("visual_content") or "").strip())
+            if r and (r.get("visual_content") or "").strip()
         ]
         regions.sort(key=lambda r: r.get("order") or 0)
 
@@ -988,19 +1272,17 @@ class DocumentRAGRetriever:
                 "title": row.get("page_title") or f"Page {pdf_page}",
                 "text": "",
                 "kind": "page",
-                "image_key": None,
                 "visual_content": row.get("page_visual") or "",
                 "order": 0,
             }]
 
-        if not regions:
-            return []
-
         chunks: list[dict] = []
         doc_label = row.get("doc_title") or doc_title or doc_id or "ingested document"
 
+        if not regions:
+            return []
+
         for idx, reg in enumerate(regions):
-            image_key = reg.get("image_key")
             stored_visual = compact_visual_content((reg.get("visual_content") or "").strip())
             page_visual = compact_visual_content((row.get("page_visual") or "").strip())
 
@@ -1021,11 +1303,6 @@ class DocumentRAGRetriever:
             display_title = caption_title or reg_title or f"Figure on PDF page {pdf_page}"
 
             vision_desc = stored_visual or page_visual
-            if image_key and not vision_desc:
-                vision_desc = self._describe_region_image(
-                    image_key,
-                    caption_hint=f"Document figure. Caption: {display_title}. Describe all boxes, arrows, labels, and data flows.",
-                )
 
             parts = [
                 f"Document: {doc_label}",
@@ -1061,17 +1338,24 @@ class DocumentRAGRetriever:
                 "region_kind": reg.get("kind") or "figure",
                 "visual_content": vision_desc,
             }
-            if image_key:
-                chunk["image_key"] = image_key
             chunks.append(chunk)
 
+        if not list_all_visuals and want_fig and chunks:
+            return chunks[:1]
         return chunks
 
     def _parse_page_targets(self, query: str) -> tuple[Optional[int], Optional[str]]:
         """Resolve PDF page index vs printed document page label from the question."""
         pdf_page, doc_page = parse_page_number_from_query(query)
+        # Bare "page 29" → match document_page footer label, not PDF file page 29.
         if doc_page and str(doc_page).isdigit() and pdf_page is None:
-            pdf_page = int(doc_page)
+            if re.search(r"\bpdf\b", (query or "").lower()) and re.search(
+                r"\b(?:pdf\s+page|page\s+\d+\s+(?:of|in|from)\s+(?:the\s+)?pdf)\b",
+                query or "",
+                re.I,
+            ):
+                pdf_page = int(doc_page)
+                doc_page = None
         return pdf_page, doc_page
 
     def _structural_page_retrieve(self, session, query: str) -> list[dict]:
@@ -1087,7 +1371,7 @@ class DocumentRAGRetriever:
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (p:Page)
             WHERE p.id STARTS WITH d.id + '_page_'
               AND (
@@ -1168,39 +1452,85 @@ class DocumentRAGRetriever:
         }]
 
     def _resolve_document_for_query(self, session, query: str) -> tuple[Optional[str], Optional[str]]:
-        """Pick the document root best matching the question (name / content terms)."""
+        """Return logical document id (preferred) and display title for doc-scoped retrieval."""
         terms = self._document_match_terms(query)
+        lc = lifecycle_active("d")
+        lc_n = lifecycle_active("n")
         if terms:
             row = session.run(
                 f"""
                 UNWIND $terms AS term
-                MATCH (d:{DOCUMENT_ROOT_CYPHER})
-                WHERE toLower(d.title) CONTAINS term
+                MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
+                WHERE toLower(coalesce(dl.title, '')) CONTAINS term
+                   OR toLower(dl.logical_id) CONTAINS term
                    OR EXISTS {{
+                     MATCH (dl)-[:ACTIVE_REVISION]->(:{DOC_REVISION_LABEL})
+                           -[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})
+                     WHERE {lc}
                      MATCH (d)-[:CONTAINS*1..5]->(n)
-                     WHERE toLower(coalesce(n.title, '')) CONTAINS term
-                        OR toLower(coalesce(n.text, '')) CONTAINS term
+                     WHERE {lc_n}
+                       AND (toLower(coalesce(n.title, '')) CONTAINS term
+                            OR toLower(coalesce(n.text, '')) CONTAINS term)
                    }}
-                RETURN d.id AS id, coalesce(d.title, d.id) AS title, count(*) AS hits
+                RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title,
+                       count(*) AS hits
                 ORDER BY hits DESC
                 LIMIT 1
                 """,
                 terms=terms,
             ).single()
             if row and row.get("id"):
-                return str(row["id"]), str(row.get("title") or row["id"])
+                return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
+
+            row = session.run(
+                f"""
+                UNWIND $terms AS term
+                MATCH (d:{DOCUMENT_ROOT_CYPHER})
+                WHERE {lc}
+                  AND (toLower(coalesce(d.title, '')) CONTAINS term
+                   OR EXISTS {{
+                     MATCH (d)-[:CONTAINS*1..5]->(n)
+                     WHERE {lc_n}
+                       AND (toLower(coalesce(n.title, '')) CONTAINS term
+                            OR toLower(coalesce(n.text, '')) CONTAINS term)
+                   }})
+                RETURN coalesce(d.logical_doc_id, d.id) AS id,
+                       coalesce(d.title, d.id) AS title,
+                       count(*) AS hits
+                ORDER BY hits DESC
+                LIMIT 1
+                """,
+                terms=terms,
+            ).single()
+            if row and row.get("id"):
+                return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
+
+        row = session.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]->(:{DOC_REVISION_LABEL})
+                  -[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})-[:CONTAINS*1..4]->(s:Section)
+            WHERE {lc} AND {lifecycle_active("s")}
+            WITH dl, count(s) AS n
+            ORDER BY n DESC
+            LIMIT 1
+            RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title
+            """
+        ).single()
+        if row and row.get("id"):
+            return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
 
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})-[:CONTAINS*1..4]->(s:Section)
+            WHERE {lc} AND {lifecycle_active("s")}
             WITH d, count(s) AS n
             ORDER BY n DESC
             LIMIT 1
-            RETURN d.id AS id, coalesce(d.title, d.id) AS title
+            RETURN coalesce(d.logical_doc_id, d.id) AS id, coalesce(d.title, d.id) AS title
             """
         ).single()
         if row and row.get("id"):
-            return str(row["id"]), str(row.get("title") or row["id"])
+            return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
         return None, None
 
     def _document_match_terms(self, query: str) -> list[str]:
@@ -1255,9 +1585,23 @@ class DocumentRAGRetriever:
             return None
         row = session.run(
             f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
+            WHERE toLower(coalesce(dl.title, '')) CONTAINS toLower($name)
+               OR toLower(dl.logical_id) CONTAINS toLower($name)
+            RETURN dl.logical_id AS id
+            LIMIT 1
+            """,
+            name=name.strip(),
+        ).single()
+        if row and row.get("id"):
+            return str(row["id"])
+        row = session.run(
+            f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE d.title IS NOT NULL AND toLower(d.title) CONTAINS toLower($name)
-            RETURN d.id AS id
+            WHERE {lifecycle_active("d")}
+              AND d.title IS NOT NULL
+              AND toLower(d.title) CONTAINS toLower($name)
+            RETURN coalesce(d.logical_doc_id, d.id) AS id
             LIMIT 1
             """,
             name=name.strip(),
@@ -1267,9 +1611,25 @@ class DocumentRAGRetriever:
     def _list_documents(self, session, limit: int = 5) -> list[dict[str, str]]:
         rows = session.run(
             f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
+            RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title
+            ORDER BY title
+            LIMIT $limit
+            """,
+            limit=max(1, int(limit)),
+        )
+        out: list[dict[str, str]] = []
+        for r in rows:
+            if r.get("id"):
+                out.append({"id": str(r["id"]), "title": str(r.get("title") or r["id"])})
+        if out:
+            return out
+        rows = session.run(
+            f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            RETURN d.id AS id, coalesce(d.title, d.id) AS title
-            ORDER BY coalesce(d.title, d.id)
+            WHERE {lifecycle_active("d")}
+            RETURN coalesce(d.logical_doc_id, d.id) AS id, coalesce(d.title, d.id) AS title
+            ORDER BY title
             LIMIT $limit
             """,
             limit=max(1, int(limit)),
@@ -1292,7 +1652,7 @@ class DocumentRAGRetriever:
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (s:Section)
             WHERE (s.id STARTS WITH d.id + '_' OR EXISTS {{ MATCH (d)-[:CONTAINS*1..6]->(s) }})
               AND s.title IS NOT NULL
@@ -1345,7 +1705,7 @@ class DocumentRAGRetriever:
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND (
@@ -1401,7 +1761,7 @@ class DocumentRAGRetriever:
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            WHERE {_doc_scope_cypher("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND (
@@ -1446,8 +1806,77 @@ class DocumentRAGRetriever:
                 "related": [f"doc:{doc_title}" if doc_title else "doc:unknown", "via:box_content"],
             })
 
-        items.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+        items.sort(
+            key=lambda x: (float(x.get("score", 0.0)), len(x.get("text") or "")),
+            reverse=True,
+        )
+        if items and len((items[0].get("text") or "")) < 200:
+            page_items = self._box_content_from_page_text(session, query, box_n, doc_id)
+            if page_items:
+                return page_items
         return items[:6]
+
+    def _box_content_from_page_text(
+        self,
+        session,
+        query: str,
+        box_n: int,
+        doc_id: Optional[str],
+    ) -> list[dict]:
+        """Fallback when Box sections in Neo4j only store the label (pre-fix ingest)."""
+        _, doc_title = self._resolve_document_for_query(session, query)
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE {_doc_scope_cypher("d")}
+            MATCH (p:Page)
+            WHERE p.id STARTS WITH d.id + '_page_'
+              AND toLower(coalesce(p.text, '')) CONTAINS $box_phrase
+            RETURN p.id AS id, p.title AS title, p.text AS text, p.pdf_page AS pdf_page
+            ORDER BY size(coalesce(p.text, '')) DESC
+            LIMIT 3
+            """,
+            doc_id=doc_id,
+            box_phrase=f"box {int(box_n)}",
+        )
+        for r in rows:
+            page_text = (r.get("text") or "").strip()
+            if not page_text:
+                continue
+            extracted = self._extract_box_snippet_from_page(page_text, box_n)
+            if len(extracted) < 80:
+                continue
+            return [{
+                "id": r.get("id") or f"box_{box_n}_page",
+                "title": f"Box {box_n}",
+                "text": f"Box {box_n}\n\n{extracted}"[:4000],
+                "score": 1.1,
+                "related": [
+                    f"doc:{doc_title}" if doc_title else "doc:unknown",
+                    "via:box_page_fallback",
+                ],
+                "pdf_page": r.get("pdf_page"),
+            }]
+        return []
+
+    @staticmethod
+    def _extract_box_snippet_from_page(page_text: str, box_n: int) -> str:
+        target = str(int(box_n))
+        lines = page_text.splitlines()
+        start: int | None = None
+        for i, ln in enumerate(lines):
+            m = re.match(r"^\s*Box\s+(\d+(?:\.\d+)?)", ln.strip(), re.I)
+            if m and m.group(1).split(".")[0] == target:
+                start = i
+                break
+        if start is None:
+            return ""
+        body: list[str] = []
+        for ln in lines[start + 1 :]:
+            if re.match(r"^\s*Box\s+\d+", ln.strip(), re.I):
+                break
+            body.append(ln)
+        return "\n".join(body).strip()
 
     def _get_embedding(self, text: str) -> list[float]:
         resp = provider.embeddings(model=EMBEDDING_MODEL, input=(text or "")[:8000])
@@ -1479,10 +1908,7 @@ class DocumentRAGRetriever:
         user_context: Optional[UserContext] = None,
     ) -> dict[str, Any]:
         ctx = user_context or self.user_context
-        _passthrough = (
-            "image_key", "image_url", "pdf_page", "document_page",
-            "region_kind", "visual_content",
-        )
+        _passthrough = ("pdf_page", "document_page", "region_kind", "visual_content")
         return {
             "query": query,
             "chunks": [

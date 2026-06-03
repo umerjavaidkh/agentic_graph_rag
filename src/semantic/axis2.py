@@ -12,15 +12,21 @@ Builds:
 Design principles:
   - Cheap relationships (SIMILAR, SHARES_ENTITY, SAME_CATEGORY) run always
   - Expensive LLM relationships run only on top-k candidate pairs
+  - NER and LLM-pair calls are parallelised with bounded ThreadPoolExecutors
   - All relationships are Axis 2 flagged
 """
-import os
 import json
 import itertools
-from typing import Optional
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Optional, Tuple
 
 import numpy as np
+
 from ..config.settings import (
+    AXIS2_LLM_PAIR_CONCURRENCY,
+    AXIS2_MAX_LLM_PAIRS,
+    AXIS2_NER_CONCURRENCY,
     AXIS2_NER_MAX_TOKENS,
     AXIS2_RELATION_MAX_TOKENS,
     CHAT_MODEL,
@@ -50,7 +56,7 @@ CONCEPT_NODE_TYPES     = {NodeType.SECTION, NodeType.PAGE}
 # ─────────────────────────────────────────
 class Axis2Builder:
     """
-    Takes the node list from DoclingParser and enriches it with
+    Takes the node list from document ingestion and enriches it with
     all Axis 2 semantic edges.
 
     Usage:
@@ -75,7 +81,7 @@ class Axis2Builder:
         # 1. Embed nodes
         nodes = self._embed_nodes(nodes)
 
-        # 2. NER — extract entities per node
+        # 2. NER — extract entities per node (parallel)
         nodes = self._extract_entities(nodes)
 
         # 3. SEMANTICALLY_SIMILAR
@@ -88,7 +94,7 @@ class Axis2Builder:
         nodes, edges_cat = self._build_category_edges(nodes)
         edges += edges_cat
 
-        # 6. LLM pass — CONTRADICTS / ELABORATES / PREREQUISITE_OF
+        # 6. LLM pass — CONTRADICTS / ELABORATES / PREREQUISITE_OF (parallel)
         if run_llm_pass and self.client:
             edges += self._build_llm_edges(nodes)
 
@@ -115,42 +121,56 @@ class Axis2Builder:
         return nodes
 
     # ─────────────────────────────────────────
-    # 2. ENTITY EXTRACTION (lightweight, no spaCy required)
+    # 2. ENTITY EXTRACTION — parallel NER
     # ─────────────────────────────────────────
     def _extract_entities(self, nodes: list[DKGNode]) -> list[DKGNode]:
         """
-        Uses LLM for NER if available, otherwise skips.
+        Uses LLM for NER in parallel (bounded by AXIS2_NER_CONCURRENCY).
         Returns top-10 entities per node to keep it manageable.
         """
         if not self.client:
             return nodes
 
         targets = [n for n in nodes if n.type in CONCEPT_NODE_TYPES]
+        if not targets:
+            return nodes
 
-        for node in targets:
+        def _ner_one(node: DKGNode) -> Tuple[str, list]:
             try:
                 resp = self.client.chat_completion(
                     model=CHAT_MODEL,
                     temperature=0,
-                    messages=[{
-                        "role": "system",
-                        "content": (
-                            "Extract the top 10 named entities (people, organizations, "
-                            "concepts, theories, technical terms) from the text. "
-                            "Return ONLY a JSON array of strings. No explanation."
-                        )
-                    }, {
-                        "role": "user",
-                        "content": node.text[:3000]
-                    }],
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Extract the top 10 named entities (people, organizations, "
+                                "concepts, theories, technical terms) from the text. "
+                                "Return ONLY a JSON array of strings. No explanation."
+                            ),
+                        },
+                        {"role": "user", "content": node.text[:3000]},
+                    ],
                     max_tokens=AXIS2_NER_MAX_TOKENS,
                 )
                 raw = resp.choices[0].message.content.strip()
-                # Strip markdown fences if present
                 raw = raw.replace("```json", "").replace("```", "").strip()
-                node.entities = json.loads(raw)
+                return node.id, json.loads(raw)
             except Exception:
-                node.entities = []
+                return node.id, []
+
+        # Build id→node lookup for result assignment
+        id_to_node = {n.id: n for n in targets}
+
+        with ThreadPoolExecutor(max_workers=AXIS2_NER_CONCURRENCY, thread_name_prefix="axis2_ner") as pool:
+            futures = {pool.submit(_ner_one, node): node.id for node in targets}
+            for fut in as_completed(futures):
+                try:
+                    node_id, entities = fut.result()
+                    if node_id in id_to_node:
+                        id_to_node[node_id].entities = entities
+                except Exception:
+                    pass
 
         return nodes
 
@@ -173,7 +193,6 @@ class Axis2Builder:
             score = float(sim[i, j])
             if score >= SIMILARITY_THRESHOLD:
                 a, b = embedded[i], embedded[j]
-                # Skip same-parent pairs at same level (already PRECEDES)
                 edges.append(DKGEdge(
                     source_id  = a.id,
                     target_id  = b.id,
@@ -249,14 +268,14 @@ class Axis2Builder:
         return nodes, edges
 
     # ─────────────────────────────────────────
-    # 6. LLM PASS — CONTRADICTS / ELABORATES / PREREQUISITE_OF
+    # 6. LLM PASS — CONTRADICTS / ELABORATES / PREREQUISITE_OF (parallel)
     # ─────────────────────────────────────────
     def _build_llm_edges(self, nodes: list[DKGNode]) -> list[DKGEdge]:
         """
-        Runs only on highly similar pairs to keep cost manageable.
+        Runs only on top-k highest-similarity pairs (capped by AXIS2_MAX_LLM_PAIRS)
+        with bounded parallel LLM calls (AXIS2_LLM_PAIR_CONCURRENCY).
         """
         edges: list[DKGEdge] = []
-        # Only consider already-similar pairs
         embedded = [n for n in nodes if n.embedding is not None]
         if len(embedded) < 2:
             return edges
@@ -265,6 +284,21 @@ class Axis2Builder:
         norms = np.linalg.norm(vecs, axis=1, keepdims=True)
         vecs  = vecs / (norms + 1e-10)
         sim   = vecs @ vecs.T
+
+        # Collect all candidate pairs above the threshold, sorted by similarity
+        # (highest first) then capped to AXIS2_MAX_LLM_PAIRS.
+        candidates: list[Tuple[float, int, int]] = []
+        for i, j in itertools.combinations(range(len(embedded)), 2):
+            score = float(sim[i, j])
+            if score >= CONTRADICTION_THRESH:
+                candidates.append((score, i, j))
+
+        # Sort descending by similarity and cap
+        candidates.sort(reverse=True)
+        candidates = candidates[:AXIS2_MAX_LLM_PAIRS]
+
+        if not candidates:
+            return edges
 
         PROMPT = """You are analyzing two sections of a document.
 
@@ -280,10 +314,7 @@ Determine the relationship. Return ONLY valid JSON:
   "reason": "one sentence"
 }}"""
 
-        for i, j in itertools.combinations(range(len(embedded)), 2):
-            if float(sim[i, j]) < CONTRADICTION_THRESH:
-                continue
-
+        def _llm_pair(score: float, i: int, j: int) -> Optional[DKGEdge]:
             a, b = embedded[i], embedded[j]
             try:
                 resp = self.client.chat_completion(
@@ -306,17 +337,37 @@ Determine the relationship. Return ONLY valid JSON:
                 }
                 rel = rel_map.get(data.get("relationship", "NONE"))
                 if rel and data.get("confidence", 0) >= 0.7:
-                    src, tgt = (a.id, b.id) if data["direction"] in ("A_TO_B", "SYMMETRIC") \
-                               else (b.id, a.id)
-                    edges.append(DKGEdge(
+                    src, tgt = (
+                        (a.id, b.id)
+                        if data["direction"] in ("A_TO_B", "SYMMETRIC")
+                        else (b.id, a.id)
+                    )
+                    return DKGEdge(
                         source_id  = src,
                         target_id  = tgt,
                         rel_type   = rel,
                         weight     = data["confidence"],
                         axis       = 2,
                         properties = {"reason": data.get("reason", "")},
-                    ))
+                    )
             except Exception:
-                continue
+                pass
+            return None
+
+        with ThreadPoolExecutor(
+            max_workers=AXIS2_LLM_PAIR_CONCURRENCY,
+            thread_name_prefix="axis2_llm",
+        ) as pool:
+            futures = {
+                pool.submit(_llm_pair, score, i, j): (i, j)
+                for score, i, j in candidates
+            }
+            for fut in as_completed(futures):
+                try:
+                    edge = fut.result()
+                    if edge is not None:
+                        edges.append(edge)
+                except Exception:
+                    pass
 
         return edges

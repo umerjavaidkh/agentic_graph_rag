@@ -1,14 +1,14 @@
 """
 Build a dynamic presentation payload from answer + sources + retrieval meta.
 
-Block types: markdown, table, chart, image — extensible via BLOCK_BUILDERS.
+Block types: markdown, table, chart — extensible via BLOCK_BUILDERS.
+Visual page queries use markdown from stored visual_content (no binary image serving).
 """
 from __future__ import annotations
 
 import re
 from typing import Any, Callable, Optional
 
-from ..assets.page_images import resolve_image_url
 from ..document.page_numbers import parse_page_number_from_query
 from .structured_planner import build_structured_presentation
 from ..document.page_vision import compact_visual_content
@@ -16,7 +16,7 @@ from ..retrieval.unstructured.visual_retrieval import wants_page_text
 
 # ── Intent detectors (extensible) ─────────────────────────────
 
-_IMAGE_QUERY = re.compile(
+_VISUAL_QUERY = re.compile(
     r"\bvisual\s+content\b|"
     r"\b(?:show|display|see|fetch|get)\s+(?:the\s+)?(?:image|picture|photo|figure|page|pdf)\b|"
     r"\b(?:show\s+all|all|every|list|each)\s+(?:\w+\s+){0,3}"
@@ -39,10 +39,15 @@ _PERCENT_PATTERN = re.compile(
 _PIPE_TABLE_ROW = re.compile(r"^\s*\|.+\|\s*$")
 
 
-def wants_page_image(question: str) -> bool:
+def wants_page_visual(question: str) -> bool:
+    """True when the user asks about figures/visuals (answered via visual_content text)."""
     if _TEXT_ONLY.search(question):
         return False
-    return bool(_IMAGE_QUERY.search(question))
+    return bool(_VISUAL_QUERY.search(question))
+
+
+# Backward-compatible alias
+wants_page_image = wants_page_visual
 
 
 def _extract_markdown_tables(text: str) -> list[dict]:
@@ -95,81 +100,6 @@ def _extract_chart_from_text(text: str) -> Optional[dict]:
     }
 
 
-def _image_blocks_from_sources(
-    sources: list[dict],
-    question: str,
-    force: bool = False,
-    retrieved_context: Optional[dict] = None,
-    query_type: Optional[str] = None,
-) -> list[dict]:
-    blocks: list[dict] = []
-    want = force or wants_page_image(question)
-    if not want:
-        return blocks
-
-    ctx = retrieved_context or {}
-    mode = ctx.get("mode") or ""
-    page_text_mode = mode == "page_text"
-    pin_pdf = ctx.get("pdf_page")
-    list_all_visuals = bool(
-        re.search(
-            r"\b(?:show\s+all|all|every|list|each)\s+(?:\w+\s+){0,3}"
-            r"(?:images?|figures?|figs?\.?|photos?|pictures?|visuals?)\b",
-            question,
-            re.I,
-        )
-    )
-    single_page_image = (
-        ctx.get("single_visual")
-        or (
-            mode != "page_visual_list"
-            and not list_all_visuals
-            and (mode == "page_lookup" or query_type == "page")
-            and wants_page_image(question)
-            and not page_text_mode
-            and not wants_page_text(question)
-        )
-    )
-    if pin_pdf is None and single_page_image:
-        pin_pdf, _ = parse_page_number_from_query(question)
-
-    seen_keys: set[str] = set()
-    seen_urls: set[str] = set()
-    for src in sources:
-        if pin_pdf is not None:
-            sp = src.get("pdf_page")
-            if sp is not None and int(sp) != int(pin_pdf):
-                continue
-        key = src.get("image_key")
-        if not key or key in seen_keys:
-            continue
-        seen_keys.add(key)
-        url = src.get("image_url") or resolve_image_url(key)
-        if not url or url in seen_urls:
-            continue
-        seen_urls.add(url)
-        title = src.get("title") or "Page"
-        doc_p = src.get("document_page")
-        pdf_p = src.get("pdf_page")
-        kind = src.get("region_kind")
-        caption = title
-        if kind:
-            caption = f"{title} ({kind})"
-        if doc_p and str(doc_p) != str(pdf_p):
-            caption = f"{caption} — printed {doc_p}, PDF {pdf_p}"
-        elif pdf_p:
-            caption = f"{caption} — PDF page {pdf_p}"
-        blocks.append({
-            "type": "image",
-            "url": url,
-            "alt": caption,
-            "caption": caption,
-        })
-        if single_page_image:
-            break
-    return blocks
-
-
 def _short_visual_blurb(src: dict) -> str:
     """One-line summary for list UI — not the full vision dump."""
     visual = compact_visual_content((src.get("visual_content") or "").strip())
@@ -191,15 +121,87 @@ def _short_visual_blurb(src: dict) -> str:
     return first or "Figure"
 
 
+def _visual_markdown_blocks_from_sources(
+    sources: list[dict],
+    question: str,
+    force: bool = False,
+    retrieved_context: Optional[dict] = None,
+    query_type: Optional[str] = None,
+) -> list[dict]:
+    """Markdown blocks from ingested visual_content (no JPEG URLs)."""
+    blocks: list[dict] = []
+    want = force or wants_page_visual(question)
+    if not want:
+        return blocks
+
+    ctx = retrieved_context or {}
+    mode = ctx.get("mode") or ""
+    page_text_mode = mode == "page_text"
+    pin_pdf = ctx.get("pdf_page")
+    list_all_visuals = bool(
+        re.search(
+            r"\b(?:show\s+all|all|every|list|each)\s+(?:\w+\s+){0,3}"
+            r"(?:images?|figures?|figs?\.?|photos?|pictures?|visuals?)\b",
+            question,
+            re.I,
+        )
+    )
+    single_visual = (
+        ctx.get("single_visual")
+        or (
+            mode != "page_visual_list"
+            and not list_all_visuals
+            and (mode == "page_lookup" or query_type == "page")
+            and wants_page_visual(question)
+            and not page_text_mode
+            and not wants_page_text(question)
+        )
+    )
+    if pin_pdf is None and single_visual:
+        pin_pdf, _ = parse_page_number_from_query(question)
+
+    seen_ids: set[str] = set()
+    for src in sources:
+        if pin_pdf is not None:
+            sp = src.get("pdf_page")
+            if sp is not None and int(sp) != int(pin_pdf):
+                continue
+        visual = compact_visual_content((src.get("visual_content") or "").strip())
+        if not visual:
+            continue
+        sid = src.get("id") or visual[:80]
+        if sid in seen_ids:
+            continue
+        seen_ids.add(sid)
+        title = src.get("title") or "Figure"
+        doc_p = src.get("document_page")
+        pdf_p = src.get("pdf_page")
+        kind = src.get("region_kind")
+        caption = title
+        if kind:
+            caption = f"{title} ({kind})"
+        if doc_p and str(doc_p) != str(pdf_p):
+            caption = f"{caption} — printed {doc_p}, PDF {pdf_p}"
+        elif pdf_p:
+            caption = f"{caption} — PDF page {pdf_p}"
+        blocks.append({
+            "type": "markdown",
+            "content": f"### {caption}\n\n{visual}",
+        })
+        if single_visual:
+            break
+    return blocks
+
+
 def _page_visual_list_blocks(
     sources: list[dict],
     ctx: dict,
 ) -> list[dict]:
-    """Interleave compact captions with one image per figure (no duplicate wall of text)."""
+    """List figures on a page using visual_content text only."""
     blocks: list[dict] = []
     pdf_p = ctx.get("pdf_page")
     doc_p = ctx.get("document_page")
-    items = [s for s in sources if s.get("image_key")]
+    items = [s for s in sources if (s.get("visual_content") or "").strip()]
     if not items:
         return blocks
 
@@ -208,36 +210,18 @@ def _page_visual_list_blocks(
         header += f"\n\n_Printed page **{doc_p}**._"
     blocks.append({"type": "markdown", "content": header})
 
-    seen_keys: set[str] = set()
+    seen_ids: set[str] = set()
     for i, src in enumerate(items, 1):
-        key = src.get("image_key")
-        if not key or key in seen_keys:
+        sid = src.get("id") or str(i)
+        if sid in seen_ids:
             continue
-        seen_keys.add(key)
-        url = resolve_image_url(key)
-        if not url:
-            continue
+        seen_ids.add(sid)
         title = src.get("title") or f"Figure {i}"
         blurb = _short_visual_blurb(src)
+        visual = compact_visual_content((src.get("visual_content") or "").strip())
         blocks.append({
             "type": "markdown",
-            "content": f"\n{i}. **{title}** — _{blurb}_",
-        })
-        doc_page = src.get("document_page")
-        pdf_page = src.get("pdf_page") or pdf_p
-        kind = src.get("region_kind")
-        caption = title
-        if kind:
-            caption = f"{title} ({kind})"
-        if doc_page and str(doc_page) != str(pdf_page):
-            caption = f"{caption} — printed {doc_page}, PDF {pdf_page}"
-        elif pdf_page:
-            caption = f"{caption} — PDF page {pdf_page}"
-        blocks.append({
-            "type": "image",
-            "url": url,
-            "alt": caption,
-            "caption": caption,
+            "content": f"\n{i}. **{title}** — _{blurb}_\n\n{visual}",
         })
     return blocks
 
@@ -314,43 +298,30 @@ def build_presentation(
         "unified_visual", "page_lookup", "page_visual_list",
         "visual_scene", "caption_figure", "structural_page_visual",
     )
-    wants_visual = wants_page_image(question)
-    force_image = not text_only and not page_text_mode and wants_visual
+    wants_visual = wants_page_visual(question)
+    force_visual = not text_only and not page_text_mode and wants_visual
 
-    image_blocks = _image_blocks_from_sources(
-        sources,
-        question,
-        force=force_image,
-        retrieved_context=ctx,
-        query_type=query_type,
+    blocks.extend(
+        _visual_markdown_blocks_from_sources(
+            sources,
+            question,
+            force=force_visual or visual_mode or visual_query_type,
+            retrieved_context=ctx,
+            query_type=query_type,
+        )
     )
-    blocks.extend(image_blocks)
 
     table_blocks = _table_blocks_from_answer(answer)
     blocks.extend(table_blocks)
 
-    # Avoid generic "percent from prose" charts for structured/tabular answers.
     if agent != "structured" and not _has_tabular_sources(sources):
         chart_blocks = _chart_blocks_from_answer(answer)
         if chart_blocks and not table_blocks:
             blocks.extend(chart_blocks)
 
-    blocks.append(_markdown_block(answer, bool(table_blocks)))
-
-    # Drop empty markdown-only shells (e.g. missing answer before generate ran).
-    blocks = [
-        b for b in blocks
-        if not (b.get("type") == "markdown" and not (b.get("content") or "").strip())
-    ]
-    if not blocks and (answer or "").strip():
+    if not blocks:
         blocks.append(_markdown_block(answer, bool(table_blocks)))
 
     kinds = {b["type"] for b in blocks}
-    if len(kinds) > 1:
-        kind = "mixed"
-    elif kinds:
-        kind = next(iter(kinds))
-    else:
-        kind = "plain"
-
+    kind = "mixed" if len(kinds) > 1 else (next(iter(kinds)) if kinds else "plain")
     return {"kind": kind, "blocks": blocks}

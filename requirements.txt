@@ -2,11 +2,8 @@
 # pip install -r requirements.txt
 
 # ── Document parsing ─────────────────────
-docling>=2.5.0
-docling-core>=2.10.0
-pymupdf>=1.24.0          # page images for optional vision enrichment
-Pillow>=10.0.0           # JPEG compression for page assets
-minio>=7.2.0             # optional: ASSET_STORAGE_BACKEND=minio
+pymupdf>=1.24.0          # lightweight PDF text + page image extraction
+pdfplumber>=0.11.0       # targeted table/text fallback for weak PDF pages
 
 # ── Embeddings + LLM ────────────────────
 openai>=1.30.0
@@ -20,11 +17,17 @@ python-dotenv>=1.0.0
 langgraph>=0.2.0
 
 # ── Semantic analysis ───────────────────
-numpy>=1.26.0,<2.0.0       # Pinned <2 for torch/docling compatibility
+numpy>=1.26.0,<2.0.0
 scikit-learn>=1.4.0        # KMeans clustering for SAME_CATEGORY
 
 # ── Neo4j driver (for live import option) ──
 neo4j>=5.20.0
+
+# ── Scalable ingestion queue (Redis broker + RQ workers) ──────────────────
+# Both are optional at import time: the pipeline degrades gracefully to
+# in-process BackgroundTasks when REDIS_URL is not set.
+redis>=5.0.0
+rq>=1.16.0
 
 # ── Optional: local embeddings (no API key) ──
 # sentence-transformers>=3.0.0

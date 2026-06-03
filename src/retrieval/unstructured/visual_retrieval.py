@@ -110,10 +110,10 @@ def is_strict_page_lookup(intent: VisualIntent) -> bool:
 
 def normalize_visual_page_intent(intent: VisualIntent) -> None:
     """
-    Bare 'page N' in image/figure queries means PDF page index, not printed label.
+    Prefer printed document_page labels (footer '29') over PDF file index.
 
-    Must run after pdf_page / document_page are set on the intent (including from
-    retrieve_node), otherwise page-scoped visual queries may miss pdf_page=N.
+    Only map a numeric label to pdf_page when the user explicitly says PDF
+    (e.g. 'pdf page 29', 'page 29 of the pdf').
     """
     if intent.pdf_page is not None or not intent.document_page:
         return
@@ -121,10 +121,11 @@ def normalize_visual_page_intent(intent: VisualIntent) -> None:
     if not label.isdigit():
         return
     q = intent.query.lower()
-    if not (intent.wants_image or intent.list_all or _VISUAL_KIND.search(q)):
-        return
-    intent.pdf_page = int(label)
-    intent.document_page = None
+    if re.search(r"\bpdf\b", q) and re.search(
+        r"\b(?:pdf\s+page|page\s+\d+\s+(?:of|in|from)\s+(?:the\s+)?pdf)\b", q, re.I
+    ):
+        intent.pdf_page = int(label)
+        intent.document_page = None
 
 
 def parse_visual_intent(
@@ -279,7 +280,7 @@ def score_visual_candidate(
         elif term in blobs["tags"]:
             score += 6.0
 
-    if intent.wants_image and row.get("image_key"):
+    if intent.wants_image and (row.get("visual_content") or "").strip():
         score += 40.0
     if node_label == "Region" and row.get("region_kind") == intent.kind_filter:
         score += 25.0
@@ -313,7 +314,7 @@ def best_region_for_visual_focus(
         return None
     scored: list[tuple[float, dict]] = []
     for reg in regions:
-        if not reg.get("image_key"):
+        if not (reg.get("visual_content") or "").strip():
             continue
         row = dict(reg)
         if not row.get("visual_content") and page_visual:

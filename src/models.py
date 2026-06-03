@@ -12,6 +12,8 @@ from typing import Optional
 # ─────────────────────────────────────────
 class NodeType(str, Enum):
     DOCUMENT = "Document"
+    DOCUMENT_LOGICAL = "DocumentLogical"
+    DOC_REVISION = "DocRevision"
     CHAPTER = "Chapter"
     SECTION = "Section"
     PAGE    = "Page"
@@ -31,6 +33,9 @@ class RelType(str, Enum):
     PART_OF           = "PART_OF"
     PRECEDES          = "PRECEDES"
     FOLLOWS           = "FOLLOWS"
+    HAS_REVISION      = "HAS_REVISION"
+    ACTIVE_REVISION   = "ACTIVE_REVISION"
+    ROOT              = "ROOT"
 
     # ── Axis 2: Semantic (Horizontal) ──────
     SEMANTICALLY_SIMILAR = "SEMANTICALLY_SIMILAR"
@@ -65,11 +70,18 @@ class DKGNode:
     pdf_page: Optional[int] = None       # 1-based index in uploaded PDF file
     document_page: Optional[str] = None  # label printed on page: "43", "iii", "A"
     page_tags: list = field(default_factory=list)  # searchable: pdf:51, doc:43, …
-    image_key: Optional[str] = None  # object storage key for page/region JPEG
     region_kind: Optional[str] = None  # table | figure
     region_tags: list = field(default_factory=list)  # table:a6, figure:3, pdf:12, …
-    bbox: Optional[list] = None  # [l, t, r, b] top-left origin in Docling page units
-    bbox_page_size: Optional[list] = None  # [width, height] of Docling page
+    bbox: Optional[list] = None  # [l, t, r, b] top-left origin in parser page units
+    bbox_page_size: Optional[list] = None  # [width, height] of parser page
+    # Document lineage (revision snapshot ingest)
+    logical_doc_id: Optional[str] = None
+    revision_id: Optional[str] = None
+    lifecycle_status: Optional[str] = None  # ACTIVE | EXPIRED
+    content_hash: Optional[str] = None
+    version_number: Optional[int] = None
+    ingested_at: Optional[str] = None
+    source_filename: Optional[str] = None
 
 
 # ─────────────────────────────────────────
