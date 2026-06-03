@@ -46,6 +46,10 @@ _COMMON_HEADING = re.compile(
     r"^(?:chapter|section|part|appendix|annex|box|table|figure)\b",
     re.I,
 )
+_BOX_LABEL = re.compile(
+    r"^\s*Box\s+\d+(?:\.\d+)?(?:\s+\(continued\))?\s*$",
+    re.I,
+)
 
 
 def _build_region_tags(
@@ -368,6 +372,13 @@ class LightPdfParser:
         median = sizes[len(sizes) // 2]
         return median + 1.5
 
+    @staticmethod
+    def _is_box_label(title: str) -> bool:
+        line = " ".join(ln.strip() for ln in (title or "").splitlines() if ln.strip())
+        return bool(_BOX_LABEL.match(line)) or bool(
+            re.match(r"^Box\s+\d+", line, re.I) and len(line) <= 40
+        )
+
     def _is_heading(self, block: _PdfBlock, font_threshold: float) -> bool:
         if block.kind != "text" or block.low_confidence:
             return False
@@ -398,6 +409,49 @@ class LightPdfParser:
         if not letters:
             return 0.0
         return sum(1 for ch in letters if ch.isupper()) / len(letters)
+
+    def _enrich_box_sections_from_pages(
+        self,
+        section_nodes: list[DKGNode],
+        page_buckets: dict[int, list[str]],
+    ) -> None:
+        """Fill Box N sections when heading detection left only the label (no body)."""
+        for sec in section_nodes:
+            if not self._is_box_label(sec.title):
+                continue
+            title = (sec.title or "").strip()
+            body = (sec.text or "").strip()
+            if len(body) > len(title) + 80:
+                continue
+            page_no = sec.page_start or 1
+            page_text = "\n\n".join(page_buckets.get(page_no, []))
+            extracted = self._extract_box_body_from_page(page_text, title)
+            if extracted:
+                sec.text = f"{title}\n\n{extracted}"
+
+    @staticmethod
+    def _extract_box_body_from_page(page_text: str, box_title: str) -> str:
+        if not page_text.strip():
+            return ""
+        target = re.search(r"(\d+)", box_title or "")
+        if not target:
+            return ""
+        want = target.group(1)
+        lines = page_text.splitlines()
+        start: int | None = None
+        for i, ln in enumerate(lines):
+            m = re.match(r"^\s*Box\s+(\d+(?:\.\d+)?)", ln.strip(), re.I)
+            if m and m.group(1).split(".")[0] == want:
+                start = i
+                break
+        if start is None:
+            return ""
+        body_lines: list[str] = []
+        for ln in lines[start + 1 :]:
+            if re.match(r"^\s*Box\s+\d+", ln.strip(), re.I):
+                break
+            body_lines.append(ln)
+        return "\n".join(body_lines).strip()
 
     def _build_from_extracts(
         self, extracts: list[_PageExtract], doc_name: str, page_count: int
@@ -481,6 +535,14 @@ class LightPdfParser:
             text = block.text
             page_no = block.page
             is_heading = self._is_heading(block, heading_font_threshold)
+            # Box subtitle lines (large font) are body under "Box N", not new sections.
+            if (
+                is_heading
+                and current_section is not None
+                and self._is_box_label(current_section.title)
+                and not self._is_box_label(text)
+            ):
+                is_heading = False
 
             if is_heading:
                 finalize_section()
@@ -596,6 +658,7 @@ class LightPdfParser:
                 current_chapter.page_end = page_no
 
         finalize_section()
+        self._enrich_box_sections_from_pages(section_nodes, page_buckets)
 
         all_page_numbers = set(range(1, page_count + 1)) | set(page_buckets.keys())
         page_nodes = self._build_page_nodes(

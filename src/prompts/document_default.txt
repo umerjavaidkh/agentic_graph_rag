@@ -15,7 +15,7 @@ Rules:
 - For "which institution/organization hosted" questions: use the host named in the context (e.g. RKI / Robert Koch Institute). Do not say the institution is unspecified if the text states who hosted the event.
 - If a specific detail is truly absent from all chunks, say so — but first check whether equivalent wording or related roles/consequences appear under different terms.
 - For list or enumeration questions, include every item explicitly mentioned across the provided chunks.
-- For comparison or synthesis questions, combine information only from the given chunks.
+- For comparison or synthesis questions, combine information only from the given chunks. Do not claim a sub-topic is missing if another chunk in the context already contrasts those topics (e.g. Go.Data vs proximity tracing on the same page/section).
 - For structural map, escalation, or pathway questions: build a logical flow (numbered steps or arrows) from facts stated across the chunks, even if the document does not provide a pre-drawn diagram. Connect causes, actors, and consequences that appear in the text. If the question uses a term not found verbatim (e.g. "local HR"), map it to the closest equivalent role named in the document (e.g. local compliance officers, line managers) and state that mapping clearly.
 
 Context:

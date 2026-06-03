@@ -66,6 +66,11 @@ _SYNTHESIS_RE = re.compile(
     re.I,
 )
 
+_CONTRAST_COMPARE_RE = re.compile(
+    r"\b(contrast|compare|comparison|versus|vs\.?)\b",
+    re.I,
+)
+
 _KEYWORD_STOP = frozenset({
     "what", "which", "where", "when", "that", "this", "with", "from", "into",
     "have", "been", "were", "they", "their", "there", "about", "under", "based",
@@ -331,10 +336,16 @@ class DocumentRAGRetriever:
             with self.driver.session() as session:
                 visual_items = self._structural_page_visual_retrieve(session, query)
             if visual_items:
-                pdf_page, _ = self._parse_page_targets(query)
+                pdf_page, doc_page = self._parse_page_targets(query)
                 response = self._format_response(query, visual_items, user_context=ctx)
-                response["mode"] = "structural_page_visual"
+                if self._query_wants_all_page_images(query) and any(
+                    c.get("image_key") for c in visual_items
+                ):
+                    response["mode"] = "page_visual_list"
+                else:
+                    response["mode"] = "structural_page_visual"
                 response["pdf_page"] = pdf_page
+                response["document_page"] = doc_page
                 response["strategy"] = "graph_rag"
                 response["vector_seeds"] = 0
                 response["fulltext_hits"] = 0
@@ -389,6 +400,10 @@ class DocumentRAGRetriever:
                 synthesis=synthesis,
                 limit=max(1, int(fetch_limit)),
             )
+            if synthesis and lexical_hits:
+                items = self._pin_contrast_lexical_chunks(
+                    query, items, lexical_hits, limit=max(1, int(fetch_limit))
+                )
 
         response = self._format_response(query, items, user_context=ctx)
         response["mode"] = "graph_rag"
@@ -582,9 +597,15 @@ class DocumentRAGRetriever:
                     "sources": {source},
                 }
 
-        vector_weight = 1.15 if synthesis else 1.0
-        graph_weight = 1.2 if synthesis else 1.0
-        lexical_weight = 0.82 if synthesis else 1.0
+        is_contrast = bool(_CONTRAST_COMPARE_RE.search(query or ""))
+        vector_weight = 1.15 if synthesis and not is_contrast else 1.0
+        graph_weight = 1.2 if synthesis and not is_contrast else 1.0
+        if is_contrast:
+            lexical_weight = 1.1
+        elif synthesis:
+            lexical_weight = 0.82
+        else:
+            lexical_weight = 1.0
 
         for item in vector_hits:
             _upsert(item, float(item.get("score", 0.0)) * vector_weight, "vector")
@@ -629,6 +650,91 @@ class DocumentRAGRetriever:
             out.append(item)
         return out
 
+    def _contrast_term_groups(self, query: str) -> list[list[str]]:
+        """For compare/contrast questions, require chunks that mention each topic."""
+        if not _CONTRAST_COMPARE_RE.search(query or ""):
+            return []
+        q = (query or "").lower()
+        groups: list[list[str]] = []
+        if re.search(r"proximity|contact\s*trac", q):
+            groups.append(["proximity"])
+        if re.search(r"go\.?\s*data|godata", q):
+            groups.append(["go.data", "godata"])
+        if re.search(r"symptom\s*track", q):
+            groups.append(["symptom tracking", "symptom"])
+        if re.search(r"outbreak\s*response", q):
+            groups.append(["outbreak response"])
+        return groups
+
+    @staticmethod
+    def _text_matches_term_groups(text: str, groups: list[list[str]]) -> bool:
+        if len(groups) < 2:
+            return False
+        norm = (text or "").lower().replace(" ", "").replace(".", "")
+        for group in groups:
+            if not any(g.lower().replace(" ", "").replace(".", "") in norm for g in group):
+                return False
+        return True
+
+    def _pin_contrast_lexical_chunks(
+        self,
+        query: str,
+        items: list[dict],
+        lexical_hits: list[dict],
+        *,
+        limit: int,
+    ) -> list[dict]:
+        """
+        Contrast questions need chunks that mention BOTH sides (e.g. proximity + Go.Data).
+        Vector-only ranking often returns executive-summary pages and drops the intro contrast.
+        """
+        groups = self._contrast_term_groups(query)
+        if len(groups) < 2:
+            return items
+
+        pinned: list[dict] = []
+        for hit in lexical_hits:
+            if self._text_matches_term_groups(hit.get("text") or "", groups):
+                pinned.append(hit)
+
+        if not pinned:
+            return items
+
+        # Prefer the smallest Section chunk (figure callouts are often on one intro section).
+        pinned.sort(
+            key=lambda h: (
+                0 if (h.get("related") or []) and "keyword" in str(h.get("related")) else 1,
+                len(h.get("text") or ""),
+            )
+        )
+
+        seen: set[str] = set()
+        out: list[dict] = []
+        for hit in pinned[:2]:
+            cid = hit.get("id")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            out.append(
+                {
+                    "id": cid,
+                    "title": hit.get("title") or cid,
+                    "text": hit.get("text") or "",
+                    "score": float(hit.get("score", 1.5)) + 0.5,
+                    "related": list(
+                        dict.fromkeys([*(hit.get("related") or []), "via:contrast_pin"])
+                    ),
+                }
+            )
+
+        for item in items:
+            cid = item.get("id")
+            if cid and cid not in seen:
+                out.append(item)
+            if len(out) >= limit:
+                break
+        return out[:limit]
+
     def _search_phrases_from_query(self, query: str) -> list[str]:
         """
         Build document-agnostic search phrases from the question (dates + word n-grams).
@@ -636,6 +742,23 @@ class DocumentRAGRetriever:
         """
         q = (query or "").lower()
         phrases: list[str] = []
+
+        if _CONTRAST_COMPARE_RE.search(q):
+            if re.search(r"proximity", q):
+                phrases.extend(
+                    [
+                        "proximity tracing tools",
+                        "proximity tracing and symptom tracking",
+                        "unlike proximity tracing tools",
+                    ]
+                )
+            if re.search(r"go\.?\s*data|godata", q):
+                phrases.extend(
+                    [
+                        "go.data falls under the outbreak response",
+                        "outbreak response category",
+                    ]
+                )
 
         for m in _MONTH_YEAR_RE.finditer(q):
             phrases.append(f"{m.group(1).lower()} {m.group(2)}")
@@ -673,6 +796,14 @@ class DocumentRAGRetriever:
         keywords: list[str] = []
         if re.search(r"\bg[o\s]*\.?\s*data\b", q) or "godata" in q.replace(" ", "").replace(".", ""):
             keywords.extend(["godata", "go.data"])
+        if re.search(r"proximity\s*trac", q):
+            keywords.extend(
+                ["proximity tracing", "proximity", "bluetooth", "gps", "contact tracing"]
+            )
+        if re.search(r"symptom\s*track", q):
+            keywords.extend(["symptom tracking", "symptom"])
+        if re.search(r"outbreak\s*response", q):
+            keywords.extend(["outbreak response", "outbreak investigation"])
         for m in _MONTH_YEAR_RE.finditer(q):
             keywords.append(f"{m.group(1).lower()} {m.group(2)}")
             keywords.append(m.group(2))
@@ -919,14 +1050,18 @@ class DocumentRAGRetriever:
                 return m.group(1)
         return None
 
+    def _query_wants_all_page_images(self, query: str) -> bool:
+        return parse_visual_intent(query).list_all
+
     def _structural_page_visual_retrieve(self, session, query: str) -> list[dict]:
         """
-        Page figures: Region crops + captions from page text + on-demand vision when needed.
+        Page figures: full-page JPEG + region crops (when stored at ingest).
         """
         pdf_page, doc_page = self._parse_page_targets(query)
         if pdf_page is None and not doc_page:
             return []
 
+        list_all_images = self._query_wants_all_page_images(query)
         doc_id, doc_title = self._resolve_document_for_query(session, query)
         row = session.run(
             f"""
@@ -943,7 +1078,10 @@ class DocumentRAGRetriever:
               )
             WITH p, d
             ORDER BY
-              CASE WHEN $pdf_page IS NOT NULL AND p.pdf_page = $pdf_page THEN 0 ELSE 1 END,
+              CASE WHEN $doc_page IS NOT NULL
+                AND toLower(coalesce(p.document_page, '')) = toLower($doc_page) THEN 0
+              WHEN $pdf_page IS NOT NULL AND p.pdf_page = $pdf_page THEN 1
+              ELSE 2 END,
               p.order
             LIMIT 1
             OPTIONAL MATCH (p)-[:CONTAINS]->(r:Region)
@@ -952,6 +1090,7 @@ class DocumentRAGRetriever:
               coalesce(p.title, '') AS page_title,
               coalesce(p.text, '') AS page_text,
               coalesce(p.visual_content, '') AS page_visual,
+              p.image_key AS page_image_key,
               p.pdf_page AS pdf_page,
               p.document_page AS document_page,
               coalesce(d.title, d.id) AS doc_title,
@@ -993,11 +1132,38 @@ class DocumentRAGRetriever:
                 "order": 0,
             }]
 
-        if not regions:
-            return []
-
+        page_image_key = row.get("page_image_key")
         chunks: list[dict] = []
         doc_label = row.get("doc_title") or doc_title or doc_id or "ingested document"
+        resolved_pdf = row.get("pdf_page") or pdf_page
+        resolved_doc = row.get("document_page") or doc_page
+
+        if list_all_images and page_image_key:
+            chunks.append({
+                "id": row["page_id"],
+                "title": f"Full page (PDF {resolved_pdf})",
+                "text": (
+                    f"Document: {doc_label}\n"
+                    f"Printed page label: {resolved_doc or 'n/a'}\n"
+                    f"Full-page JPEG stored at ingest."
+                ),
+                "score": 1.0,
+                "related": ["via:page_full_image"],
+                "pdf_page": resolved_pdf,
+                "document_page": resolved_doc,
+                "region_kind": "page",
+                "image_key": page_image_key,
+            })
+
+        image_regions = [
+            r for r in regions
+            if r and r.get("image_key")
+        ]
+        if list_all_images and not image_regions and page_image_key:
+            return chunks
+
+        if not regions and not chunks:
+            return []
 
         for idx, reg in enumerate(regions):
             image_key = reg.get("image_key")
@@ -1063,6 +1229,8 @@ class DocumentRAGRetriever:
             }
             if image_key:
                 chunk["image_key"] = image_key
+            if list_all_images and not image_key:
+                continue
             chunks.append(chunk)
 
         return chunks
@@ -1070,8 +1238,15 @@ class DocumentRAGRetriever:
     def _parse_page_targets(self, query: str) -> tuple[Optional[int], Optional[str]]:
         """Resolve PDF page index vs printed document page label from the question."""
         pdf_page, doc_page = parse_page_number_from_query(query)
+        # Bare "page 29" → match document_page footer label, not PDF file page 29.
         if doc_page and str(doc_page).isdigit() and pdf_page is None:
-            pdf_page = int(doc_page)
+            if re.search(r"\bpdf\b", (query or "").lower()) and re.search(
+                r"\b(?:pdf\s+page|page\s+\d+\s+(?:of|in|from)\s+(?:the\s+)?pdf)\b",
+                query or "",
+                re.I,
+            ):
+                pdf_page = int(doc_page)
+                doc_page = None
         return pdf_page, doc_page
 
     def _structural_page_retrieve(self, session, query: str) -> list[dict]:
@@ -1446,8 +1621,77 @@ class DocumentRAGRetriever:
                 "related": [f"doc:{doc_title}" if doc_title else "doc:unknown", "via:box_content"],
             })
 
-        items.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+        items.sort(
+            key=lambda x: (float(x.get("score", 0.0)), len(x.get("text") or "")),
+            reverse=True,
+        )
+        if items and len((items[0].get("text") or "")) < 200:
+            page_items = self._box_content_from_page_text(session, query, box_n, doc_id)
+            if page_items:
+                return page_items
         return items[:6]
+
+    def _box_content_from_page_text(
+        self,
+        session,
+        query: str,
+        box_n: int,
+        doc_id: Optional[str],
+    ) -> list[dict]:
+        """Fallback when Box sections in Neo4j only store the label (pre-fix ingest)."""
+        _, doc_title = self._resolve_document_for_query(session, query)
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE ($doc_id IS NULL OR d.id = $doc_id)
+            MATCH (p:Page)
+            WHERE p.id STARTS WITH d.id + '_page_'
+              AND toLower(coalesce(p.text, '')) CONTAINS $box_phrase
+            RETURN p.id AS id, p.title AS title, p.text AS text, p.pdf_page AS pdf_page
+            ORDER BY size(coalesce(p.text, '')) DESC
+            LIMIT 3
+            """,
+            doc_id=doc_id,
+            box_phrase=f"box {int(box_n)}",
+        )
+        for r in rows:
+            page_text = (r.get("text") or "").strip()
+            if not page_text:
+                continue
+            extracted = self._extract_box_snippet_from_page(page_text, box_n)
+            if len(extracted) < 80:
+                continue
+            return [{
+                "id": r.get("id") or f"box_{box_n}_page",
+                "title": f"Box {box_n}",
+                "text": f"Box {box_n}\n\n{extracted}"[:4000],
+                "score": 1.1,
+                "related": [
+                    f"doc:{doc_title}" if doc_title else "doc:unknown",
+                    "via:box_page_fallback",
+                ],
+                "pdf_page": r.get("pdf_page"),
+            }]
+        return []
+
+    @staticmethod
+    def _extract_box_snippet_from_page(page_text: str, box_n: int) -> str:
+        target = str(int(box_n))
+        lines = page_text.splitlines()
+        start: int | None = None
+        for i, ln in enumerate(lines):
+            m = re.match(r"^\s*Box\s+(\d+(?:\.\d+)?)", ln.strip(), re.I)
+            if m and m.group(1).split(".")[0] == target:
+                start = i
+                break
+        if start is None:
+            return ""
+        body: list[str] = []
+        for ln in lines[start + 1 :]:
+            if re.match(r"^\s*Box\s+\d+", ln.strip(), re.I):
+                break
+            body.append(ln)
+        return "\n".join(body).strip()
 
     def _get_embedding(self, text: str) -> list[float]:
         resp = provider.embeddings(model=EMBEDDING_MODEL, input=(text or "")[:8000])

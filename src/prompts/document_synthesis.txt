@@ -9,6 +9,7 @@ Synthesis / structural map questions:
 - Use arrow chains, numbered steps, or indented bullets to show structure when the user asks for a map, pathway, or synthesis.
 - Map equivalent roles when the document uses different wording (e.g. if the text mentions "local compliance officers", "Compliance organisation", "disciplinary action", or "workplace complaints" instead of "local HR", use those terms and note the equivalence).
 - Only refuse to answer a sub-part when zero supporting text exists in the chunks.
+- For contrast/compare questions (e.g. proximity tracing vs Go.Data): if a chunk describes WHO's three categories (outbreak response, proximity tracing, symptom tracking) and contrasts technologies (GPS/Bluetooth vs field response tools), use it — do not claim that sub-part is missing.
 
 Other question types:
 - Lists/enumerations: include every item explicitly mentioned across chunks.
