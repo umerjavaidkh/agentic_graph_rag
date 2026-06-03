@@ -75,32 +75,6 @@ PDF_PLUMBER_PAGE_TIMEOUT_SEC = int(os.environ.get("PDF_PLUMBER_PAGE_TIMEOUT_SEC"
 PDF_ENABLE_OCR = os.environ.get("PDF_ENABLE_OCR", "false").lower() in ("1", "true", "yes")
 PDF_OCR_BACKEND = os.environ.get("PDF_OCR_BACKEND", "none").lower()
 
-# Page images (JPEG) — local dir or MinIO; Neo4j stores image_key only
-ASSET_STORAGE_BACKEND = os.environ.get("ASSET_STORAGE_BACKEND", "local")  # local | minio
-ASSETS_DIR = os.environ.get("ASSETS_DIR", str(PROJECT_ROOT / "data" / "assets"))
-ASSETS_PUBLIC_PREFIX = os.environ.get("ASSETS_PUBLIC_PREFIX", "/assets")
-ENABLE_PAGE_IMAGES = os.environ.get("ENABLE_PAGE_IMAGES", "true").lower() in ("1", "true", "yes")
-PAGE_IMAGE_JPEG_QUALITY = int(os.environ.get("PAGE_IMAGE_JPEG_QUALITY", "60"))
-PAGE_IMAGE_MAX_PAGES = int(os.environ.get("PAGE_IMAGE_MAX_PAGES", "0"))  # 0 = no cap
-# false (default) = save a full-page JPEG for every Page node (every PDF page at ingest).
-PAGE_IMAGE_SELECTIVE = os.environ.get("PAGE_IMAGE_SELECTIVE", "false").lower() in ("1", "true", "yes")
-PAGE_IMAGE_SKIP_WHEN_REGIONS = os.environ.get("PAGE_IMAGE_SKIP_WHEN_REGIONS", "true").lower() in ("1", "true", "yes")
-ENABLE_REGION_IMAGES = os.environ.get("ENABLE_REGION_IMAGES", "true").lower() in ("1", "true", "yes")
-# Remove prior JPEG crops for a document before re-ingesting the same document_id folder.
-CLEANUP_BOOK_ASSETS_ON_INGEST = os.environ.get(
-    "CLEANUP_BOOK_ASSETS_ON_INGEST", "true"
-).lower() in ("1", "true", "yes")
-# When admin wipes Neo4j, also empty data/assets (or MinIO bucket objects).
-CLEANUP_ASSETS_ON_DB_RESET = os.environ.get(
-    "CLEANUP_ASSETS_ON_DB_RESET", "true"
-).lower() in ("1", "true", "yes")
-
-MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
-MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
-MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "rag-assets")
-MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() in ("1", "true", "yes")
-
 # Structured queries: skip LLM synthesis when Cypher rows are self-explanatory (table/chart UI).
 STRUCTURED_FAST_ANSWER = os.environ.get("STRUCTURED_FAST_ANSWER", "true").lower() in ("1", "true", "yes")
 # If true, always run the multistep LLM planner before Text-to-Cypher (slower; default uses regex gate).

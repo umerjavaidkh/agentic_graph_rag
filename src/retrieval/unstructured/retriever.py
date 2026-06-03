@@ -27,9 +27,8 @@ from ...config.settings import (
     RETRIEVAL_CANDIDATE_POOL,
     RETRIEVAL_FINAL_LIMIT,
 )
-from ...assets.factory import get_asset_store
 from ...document.page_numbers import parse_page_number_from_query
-from ...document.page_vision import PageVisionEnricher, compact_visual_content
+from ...document.page_vision import compact_visual_content
 from ...graph.constants import (
     DOC_REVISION_LABEL,
     DOCUMENT_LOGICAL_LABEL,
@@ -204,8 +203,6 @@ class DocumentRAGRetriever:
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
         self.user_context = user_context or DEFAULT_PUBLIC_CONTEXT
         self.rbac = GraphRBAC(uri, user, password)
-        self._vision_cache: dict[str, str] = {}
-        self._vision_enricher: Optional[PageVisionEnricher] = None
         self._exec = DocumentQueryExecutor()
 
     def close(self) -> None:
@@ -352,8 +349,8 @@ class DocumentRAGRetriever:
             if visual_items:
                 pdf_page, doc_page = self._parse_page_targets(query)
                 response = self._format_response(query, visual_items, user_context=ctx)
-                if self._query_wants_all_page_images(query) and any(
-                    c.get("image_key") for c in visual_items
+                if self._query_wants_all_page_visuals(query) and any(
+                    (c.get("visual_content") or "").strip() for c in visual_items
                 ):
                     response["mode"] = "page_visual_list"
                 else:
@@ -1027,28 +1024,6 @@ class DocumentRAGRetriever:
             "related": ["via:structural_graph"],
         }]
 
-    def _vision_enricher_instance(self) -> PageVisionEnricher:
-        if self._vision_enricher is None:
-            self._vision_enricher = PageVisionEnricher()
-        return self._vision_enricher
-
-    def _describe_region_image(self, image_key: str, caption_hint: str = "") -> str:
-        if image_key in self._vision_cache:
-            return self._vision_cache[image_key]
-        store = get_asset_store()
-        data = store.get_bytes(image_key)
-        if not data:
-            return ""
-        hint = caption_hint or "Describe this figure, diagram, or table from the document."
-        raw = self._vision_enricher_instance().describe_image_bytes(
-            data,
-            user_hint=hint,
-        )
-        desc = compact_visual_content(raw)
-        if desc:
-            self._vision_cache[image_key] = desc
-        return desc
-
     @staticmethod
     def _extract_figure_captions(page_text: str) -> dict[str, str]:
         """Map document figure number → caption line from page OCR text."""
@@ -1070,18 +1045,16 @@ class DocumentRAGRetriever:
                 return m.group(1)
         return None
 
-    def _query_wants_all_page_images(self, query: str) -> bool:
+    def _query_wants_all_page_visuals(self, query: str) -> bool:
         return parse_visual_intent(query).list_all
 
     def _structural_page_visual_retrieve(self, session, query: str) -> list[dict]:
-        """
-        Page figures: full-page JPEG + region crops (when stored at ingest).
-        """
+        """Page figures/diagrams via stored visual_content text (ingest vision enrichment)."""
         pdf_page, doc_page = self._parse_page_targets(query)
         if pdf_page is None and not doc_page:
             return []
 
-        list_all_images = self._query_wants_all_page_images(query)
+        list_all_visuals = self._query_wants_all_page_visuals(query)
         doc_id, doc_title = self._resolve_document_for_query(session, query)
         row = session.run(
             f"""
@@ -1110,7 +1083,6 @@ class DocumentRAGRetriever:
               coalesce(p.title, '') AS page_title,
               coalesce(p.text, '') AS page_text,
               coalesce(p.visual_content, '') AS page_visual,
-              p.image_key AS page_image_key,
               p.pdf_page AS pdf_page,
               p.document_page AS document_page,
               coalesce(d.title, d.id) AS doc_title,
@@ -1119,7 +1091,6 @@ class DocumentRAGRetriever:
                 title: coalesce(r.title, ''),
                 text: coalesce(r.text, ''),
                 kind: coalesce(r.region_kind, ''),
-                image_key: r.image_key,
                 visual_content: coalesce(r.visual_content, ''),
                 order: coalesce(r.order, 0)
               }}) AS regions
@@ -1137,7 +1108,7 @@ class DocumentRAGRetriever:
         want_fig = self._figure_number_from_query(query)
         regions = [
             r for r in (row.get("regions") or [])
-            if r and (r.get("image_key") or (r.get("visual_content") or "").strip())
+            if r and (r.get("visual_content") or "").strip()
         ]
         regions.sort(key=lambda r: r.get("order") or 0)
 
@@ -1147,46 +1118,17 @@ class DocumentRAGRetriever:
                 "title": row.get("page_title") or f"Page {pdf_page}",
                 "text": "",
                 "kind": "page",
-                "image_key": None,
                 "visual_content": row.get("page_visual") or "",
                 "order": 0,
             }]
 
-        page_image_key = row.get("page_image_key")
         chunks: list[dict] = []
         doc_label = row.get("doc_title") or doc_title or doc_id or "ingested document"
-        resolved_pdf = row.get("pdf_page") or pdf_page
-        resolved_doc = row.get("document_page") or doc_page
 
-        if list_all_images and page_image_key:
-            chunks.append({
-                "id": row["page_id"],
-                "title": f"Full page (PDF {resolved_pdf})",
-                "text": (
-                    f"Document: {doc_label}\n"
-                    f"Printed page label: {resolved_doc or 'n/a'}\n"
-                    f"Full-page JPEG stored at ingest."
-                ),
-                "score": 1.0,
-                "related": ["via:page_full_image"],
-                "pdf_page": resolved_pdf,
-                "document_page": resolved_doc,
-                "region_kind": "page",
-                "image_key": page_image_key,
-            })
-
-        image_regions = [
-            r for r in regions
-            if r and r.get("image_key")
-        ]
-        if list_all_images and not image_regions and page_image_key:
-            return chunks
-
-        if not regions and not chunks:
+        if not regions:
             return []
 
         for idx, reg in enumerate(regions):
-            image_key = reg.get("image_key")
             stored_visual = compact_visual_content((reg.get("visual_content") or "").strip())
             page_visual = compact_visual_content((row.get("page_visual") or "").strip())
 
@@ -1207,11 +1149,6 @@ class DocumentRAGRetriever:
             display_title = caption_title or reg_title or f"Figure on PDF page {pdf_page}"
 
             vision_desc = stored_visual or page_visual
-            if image_key and not vision_desc:
-                vision_desc = self._describe_region_image(
-                    image_key,
-                    caption_hint=f"Document figure. Caption: {display_title}. Describe all boxes, arrows, labels, and data flows.",
-                )
 
             parts = [
                 f"Document: {doc_label}",
@@ -1247,12 +1184,10 @@ class DocumentRAGRetriever:
                 "region_kind": reg.get("kind") or "figure",
                 "visual_content": vision_desc,
             }
-            if image_key:
-                chunk["image_key"] = image_key
-            if list_all_images and not image_key:
-                continue
             chunks.append(chunk)
 
+        if not list_all_visuals and want_fig and chunks:
+            return chunks[:1]
         return chunks
 
     def _parse_page_targets(self, query: str) -> tuple[Optional[int], Optional[str]]:
@@ -1819,10 +1754,7 @@ class DocumentRAGRetriever:
         user_context: Optional[UserContext] = None,
     ) -> dict[str, Any]:
         ctx = user_context or self.user_context
-        _passthrough = (
-            "image_key", "image_url", "pdf_page", "document_page",
-            "region_kind", "visual_content",
-        )
+        _passthrough = ("pdf_page", "document_page", "region_kind", "visual_content")
         return {
             "query": query,
             "chunks": [

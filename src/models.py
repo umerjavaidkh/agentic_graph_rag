@@ -70,7 +70,6 @@ class DKGNode:
     pdf_page: Optional[int] = None       # 1-based index in uploaded PDF file
     document_page: Optional[str] = None  # label printed on page: "43", "iii", "A"
     page_tags: list = field(default_factory=list)  # searchable: pdf:51, doc:43, …
-    image_key: Optional[str] = None  # object storage key for page/region JPEG
     region_kind: Optional[str] = None  # table | figure
     region_tags: list = field(default_factory=list)  # table:a6, figure:3, pdf:12, …
     bbox: Optional[list] = None  # [l, t, r, b] top-left origin in parser page units

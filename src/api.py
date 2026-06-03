@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
@@ -14,13 +14,9 @@ from .bridge import ask
 from .conversation import clear_turn
 from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
-from .assets.cleanup import cleanup_all_document_assets
-from .assets.factory import get_asset_store
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
-    ASSETS_DIR,
-    CLEANUP_ASSETS_ON_DB_RESET,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
@@ -60,21 +56,6 @@ app.mount(
     StaticFiles(directory=Path(__file__).resolve().parent / "static"),
     name="static",
 )
-
-_assets_path = Path(ASSETS_DIR)
-_assets_path.mkdir(parents=True, exist_ok=True)
-
-
-@app.get("/assets/{asset_path:path}")
-async def serve_asset(asset_path: str):
-    """Serve page images from local storage or MinIO (via bytes proxy)."""
-    store = get_asset_store()
-    data = store.get_bytes(asset_path)
-    if not data:
-        raise HTTPException(status_code=404, detail="Asset not found")
-    media = "image/jpeg" if asset_path.lower().endswith(".jpg") else "application/octet-stream"
-    return Response(content=data, media_type=media)
-
 
 @app.get("/")
 async def root():
@@ -336,26 +317,11 @@ async def reset_neo4j(
     finally:
         driver.close()
 
-    assets_removed = 0
-    if CLEANUP_ASSETS_ON_DB_RESET:
-        try:
-            assets_removed = cleanup_all_document_assets()
-        except Exception:
-            pass
-
     return {
         "status": "ok",
         "dropped_indexes": dropped_indexes,
         "dropped_constraints": dropped_constraints,
-        "assets_removed": assets_removed,
-        "message": (
-            "Neo4j wiped (best-effort). RBAC will be re-initialized on next API startup."
-            + (
-                f" Removed {assets_removed} asset file(s) from storage."
-                if assets_removed
-                else ""
-            )
-        ),
+        "message": "Neo4j wiped (best-effort). RBAC will be re-initialized on next API startup.",
     }
 
 

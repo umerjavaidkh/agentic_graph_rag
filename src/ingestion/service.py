@@ -14,7 +14,6 @@ from neo4j.exceptions import ClientError
 
 from ..config.settings import (
     AUTO_LOAD_TO_NEO4J,
-    CLEANUP_BOOK_ASSETS_ON_INGEST,
     CLEANUP_TMP_INGEST,
     CYPHER_INGEST_SKIP_GENAI,
     DOC_SKIP_DUPLICATE_HASH,
@@ -31,7 +30,6 @@ from ..document.versioning import (
     file_content_sha256,
     resolve_logical_id,
 )
-from ..assets.cleanup import cleanup_document_assets
 from ..document.parser import LightPdfParser
 from ..models import NodeType
 from ..exporter.exporter import Neo4jExporter
@@ -242,37 +240,6 @@ class IngestionManager:
             f"Revision plan: logical={plan.logical_id} rev={plan.revision_id} "
             f"v{plan.version_number} hash={plan.content_hash[:12]}…",
         )
-
-        document_id = plan.logical_id
-        if CLEANUP_BOOK_ASSETS_ON_INGEST:
-            try:
-                removed = cleanup_document_assets(document_id)
-                if removed:
-                    self._log(
-                        job,
-                        f"Removed {removed} stale asset file(s) for {document_id}",
-                    )
-            except Exception as exc:
-                self._log(job, f"Asset cleanup skipped for {document_id}: {exc}")
-
-        if job.input_path.suffix.lower() == ".pdf":
-            from ..assets.page_images import save_document_page_images
-            from ..assets.region_images import save_region_images
-
-            try:
-                region_count = save_region_images(
-                    job.input_path, document_id, nodes
-                )
-                self._log(job, f"Stored {region_count} region crop(s) (TABLE/FIGURE)")
-            except Exception as exc:
-                self._log(job, f"Region image storage skipped: {exc}")
-            try:
-                img_count = save_document_page_images(
-                    job.input_path, document_id, nodes
-                )
-                self._log(job, f"Stored {img_count} full-page image(s) (JPEG fallback)")
-            except Exception as exc:
-                self._log(job, f"Page image storage skipped: {exc}")
 
         if (
             ENABLE_PAGE_VISION

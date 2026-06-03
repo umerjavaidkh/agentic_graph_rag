@@ -280,7 +280,7 @@ def score_visual_candidate(
         elif term in blobs["tags"]:
             score += 6.0
 
-    if intent.wants_image and row.get("image_key"):
+    if intent.wants_image and (row.get("visual_content") or "").strip():
         score += 40.0
     if node_label == "Region" and row.get("region_kind") == intent.kind_filter:
         score += 25.0
@@ -314,7 +314,7 @@ def best_region_for_visual_focus(
         return None
     scored: list[tuple[float, dict]] = []
     for reg in regions:
-        if not reg.get("image_key"):
+        if not (reg.get("visual_content") or "").strip():
             continue
         row = dict(reg)
         if not row.get("visual_content") and page_visual:

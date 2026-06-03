@@ -51,7 +51,7 @@ Load Northwind once via Neo4j Browser if empty (`docker/northwind-docker.cypher`
 
 ```bash
 docker compose down
-docker compose down -v   # wipe DB + assets
+docker compose down -v   # wipe DB volumes
 ```
 
 ---

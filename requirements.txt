@@ -4,8 +4,6 @@
 # ── Document parsing ─────────────────────
 pymupdf>=1.24.0          # lightweight PDF text + page image extraction
 pdfplumber>=0.11.0       # targeted table/text fallback for weak PDF pages
-Pillow>=10.0.0           # JPEG compression for page assets
-minio>=7.2.0             # optional: ASSET_STORAGE_BACKEND=minio
 
 # ── Embeddings + LLM ────────────────────
 openai>=1.30.0

@@ -440,7 +440,7 @@ docker compose up -d --build app
 # Stop
 docker compose down
 
-# Stop and wipe database + uploaded assets
+# Stop and wipe database
 docker compose down -v
 
 # View app logs
@@ -533,11 +533,9 @@ flowchart TB
         IM --> C["Cypher job<br/>(.cypher file)"]
 
         U --> A1["Axis 1 — Document structure<br/>(LightPdfParser, always)"]
-        A1 --> ASSETS["Page & region JPEGs<br/>data/assets/ or MinIO"]
         A1 --> VISION["Page vision (optional)<br/>ENABLE_PAGE_VISION=true"]
         A1 --> A2["Axis 2 — Semantic enrichment<br/>(if OPENAI_API_KEY set)"]
-        ASSETS --> EXP["Neo4jExporter"]
-        VISION --> EXP
+        VISION --> EXP["Neo4jExporter"]
         A2 --> EXP
         EXP --> ART["Artifacts<br/>output/ingestion/&lt;job_id&gt;"]
         EXP --> NEO4J[("Neo4j")]
@@ -589,15 +587,6 @@ flowchart LR
         TREE --> IDS["Namespaced node IDs<br/>doc_&lt;job&gt;_section_* / _page_*"]
     end
 
-    subgraph Media["Binary assets (Neo4j stores image_key only)"]
-        TREE --> PI["Full-page JPEGs<br/>~60% quality"]
-        TREE --> RI["Region JPEGs<br/>tables / figures"]
-        PI --> STORE["data/assets/ or MinIO"]
-        RI --> STORE
-        PI --> CLEAN1["Re-ingest: delete doc folder<br/>CLEANUP_BOOK_ASSETS_ON_INGEST"]
-        CLEAN1 --> STORE
-    end
-
     subgraph OptVision["Optional — ENABLE_PAGE_VISION=true"]
         PDF --> PV["PageVisionEnricher<br/>(cheap vision model)"]
         PV --> VC["Page.visual_content<br/>tables, charts, diagrams, maps"]
@@ -621,8 +610,7 @@ flowchart LR
 **Axis 1 (document structure)** is always built first from the lightweight PDF parser:
 
 - Hierarchy: `Document → Chapter → Section → Page → Region` (tables/figures).
-- **Page vision** (optional): when `ENABLE_PAGE_VISION=true`, selected PDF pages are sent to a cheap vision model; tables, charts, diagrams, maps, and shapes are stored as `Page.visual_content` for retrieval when normal text is missing or incomplete.
-- **Page images**: JPEG (~60% quality) under `data/assets/` or MinIO; Neo4j stores `image_key` only. Re-ingest deletes that document’s asset folder first (`CLEANUP_BOOK_ASSETS_ON_INGEST`, default on). DB reset can wipe all assets (`CLEANUP_ASSETS_ON_DB_RESET`).
+- **Page vision** (optional): when `ENABLE_PAGE_VISION=true`, selected PDF pages are sent to a cheap vision model; tables, charts, diagrams, maps, and shapes are stored as `Page.visual_content` (text in Neo4j) for retrieval when normal text is missing or incomplete. The RAG stack does not store or serve binary page/region JPEGs.
 
 **Axis 2 (semantic enrichment)** runs automatically when the server has an OpenAI key configured (embeddings, entity links, clustering, optional LLM relationship pass).
 
@@ -717,9 +705,6 @@ flowchart TB
 | Variable | Effect |
 |----------|--------|
 | `ENABLE_PAGE_VISION` | Vision text on selected PDF pages |
-| `ENABLE_PAGE_IMAGES` | Full-page JPEG extraction |
-| `CLEANUP_BOOK_ASSETS_ON_INGEST` | Delete prior `data/assets/<doc>/` before re-ingest |
-| `CLEANUP_ASSETS_ON_DB_RESET` | Wipe all assets on DB reset |
 | `AUTO_LOAD_TO_NEO4J` | Load graph after export |
 | `STORE_INGESTION_ARTIFACTS` | Write `output/ingestion/<job_id>` |
 | `OPENAI_API_KEY` | Chat, routing, embeddings; enables Axis 2 and optional vision |

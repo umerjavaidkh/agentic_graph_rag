@@ -286,7 +286,7 @@ class Neo4jExporter:
             " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
             " n.embedding = $embedding, n.visual_content = $visual_content,"
             " n.pdf_page = $pdf_page, n.document_page = $document_page,"
-            " n.page_tags = $page_tags, n.image_key = $image_key,"
+            " n.page_tags = $page_tags,"
             " n.region_kind = $region_kind, n.region_tags = $region_tags,"
             " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
             " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash,"
@@ -306,7 +306,6 @@ class Neo4jExporter:
             pdf_page=node.pdf_page,
             document_page=node.document_page,
             page_tags=node.page_tags or [],
-            image_key=node.image_key,
             region_kind=node.region_kind,
             region_tags=node.region_tags or [],
             logical_doc_id=node.logical_doc_id,
@@ -383,7 +382,7 @@ class Neo4jExporter:
             " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
             " n.embedding = $embedding, n.visual_content = $visual_content,"
             " n.pdf_page = $pdf_page, n.document_page = $document_page,"
-            " n.page_tags = $page_tags, n.image_key = $image_key,"
+            " n.page_tags = $page_tags,"
             " n.region_kind = $region_kind, n.region_tags = $region_tags,"
             " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
             " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash",
@@ -401,7 +400,6 @@ class Neo4jExporter:
             pdf_page=node.pdf_page,
             document_page=node.document_page,
             page_tags=node.page_tags or [],
-            image_key=node.image_key,
             region_kind=node.region_kind,
             region_tags=node.region_tags or [],
             logical_doc_id=node.logical_doc_id,

@@ -239,38 +239,6 @@ class PageVisionEnricher:
 
         return selected
 
-    def describe_image_bytes(
-        self,
-        image_bytes: bytes,
-        *,
-        mime: str = "image/jpeg",
-        user_hint: str = "Describe this figure or diagram.",
-    ) -> str:
-        """Vision description for a cropped region or page image (query-time or ingest)."""
-        image_b64 = base64.standard_b64encode(image_bytes).decode("ascii")
-        response = self.provider.chat_completion(
-            model=VISION_MODEL,
-            messages=[
-                {"role": "system", "content": VISION_SYSTEM},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_hint},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime};base64,{image_b64}",
-                                "detail": VISION_IMAGE_DETAIL,
-                            },
-                        },
-                    ],
-                },
-            ],
-            temperature=0.0,
-            max_tokens=VISION_LLM_MAX_TOKENS,
-        )
-        return (response.choices[0].message.content or "").strip()
-
     def _describe_page_image(self, page: fitz.Page) -> str:
         pix = page.get_pixmap(dpi=VISION_DPI)
         image_b64 = base64.standard_b64encode(pix.tobytes("png")).decode("ascii")

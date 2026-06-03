@@ -1,11 +1,9 @@
 # Slim image (~500–900 MB) — chat, structured Northwind, API, lightweight PDF ingest.
 # No heavy parser runtime.
 
-# ── Lightweight PDF + page assets ────────
+# ── Lightweight PDF ────────
 pymupdf>=1.24.0
 pdfplumber>=0.11.0
-Pillow>=10.0.0
-minio>=7.2.0
 
 # ── Embeddings + LLM ────────────────────
 openai>=1.30.0

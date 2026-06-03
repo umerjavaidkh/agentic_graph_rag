@@ -90,11 +90,10 @@ def extract_critical_from_result(user_question: str, result: dict) -> Optional[d
                 {
                     "id": c.get("id"),
                     "title": c.get("title"),
-                    "image_key": c.get("image_key"),
                     "region_kind": c.get("region_kind"),
                 }
                 for c in sources
-                if c.get("image_key")
+                if (c.get("visual_content") or "").strip()
             ]
 
     if mode == "section_detail" and sources:
@@ -197,7 +196,7 @@ def resolve_follow_up(question: str, prior: Optional[dict[str, Any]]) -> dict[st
     focus_terms = extract_visual_focus_terms(question)
     if pdf_p is not None and len(q) < 100 and focus_terms and _is_page_follow_up(q_lower):
         label = focus_terms[0]
-        rewritten = f"Show only the {label} image on PDF page {pdf_p}"
+        rewritten = f"Describe only the {label} visual on PDF page {pdf_p}"
         return {
             **base,
             "question": rewritten,
@@ -207,8 +206,8 @@ def resolve_follow_up(question: str, prior: Optional[dict[str, Any]]) -> dict[st
         }
 
     if pdf_p is not None and len(q) < 80 and _is_page_follow_up(q_lower):
-        if re.search(r"\b(image|picture|photo|figure)\b", q_lower):
-            rewritten = f"Show the image from PDF page {pdf_p}"
+        if re.search(r"\b(image|picture|photo|figure|visual)\b", q_lower):
+            rewritten = f"Describe the visual content on PDF page {pdf_p}"
         elif re.search(r"\b(text|content|words)\b", q_lower):
             rewritten = f"Give me all the text from PDF page {pdf_p}"
         else:
