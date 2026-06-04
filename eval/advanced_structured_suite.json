@@ -1,0 +1,144 @@
+{
+  "suite": "northwind_advanced_structured_v1",
+  "description": "Ten hard multi-step structured-analytics questions over the Northwind graph (per-group top-N, cross-year growth, argmax-per-group, derived metrics). Expected keywords are the actual ground-truth entities computed directly from Neo4j, so a wrong roll-up (e.g. a dropped year filter) fails the case.",
+  "eval_only_keywords": true,
+  "prerequisites": [
+    "northwind-data.cypher ingested (Cypher tab; ALLOW_CYPHER_INGEST=true).",
+    "App reachable at EVAL_BASE_URL (default http://localhost:8000).",
+    "Chat user regular_001 with role regular_office for structured access."
+  ],
+  "default_user_id": "regular_001",
+  "default_role": "regular_office",
+  "cases": [
+    {
+      "id": "adv_01",
+      "tier": "group_rank_argmax",
+      "question": "For 1997, rank product categories by total revenue (revenue = unitPrice x quantity x (1 - discount)) and show the top 5 categories. For each category, also name its single best-selling product by revenue in 1997.",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 120,
+        "any_of_keywords": [["Dairy Products"], ["Beverages"], ["Confections"], ["Meat/Poultry"], ["Seafood"], ["Raclette"], ["Blaye"]],
+        "min_keyword_groups": 4
+      },
+      "notes": "GT: Dairy 115387.64 (Raclette Courdavault), Beverages 103924.31 (Cote de Blaye), Confections 82657.75, Meat/Poultry 80975.11, Seafood 66959.22."
+    },
+    {
+      "id": "adv_02",
+      "tier": "multi_hop_rank",
+      "question": "For 1997, find the top 5 suppliers by the total revenue of their products (revenue = unitPrice x quantity x (1 - discount)), and for each supplier also report how many distinct customers purchased their products that year.",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 120,
+        "any_of_keywords": [["Plutzer"], ["Gai"], ["Pavlova"], ["joyeux"], ["day"]],
+        "min_keyword_groups": 3
+      },
+      "notes": "GT top5: Plutzer Lebensmittelgrossmaerkte AG 66007.99 (47), Gai paturage 56280.70 (37), Pavlova 54585.68 (47), Aux joyeux ecclesiastiques 53673.79 (20), G'day 37356.88 (37)."
+    },
+    {
+      "id": "adv_03",
+      "tier": "group_argmax",
+      "question": "For each of the top 5 countries by total 1997 revenue, identify which product category generated the most revenue in that country during 1997.",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 120,
+        "any_of_keywords": [["Germany"], ["USA"], ["Austria"], ["France"], ["Brazil"], ["Dairy"], ["Beverages"]],
+        "min_keyword_groups": 4
+      },
+      "notes": "GT: Germany 117320.16 (Dairy Products), USA 114845.26 (Beverages), Austria 57401.84 (Confections), France 45263.38 (Seafood), Brazil 41941.19 (Beverages)."
+    },
+    {
+      "id": "adv_04",
+      "tier": "temporal_argmax",
+      "question": "Show total monthly revenue for 1997 (revenue = unitPrice x quantity x (1 - discount)) and identify the single month with the highest revenue.",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 80,
+        "any_of_keywords": [["December"], ["1997-12"], ["Dec"]],
+        "min_keyword_groups": 1
+      },
+      "notes": "GT: highest month is 1997-12 (December) with 71398.43; runners-up 1997-10 66749.23, 1997-01 61258.07."
+    },
+    {
+      "id": "adv_05",
+      "tier": "rank",
+      "question": "What are the top 5 products by total quantity sold in 1997?",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 60,
+        "any_of_keywords": [["Gnocchi"], ["Raclette"], ["Camembert"], ["Gorgonzola"], ["Klosterbier"], ["971"], ["752"], ["665"], ["656"], ["630"]],
+        "min_keyword_groups": 3
+      },
+      "notes": "GT qty: Gnocchi di nonna Alice 971, Raclette Courdavault 752, Camembert Pierrot 665, Gorgonzola Telino 656, Rhonbrau Klosterbier 630. Quantities included as fallbacks since the synthesizer sometimes labels rows 'Product NN' instead of by name."
+    },
+    {
+      "id": "adv_06",
+      "tier": "cross_year_growth",
+      "question": "Among customers who placed orders in BOTH 1996 and 1997, find the 5 customers with the largest revenue growth from 1996 to 1997 (revenue = unitPrice x quantity x (1 - discount)).",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 100,
+        "any_of_keywords": [["QUICK"], ["SAVEA"], ["ERNSH"], ["MEREP"], ["SIMOB"]],
+        "min_keyword_groups": 3
+      },
+      "notes": "GT growth: QUICK-Stop (QUICK) +49159.83, Save-a-lot Markets (SAVEA) +47375.31, Ernst Handel (ERNSH) +32528.20, Mere Paillarde (MEREP) +17792.43, Simons bistro (SIMOB) +15879.81. Keywords use customerID since the system labels rows '(customer XXXX)'."
+    },
+    {
+      "id": "adv_07",
+      "tier": "aggregation_threshold",
+      "question": "For 1997, compute the average order value per country (only countries with at least 5 orders) and show the top 5 countries by average order value.",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 100,
+        "any_of_keywords": [["Austria"], ["Switzerland"], ["Denmark"], ["Ireland"], ["USA"]],
+        "min_keyword_groups": 3
+      },
+      "notes": "GT AOV: Austria 2733.42 (21), Switzerland 2297.60 (8), Denmark 2290.23 (11), Ireland 2045.44 (10), USA 1914.09 (60)."
+    },
+    {
+      "id": "adv_08",
+      "tier": "group_top1",
+      "question": "For each product category, identify the single customer who generated the most revenue in that category during 1997.",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 120,
+        "any_of_keywords": [["QUICK"], ["SAVEA"], ["ERNSH"], ["Beverages"], ["Meat/Poultry"], ["Seafood"]],
+        "min_keyword_groups": 4
+      },
+      "notes": "GT: Beverages->QUICK-Stop (QUICK), Condiments->Ernst Handel (ERNSH), Confections->QUICK-Stop, Dairy->Ernst Handel, Grains->Save-a-lot (SAVEA), Meat->Save-a-lot, Produce->Ernst Handel, Seafood->Save-a-lot. Customer keywords use customerID."
+    },
+    {
+      "id": "adv_09",
+      "tier": "derived_metric",
+      "question": "For 1997, compute the total gross revenue (unitPrice x quantity), the total discount amount given (unitPrice x quantity x discount), and the net revenue.",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 40,
+        "any_of_keywords": [["658,388"], ["658388"], ["41,303"], ["41303"], ["617,085"], ["617085"]],
+        "min_keyword_groups": 2
+      },
+      "notes": "GT: gross 658388.75, discount 41303.55, net 617085.20."
+    },
+    {
+      "id": "adv_10",
+      "tier": "rank_enrich",
+      "question": "What are the top 5 products by total revenue in 1997, and for each product list its supplier and its category?",
+      "expect": {
+        "route_tool": "query_data",
+        "agent": "structured",
+        "min_answer_chars": 120,
+        "any_of_keywords": [["Beverages"], ["Dairy"], ["Meat/Poultry"], ["Produce"], ["Grains"], ["joyeux"], ["Gai"], ["Plutzer"], ["49,198"], ["35,775"], ["34,755"], ["Blaye"], ["Raclette"], ["Manjimup"]],
+        "min_keyword_groups": 4
+      },
+      "notes": "GT: Cote de Blaye 49198.09 (Aux joyeux ecclesiastiques / Beverages), Raclette Courdavault 35775.30 (Gai paturage / Dairy), Thuringer Rostbratwurst 34755.91 (Plutzer / Meat), Gnocchi di nonna Alice 32604.00 (Grains), Manjimup Dried Apples 24570.80 (Produce). Keywords accept supplier/category/revenue too, since products are sometimes labeled 'Product NN'."
+    }
+  ]
+}

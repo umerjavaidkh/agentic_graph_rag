@@ -32,6 +32,7 @@ from eval.validators import ValidationResult, validate_response  # noqa: E402
 SUITE_PATHS = {
     "document": ROOT / "eval" / "document_rag_suite.json",
     "structured": ROOT / "eval" / "structured_rag_suite.json",
+    "advanced": ROOT / "eval" / "advanced_structured_suite.json",
 }
 
 
@@ -126,7 +127,7 @@ def run_case(
 def collect_cases(suite_name: str, case_id: str | None) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     paths = []
     if suite_name == "all":
-        paths = [SUITE_PATHS["document"], SUITE_PATHS["structured"]]
+        paths = [SUITE_PATHS["document"], SUITE_PATHS["structured"], SUITE_PATHS["advanced"]]
     else:
         paths = [SUITE_PATHS[suite_name]]
 
@@ -169,9 +170,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run RAG eval suites (document + structured).")
     parser.add_argument(
         "--suite",
-        choices=["document", "structured", "all"],
+        choices=["document", "structured", "advanced", "all"],
         default="all",
-        help="Which suite to run (default: all = 20 document + 10 structured)",
+        help="Which suite to run (default: all = 20 document + 10 structured + 10 advanced)",
     )
     parser.add_argument("--id", help="Run a single case id (e.g. nw_04, godata_a01)")
     parser.add_argument(
