@@ -89,6 +89,12 @@ _SQL_CYPHER_ISSUES: list[tuple[str, str]] = [
         r"\bAS\s+\w+\)\s+AS\s+\w+",
         "Cypher syntax: you have an extra ')' before an AS alias (e.g. 'AS x) AS y'). Remove the extra parenthesis.",
     ),
+    (
+        r"\bapoc\.coll\.sortNodes\b",
+        "Do not use apoc.coll.sortNodes: it only sorts a LIST<NODE> and takes exactly 2 args, so it fails on lists of maps. "
+        "To get top-K within a group, ORDER BY the metric DESC BEFORE collect(...), then slice the collected list: "
+        "WITH groupKey, item ORDER BY metric DESC WITH groupKey, collect(item)[0..K] AS topItems.",
+    ),
 ]
 
 
@@ -115,6 +121,39 @@ def _regenerate_cypher_for_issue(
         execution_error=issue,
     )
     return fixed.strip() if fixed else cypher
+
+
+_QUESTION_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _dropped_year_filter_issue(cypher: str, query: str) -> Optional[str]:
+    """
+    Corpus-agnostic guard against multistep steps that silently drop a temporal
+    filter the question requires.
+
+    A common mini-model failure: an early step filters `WHERE orderDate ... 1997`
+    correctly, but a later re-MATCH step (e.g. a roll-up/ranking) omits it and
+    aggregates over all years. We only flag steps that actually traverse the
+    graph (have a relationship pattern); pure `UNWIND $stepN_rows` transforms
+    inherit the already-filtered rows and are exempt.
+    """
+    years = set(_QUESTION_YEAR_RE.findall(query or ""))
+    if not years:
+        return None
+    c = cypher or ""
+    traverses = bool(re.search(r"\bMATCH\b", c, re.I)) and bool(re.search(r"-\s*\[", c))
+    if not traverses:
+        return None
+    if any(y in c for y in years):
+        return None
+    yrs = ", ".join(sorted(years))
+    first = sorted(years)[0]
+    return (
+        f"This step re-matches the graph but is missing the date filter for {yrs} "
+        f"that the question requires. Every step that traverses the graph MUST repeat "
+        f"the {yrs} filter (e.g. WHERE o.orderDate STARTS WITH '{first}'), or instead "
+        f"UNWIND the prior step's already-filtered rows. Add the missing {yrs} filter."
+    )
 
 
 class _MultiStepStep(BaseModel):
@@ -441,7 +480,7 @@ class StructuredRetriever:
         if STRUCTURED_ALWAYS_MULTISTEP_PLAN or likely_needs_multistep_plan(query):
             plan = self._plan_multistep(query, schema)
             if plan and plan.needs_multistep and plan.steps:
-                chunks = self._execute_multistep(plan, user_context=ctx)
+                chunks = self._execute_multistep(plan, user_context=ctx, query=query)
                 return self._format_response(query, chunks, strategy="multistep")
 
         chunks = self._text2cypher(query, limit, user_context=ctx)
@@ -480,7 +519,7 @@ class StructuredRetriever:
         except Exception:
             return None
 
-    def _execute_multistep(self, plan: _MultiStepPlan, user_context: UserContext) -> list[dict[str, Any]]:
+    def _execute_multistep(self, plan: _MultiStepPlan, user_context: UserContext, query: str = "") -> list[dict[str, Any]]:
         """
         Execute each step sequentially and return chunks for synthesis.
 
@@ -508,16 +547,26 @@ class StructuredRetriever:
                     # regenerate once if the step contains known-invalid patterns
                     schema = self._fetch_schema()
                     cypher = _regenerate_cypher_for_issue(self, step.purpose, schema, 10, cypher, issue)
+                # Guard: a re-MATCH step must repeat any temporal filter the question
+                # requires (mini models often drop it in a later roll-up/ranking step).
+                filt_issue = _dropped_year_filter_issue(cypher, query)
+                if filt_issue:
+                    schema = self._fetch_schema()
+                    regenerated = self._generate_cypher(
+                        step.purpose, schema, 10, previous_cypher=cypher, execution_error=filt_issue
+                    )
+                    if regenerated and regenerated.strip():
+                        cypher = regenerated.strip()
                 rows: list[dict[str, Any]] = []
                 norm_rows: list[dict[str, Any]] = []
-                try:
-                    params: dict[str, Any] = {}
 
+                def _build_params_and_run(c: str) -> list[dict[str, Any]]:
+                    params: dict[str, Any] = {}
                     # Always pass prior step rows as `$<step_id>_rows` for UNWIND-based chaining.
                     for k, v in ctx.items():
                         if isinstance(v, dict) and isinstance(v.get("rows"), list):
                             params[f"{k}_rows"] = v["rows"]
-                    param_names = _find_param_names(cypher)
+                    param_names = _find_param_names(c)
                     if param_names:
                         for pn in param_names:
                             if pn in params:
@@ -531,33 +580,49 @@ class StructuredRetriever:
                                     break
                             if vals:
                                 # If query uses UNWIND $x, pass list; else pass scalar if single.
-                                if re.search(rf"\bUNWIND\s+\${re.escape(pn)}\b", cypher, re.I):
+                                if re.search(rf"\bUNWIND\s+\${re.escape(pn)}\b", c, re.I):
                                     params[pn] = vals
                                 else:
                                     params[pn] = vals[0] if len(vals) == 1 else vals
-
                     if param_names and not params:
                         raise RuntimeError(f"Step requires parameters {param_names} but no values were found from prior steps.")
 
                     # If we have a list param but the query likely expects scalar (e.g. {id:$id}),
                     # run once per value and merge rows. This keeps it generic and avoids hardcoding.
-                    scalar_like = any(re.search(rf"\${re.escape(pn)}\b", cypher) for pn in params)
+                    scalar_like = any(re.search(rf"\${re.escape(pn)}\b", c) for pn in params)
                     list_param_names = [k for k, v in params.items() if isinstance(v, list)]
-                    if list_param_names and scalar_like and not re.search(r"\bUNWIND\b", cypher, re.I):
+                    if list_param_names and scalar_like and not re.search(r"\bUNWIND\b", c, re.I):
                         merged: list[dict] = []
                         # Only iterate over the first list param; others (if any) stay fixed.
                         first = list_param_names[0]
                         for v in params[first]:
                             p2 = {**params, first: v}
-                            merged.extend([sanitize_row(r.data()) for r in session.run(cypher, p2)])
-                        rows = merged
-                    else:
-                        rows = [sanitize_row(r.data()) for r in session.run(cypher, params)]
-                except Exception as exc:
+                            merged.extend([sanitize_row(r.data()) for r in session.run(c, p2)])
+                        return merged
+                    return [sanitize_row(r.data()) for r in session.run(c, params)]
+
+                # Per-step repair loop: regenerate on Neo4j errors instead of aborting
+                # the whole plan (mirrors the single-query repair path).
+                last_err: Optional[str] = None
+                for _attempt in range(4):
+                    try:
+                        rows = _build_params_and_run(cypher)
+                        last_err = None
+                        break
+                    except Exception as exc:
+                        last_err = str(exc)
+                        schema = self._fetch_schema()
+                        regen = self._generate_cypher(
+                            step.purpose, schema, 10, previous_cypher=cypher, execution_error=last_err
+                        )
+                        if not regen or regen.strip() == cypher.strip():
+                            break
+                        cypher = regen.strip()
+                if last_err is not None:
                     out.append({
                         "id": f"{step.id}_error",
                         "title": f"{step.id} error",
-                        "text": f"Step failed: {exc}\nCypher: {cypher}",
+                        "text": f"Step failed: {last_err}\nCypher: {cypher}",
                         "score": 0.0,
                         "related": [],
                         "cypher": cypher,

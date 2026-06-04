@@ -238,9 +238,9 @@ Copy-paste list:
 
 Chart type is chosen automatically from the question and result shape (bar, horizontal bar, line, pie/doughnut). Hard-refresh `/chat` after deploy so Chart.js loads.
 
-### Combined RAG eval (30 questions: 20 document + 10 structured)
+### Combined RAG eval (40 questions: 20 document + 10 structured + 10 advanced)
 
-Runnable smoke suite with heuristic checks (routing, non-empty answers, soft keywords, chart types, anti-hallucination hints). Not a substitute for human golden labels — use it to catch regressions after ingest or deploy changes. Current status on the reference fixtures: **30/30 pass**.
+Runnable smoke suite with heuristic checks (routing, non-empty answers, soft keywords, chart types, anti-hallucination hints). Not a substitute for human golden labels — use it to catch regressions after ingest or deploy changes. Current status on the reference fixtures: **40/40 pass**.
 
 > **Corpus-agnostic by design.** All document-specific expectations (ISBN, licence, language names, network acronyms, etc.) live **only** in the eval JSON. The retriever and router contain **no per-document or per-topic keywords** — document selection uses query-derived anchors plus vector-majority resolution, so swapping in a different PDF needs no code changes.
 
@@ -248,15 +248,19 @@ Runnable smoke suite with heuristic checks (routing, non-empty answers, soft key
 |-------|------|------|--------------|
 | Document | `eval/document_rag_suite.json` | `public_001` | Target PDF ingested (suite keywords are fixture-specific) |
 | Structured (Northwind) | `eval/structured_rag_suite.json` | `regular_001` + role `regular_office` | `northwind-data.cypher` loaded |
+| Advanced structured | `eval/advanced_structured_suite.json` | `regular_001` + role `regular_office` | `northwind-data.cypher` loaded |
+
+The **advanced structured** suite adds 10 *hard, multi-step* analytics questions in new scenarios — per-group top-N (top product per category), argmax-per-group (top category per country), cross-year revenue growth, average-order-value with thresholds, and derived gross/discount/net metrics. Each case's expected keywords are the **actual ground-truth entities computed directly from Neo4j**, so a wrong roll-up (e.g. a silently dropped year filter) fails the case rather than passing on a plausible-looking number.
 
 ```bash
-# All 30 cases (default) — smoke + routing + keyword/chart checks
+# All 40 cases (default) — smoke + routing + keyword/chart checks
 python3 scripts/run_rag_eval.py --suite all
 
-python3 scripts/run_rag_eval.py --suite structured   # 10 Northwind
 python3 scripts/run_rag_eval.py --suite document     # 20 Go.Data
+python3 scripts/run_rag_eval.py --suite structured   # 10 Northwind
+python3 scripts/run_rag_eval.py --suite advanced     # 10 advanced analytics
 
-python3 scripts/run_rag_eval.py --id nw_04 --output /tmp/rag_eval.json
+python3 scripts/run_rag_eval.py --id adv_06 --output /tmp/rag_eval.json
 pytest tests/test_rag_eval_validators.py -q   # offline validators
 ```
 
@@ -280,11 +284,14 @@ Record a run (server must be up with the corpus ingested):
 # 20 document questions → eval/ui_runs/<timestamp>/rag_eval_ui_document.webm + report.json
 .venv/bin/python scripts/run_rag_eval_ui.py --suite document
 
-.venv/bin/python scripts/run_rag_eval_ui.py --suite all --pause 2.5   # all 30
+# 10 advanced analytics — readable Q&A walkthrough (pans through each long answer)
+.venv/bin/python scripts/run_rag_eval_ui.py --suite advanced --pause 6
+
+.venv/bin/python scripts/run_rag_eval_ui.py --suite all --pause 2.5   # all 40
 .venv/bin/python scripts/run_rag_eval_ui.py --id godata_a01 --headed  # single case, watch live
 ```
 
-Flags: `--pause` (seconds lingered on each answer for pacing), `--headed` (show the browser), `--keep-history` (continuous scroll instead of resetting between questions), `--out-dir`. Output `.webm` plays in any browser or VLC. Recorded artifacts under `eval/ui_runs/` are git-ignored.
+Flags: `--pause` (seconds lingered on each answer; the runner gently pans the chat from the question through the full answer so long responses stay readable), `--headed` (show the browser), `--keep-history` (continuous scroll instead of resetting between questions), `--out-dir`. Output `.webm` plays in any browser or VLC. Recorded artifacts under `eval/ui_runs/` are git-ignored.
 
 ---
 
@@ -464,10 +471,11 @@ agentic_graph_rag/
 │   ├── auth/                  # RBAC (roles, knowledge areas)
 │   └── prompts/               # LLM prompts
 ├── eval/
-│   ├── document_rag_suite.json    # 20 Go.Data document questions
-│   ├── structured_rag_suite.json  # 10 Northwind questions
+│   ├── document_rag_suite.json          # 20 Go.Data document questions
+│   ├── structured_rag_suite.json        # 10 Northwind questions
+│   ├── advanced_structured_suite.json   # 10 hard multi-step analytics (ground-truth-checked)
 │   └── validators.py
-├── scripts/run_rag_eval.py        # 30-case smoke eval against /query
+├── scripts/run_rag_eval.py        # 40-case smoke eval against /query
 ├── tests/
 │   ├── test_scalable_pipeline_unit.py
 │   ├── test_document_versioning_unit.py

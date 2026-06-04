@@ -22,3 +22,7 @@ output_v3/
 
 # Eval UI runner recordings (large videos)
 eval/ui_runs/
+
+# Playwright browsers (local, used by scripts/run_rag_eval_ui.py)
+.venv/
+.pw-browsers/

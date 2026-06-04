@@ -53,6 +53,7 @@ except ImportError:  # pragma: no cover - guidance only
 SUITE_PATHS = {
     "document": ROOT / "eval" / "document_rag_suite.json",
     "structured": ROOT / "eval" / "structured_rag_suite.json",
+    "advanced": ROOT / "eval" / "advanced_structured_suite.json",
 }
 
 # Injected once; a fixed banner so the recording reads as a test report.
@@ -91,6 +92,33 @@ def set_banner(page, tag: str, msg: str, result: str = "", color: str = "#1e293b
     )
 
 
+def read_through(page, seconds: float) -> None:
+    """Gently pan the chat from the question (top) to the end of the answer so a
+    viewer can read long responses, then linger briefly at the bottom."""
+    info = page.evaluate(
+        "() => { const b=document.getElementById('chat_body');"
+        " return b ? {sh:b.scrollHeight, ch:b.clientHeight} : null; }"
+    )
+    if not info:
+        time.sleep(seconds)
+        return
+    extra = max(0, int(info["sh"]) - int(info["ch"]))
+    page.evaluate("() => { const b=document.getElementById('chat_body'); if(b) b.scrollTop=0; }")
+    if extra < 24:
+        time.sleep(seconds)
+        return
+    steps = 24
+    dwell_top = min(1.2, seconds * 0.25)
+    time.sleep(dwell_top)
+    pan = max(0.3, seconds - dwell_top)
+    for i in range(1, steps + 1):
+        page.evaluate(
+            "(y) => { const b=document.getElementById('chat_body'); if(b) b.scrollTop=y; }",
+            int(extra * i / steps),
+        )
+        time.sleep(pan / steps)
+
+
 def load_suite(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as f:
         return json.load(f)
@@ -98,7 +126,7 @@ def load_suite(path: Path) -> dict[str, Any]:
 
 def collect_cases(suite_name: str, case_id: str | None) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     paths = (
-        [SUITE_PATHS["document"], SUITE_PATHS["structured"]]
+        [SUITE_PATHS["document"], SUITE_PATHS["structured"], SUITE_PATHS["advanced"]]
         if suite_name == "all"
         else [SUITE_PATHS[suite_name]]
     )
@@ -154,7 +182,6 @@ def run_case(page, meta: dict[str, Any], case: dict[str, Any], idx: int, total: 
         # Wait for the assistant bubble to finish rendering.
         page.wait_for_selector(".msg.assistant.thinking", state="detached", timeout=timeout_ms)
         page.wait_for_selector(".msg.assistant:not(.thinking) .bubble", timeout=timeout_ms)
-        page.evaluate("() => { const b=document.getElementById('chat_body'); if(b) b.scrollTop=b.scrollHeight; }")
 
         validation: ValidationResult = validate_response(case, payload)
         passed = validation.passed
@@ -169,6 +196,9 @@ def run_case(page, meta: dict[str, Any], case: dict[str, Any], idx: int, total: 
         result_txt = "PASS" if passed else "FAIL: " + "; ".join(validation.failures[:1])
         set_banner(page, progress, case["question"][:90], result_txt,
                    "#14532d" if passed else "#7f1d1d")
+        # Readable pan through the question + full answer.
+        read_through(page, pause_s)
+        return record
     except Exception as e:  # noqa: BLE001
         record.update({"status": "error", "error": str(e)[:300]})
         set_banner(page, progress, case["question"][:90], "ERROR", "#7f1d1d")
@@ -195,7 +225,7 @@ def print_summary(results: list[dict[str, Any]]) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Record a UI video of the RAG eval suite.")
-    parser.add_argument("--suite", choices=["document", "structured", "all"], default="document")
+    parser.add_argument("--suite", choices=["document", "structured", "advanced", "all"], default="document")
     parser.add_argument("--id", help="Run a single case id (e.g. godata_a01)")
     parser.add_argument("--base-url", default=os.environ.get("EVAL_BASE_URL", "http://localhost:8000"))
     parser.add_argument("--timeout", type=float, default=float(os.environ.get("EVAL_TIMEOUT", "180")))

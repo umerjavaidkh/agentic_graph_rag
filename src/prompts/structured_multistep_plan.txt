@@ -26,6 +26,17 @@ Constraints:
 - Steps may also use derived list params like `$customerIDs` ONLY if a prior step returns `customerID` (the executor will collect and pass them).
 - If the user defines a metric formula in the question (e.g. revenue = unitPrice×quantity×(1-discount)), you MUST use that definition (do not substitute freight/shipping cost).
 
+CRITICAL — FILTER INHERITANCE (most common mistake):
+- Steps do NOT inherit filters from earlier steps. If the question specifies any global filter (a year or date range like 1997, a status, a region, a category, etc.), then EVERY step that re-MATCHes the graph MUST repeat ALL of those filters in its own WHERE clause. Silently dropping a filter (e.g. computing all-time revenue when the question said "in 1997") is a critical error.
+- STRONGLY PREFER consuming the prior step's already-filtered rows over re-querying the graph. When an earlier step already computed per-entity metrics, the next grouping/ranking step should `UNWIND $stepN_rows AS row` and aggregate those rows — NOT re-MATCH `(Customer)-[:ORDERED]->(Order)...` from scratch. Re-MATCH only for data the prior step did not return, and then repeat every filter.
+
+TOP-K WITHIN A GROUP (top N per group, top K per entity):
+- Use ordered collect + slice: `WITH groupKey, item ORDER BY metric DESC WITH groupKey, collect(item)[0..K] AS topItems`. The `ORDER BY` before `collect(...)` preserves order inside the list.
+- NEVER use `apoc.coll.sortNodes(...)`: it only sorts a LIST<NODE>, takes exactly 2 arguments, and FAILS on a list of maps. Do not call it on collected maps.
+
+DERIVED METRICS:
+- "average order value" = total revenue / number of DISTINCT orders for that entity. Do NOT use `avg(lineItemRevenue)` (that averages line items, not orders).
+
 JSON schema you must follow exactly:
 {{
   "needs_multistep": boolean,
