@@ -97,6 +97,7 @@ Use the bundled **30-case eval** (`python3 scripts/run_rag_eval.py --suite all`)
 | **Batched Neo4j writes** | `UNWIND` grouped by label/rel type. Default chunk 2 000 nodes. |
 | **Bulk upload UI** | Drop multiple PDFs at once; each gets its own live status card on `/upload`. |
 | **New API endpoints** | `GET /ingest/jobs` · `GET /ingest/queue/status`. No more 409 on concurrent uploads. |
+| **Retrieval refactor** | Structured and unstructured retrievers split into focused packages (`cypher/`, `multistep/`, `mixins/`, etc.) — same public APIs, easier to extend. |
 
 ---
 
@@ -463,8 +464,16 @@ agentic_graph_rag/
 │   ├── exporter/exporter.py   # Neo4jExporter — UNWIND batched writes
 │   ├── semantic/axis2.py      # Axis 2 (parallel NER + LLM relationship pass)
 │   ├── retrieval/
-│   │   ├── unstructured/      # DocumentRAGRetriever, TOC helpers
-│   │   └── structured/        # Text-to-Cypher + schema repair
+│   │   ├── unstructured/        # DocumentRAGRetriever (facade + mixins)
+│   │   │   ├── retriever.py     # Public API + backward-compat exports
+│   │   │   ├── mixins/          # hybrid, graph_seeds, ranking, lexical, TOC/page/box strategies
+│   │   │   ├── query_intent.py  # Question-shape routing (TOC, page, synthesis, …)
+│   │   │   ├── toc_retrieval.py, visual_retrieval.py, executor.py
+│   │   └── structured/          # StructuredRetriever (facade)
+│   │       ├── retriever.py
+│   │       ├── cypher/          # generate, validate, repair, pipeline
+│   │       ├── multistep/       # planner, executor, context
+│   │       ├── schema/ · policies/ · formatting/
 │   ├── graph/                 # Neo4j constants, lifecycle helpers
 │   ├── presentation/          # UI blocks (markdown, tables, charts)
 │   ├── conversation/          # Thread memory + clarification
@@ -530,11 +539,7 @@ uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
-## Demo
-
-| Ingestion | Unstructured | Structured |
-| :---: | :---: | :---: |
-| [![Ingestion](https://img.youtube.com/vi/2983DqSe0GM/0.jpg)](https://www.youtube.com/watch?v=2983DqSe0GM) | [![Unstructured](https://img.youtube.com/vi/s3Eceo20Eq4/0.jpg)](https://www.youtube.com/watch?v=s3Eceo20Eq4) | [![Structured](https://img.youtube.com/vi/XvigWQ5mB1g/0.jpg)](https://www.youtube.com/watch?v=XvigWQ5mB1g) |
+## Further reading
 
 **Medium article:** [Agentic Graph RAG — architecture and walkthrough](https://medium.com/p/0ee1f6baae26)
 
