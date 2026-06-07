@@ -36,6 +36,8 @@ ingestion_manager = IngestionManager()
 
 # Fallback executor: used only when REDIS_URL is not set (dev / single-process mode).
 _ingest_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ingest")
+# Run sync RAG pipeline (LLM + Neo4j) off the asyncio event loop.
+_query_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="query")
 
 
 async def _run_ingest_job_local(job_id: str) -> None:
@@ -177,10 +179,14 @@ async def query(request: QueryRequest):
             department=request.department,
         )
 
-        result = ask(
-            request.question,
-            user_context=context,
-            thread_id=request.thread_id or "default",
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            _query_executor,
+            lambda: ask(
+                request.question,
+                user_context=context,
+                thread_id=request.thread_id or "default",
+            ),
         )
 
         return QueryResponse(

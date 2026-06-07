@@ -36,6 +36,7 @@ class StructuredCypherExecutor:
         execute_once: Callable[[str], list[dict]],
         regenerate: Callable[[str, str], Optional[str]],
         sql_issue: Callable[[str], Optional[str]],
+        repair: Optional[Callable[[str], str]] = None,
     ) -> ExecuteResult:
         """
         Parameters are injected to keep this executor independent of Neo4j driver and LLM provider.
@@ -54,6 +55,11 @@ class StructuredCypherExecutor:
 
             issue = sql_issue(cypher)
             if issue:
+                if repair:
+                    repaired = repair(cypher)
+                    if repaired.strip() != cypher.strip() and not sql_issue(repaired):
+                        cypher = repaired.strip()
+                        continue
                 fixed = regenerate(cypher, issue)
                 if fixed and fixed.strip() != cypher.strip():
                     cypher = fixed.strip()
@@ -64,6 +70,11 @@ class StructuredCypherExecutor:
                 return ExecuteResult(rows=rows, cypher=cypher, error=None, attempts=attempt)
             except Exception as exc:
                 last_err = str(exc)
+                if repair:
+                    repaired = repair(cypher)
+                    if repaired.strip() != cypher.strip():
+                        cypher = repaired.strip()
+                        continue
                 fixed = regenerate(cypher, last_err)
                 if fixed and fixed.strip() != cypher.strip():
                     cypher = fixed.strip()

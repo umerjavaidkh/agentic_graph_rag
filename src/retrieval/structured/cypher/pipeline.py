@@ -7,6 +7,9 @@ from neo4j import Driver
 
 from ....auth.roles import UserContext
 from ....config.settings import (
+    STRUCTURED_CYPHER_MAX_ATTEMPTS,
+    STRUCTURED_CYPHER_SQL_LLM_RETRIES,
+    STRUCTURED_EMPTY_RESULT_LLM_RETRIES,
     STRUCTURED_TEXT2CYPHER_LONG_MAX_TOKENS,
     STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS,
     STRUCTURED_TEXT2CYPHER_MAX_TOKENS,
@@ -17,7 +20,7 @@ from ..formatting.chunks import rows_to_chunks
 from ..neo4j_sanitize import sanitize_row
 from ..schema.provider import SchemaProvider
 from .generator import CypherGenerator, regenerate_for_issue
-from .repair import fix_relationship_directions, repair_schema_paths
+from .repair import fix_relationship_directions, normalize_generated_cypher
 from .validator import EMPTY_RESULT_HINTS, sql_cypher_issue
 
 
@@ -35,7 +38,9 @@ class Text2CypherPipeline:
         self._schema = schema
         self._cypher = cypher
         self._can_query = can_query
-        self._executor = executor or StructuredCypherExecutor(max_attempts=5)
+        self._executor = executor or StructuredCypherExecutor(
+            max_attempts=max(1, STRUCTURED_CYPHER_MAX_ATTEMPTS)
+        )
 
     def run(self, query: str, limit: int, user_context: UserContext) -> list[dict]:
         if not self._can_query(user_context.user_id):
@@ -57,13 +62,25 @@ class Text2CypherPipeline:
         if not cypher:
             return []
 
-        for _ in range(4):
+        repair_fn = lambda c: normalize_generated_cypher(c, schema)  # noqa: E731
+        cypher = repair_fn(cypher)
+
+        llm_sql_retries = 0
+        for _ in range(max(1, STRUCTURED_CYPHER_SQL_LLM_RETRIES) + 1):
             issue = sql_cypher_issue(cypher)
             if not issue:
                 break
-            cypher = regenerate_for_issue(self._cypher, query, schema, limit, cypher, issue)
-        cypher = fix_relationship_directions(cypher, schema)
-        cypher = repair_schema_paths(cypher, schema)
+            repaired = repair_fn(cypher)
+            if repaired.strip() != cypher.strip() and not sql_cypher_issue(repaired):
+                cypher = repaired
+                continue
+            if llm_sql_retries >= STRUCTURED_CYPHER_SQL_LLM_RETRIES:
+                break
+            regen = regenerate_for_issue(self._cypher, query, schema, limit, cypher, issue)
+            llm_sql_retries += 1
+            if regen.strip() == cypher.strip():
+                break
+            cypher = repair_fn(regen)
 
         def _execute_once(c: str) -> list[dict]:
             with self._driver.session() as session:
@@ -71,6 +88,9 @@ class Text2CypherPipeline:
                 return [sanitize_row(r.data()) for r in result]
 
         def _regenerate(prev: str, err: str) -> Optional[str]:
+            repaired = repair_fn(prev)
+            if repaired.strip() != prev.strip() and not sql_cypher_issue(repaired):
+                return repaired
             return self._cypher.generate(
                 query,
                 schema,
@@ -87,6 +107,7 @@ class Text2CypherPipeline:
             execute_once=_execute_once,
             regenerate=_regenerate,
             sql_issue=sql_cypher_issue,
+            repair=repair_fn,
         )
         tel = get_telemetry()
         if tel is not None:
@@ -105,13 +126,16 @@ class Text2CypherPipeline:
             corrected = fix_relationship_directions(cypher, schema)
             if corrected.strip() != cypher.strip():
                 rows2, cypher2, err2 = self._execute_cypher_rows(
-                    corrected, query, schema=schema, limit=limit
+                    corrected, query, schema=schema, limit=limit, repair_fn=repair_fn
                 )
                 if not err2 and rows2:
                     rows = rows2
                     cypher = cypher2
         if not rows:
-            for _attempt, retry_msg in enumerate(EMPTY_RESULT_HINTS, start=1):
+            for _attempt, retry_msg in enumerate(
+                EMPTY_RESULT_HINTS[: max(0, STRUCTURED_EMPTY_RESULT_LLM_RETRIES)],
+                start=1,
+            ):
                 fixed = self._cypher.generate(
                     query,
                     schema,
@@ -121,10 +145,9 @@ class Text2CypherPipeline:
                 )
                 if not fixed or fixed.strip() == cypher.strip():
                     continue
-                fixed = fix_relationship_directions(fixed, schema)
-                fixed = repair_schema_paths(fixed, schema)
+                fixed = repair_fn(fixed)
                 rows2, cypher2, err2 = self._execute_cypher_rows(
-                    fixed, query, schema=schema, limit=limit
+                    fixed, query, schema=schema, limit=limit, repair_fn=repair_fn
                 )
                 if err2:
                     continue
@@ -141,6 +164,7 @@ class Text2CypherPipeline:
         *,
         schema: Optional[str],
         limit: int,
+        repair_fn: Callable[[str], str],
     ) -> tuple[list[dict], str, Optional[str]]:
         last_err: Optional[str] = None
         for attempt in range(2):
@@ -150,6 +174,10 @@ class Text2CypherPipeline:
                     return [sanitize_row(r.data()) for r in result], cypher, None
             except Exception as e:
                 last_err = str(e)
+                repaired = repair_fn(cypher)
+                if attempt == 0 and repaired.strip() != cypher.strip():
+                    cypher = repaired
+                    continue
                 if attempt == 0 and schema:
                     fixed = self._cypher.generate(
                         query,
@@ -159,7 +187,7 @@ class Text2CypherPipeline:
                         execution_error=last_err,
                     )
                     if fixed and fixed.strip() != cypher.strip():
-                        cypher = fixed
+                        cypher = repair_fn(fixed)
                         continue
                 break
         return [], cypher, last_err

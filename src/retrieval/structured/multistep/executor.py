@@ -8,7 +8,9 @@ from typing import Any, Callable, Optional
 from neo4j import Driver
 
 from ....auth.roles import UserContext
+from ....config.settings import STRUCTURED_MULTISTEP_STEP_ATTEMPTS
 from ..cypher.generator import CypherGenerator, regenerate_for_issue
+from ..cypher.repair import normalize_generated_cypher
 from ..cypher.validator import dropped_year_filter_issue, sql_cypher_issue
 from ..neo4j_sanitize import sanitize_row
 from ..schema.provider import SchemaProvider
@@ -52,24 +54,31 @@ class MultiStepExecutor:
             }]
 
         ctx: dict[str, Any] = {"plan_reason": plan.reason, "final_hint": plan.final_answer_hint}
+        schema = self._schema.fetch()
+        repair_fn = lambda c: normalize_generated_cypher(c, schema)  # noqa: E731
+        max_step_attempts = max(1, STRUCTURED_MULTISTEP_STEP_ATTEMPTS)
 
         with self._driver.session() as session:
             for _idx, step in enumerate(plan.steps, 1):
-                cypher = (step.cypher or "").strip()
+                cypher = repair_fn((step.cypher or "").strip())
                 issue = sql_cypher_issue(cypher)
                 if issue:
-                    schema = self._schema.fetch()
-                    cypher = regenerate_for_issue(
-                        self._cypher, step.purpose, schema, 10, cypher, issue
-                    )
+                    repaired = repair_fn(cypher)
+                    if repaired.strip() != cypher.strip() and not sql_cypher_issue(repaired):
+                        cypher = repaired
+                    else:
+                        cypher = repair_fn(
+                            regenerate_for_issue(
+                                self._cypher, step.purpose, schema, 10, cypher, issue
+                            )
+                        )
                 filt_issue = dropped_year_filter_issue(cypher, query)
                 if filt_issue:
-                    schema = self._schema.fetch()
                     regenerated = self._cypher.generate(
                         step.purpose, schema, 10, previous_cypher=cypher, execution_error=filt_issue
                     )
                     if regenerated and regenerated.strip():
-                        cypher = regenerated.strip()
+                        cypher = repair_fn(regenerated.strip())
                 rows: list[dict[str, Any]] = []
 
                 def _build_params_and_run(c: str) -> list[dict[str, Any]]:
@@ -110,20 +119,23 @@ class MultiStepExecutor:
                     return [sanitize_row(r.data()) for r in session.run(c, params)]
 
                 last_err: Optional[str] = None
-                for _attempt in range(4):
+                for _attempt in range(max_step_attempts):
                     try:
                         rows = _build_params_and_run(cypher)
                         last_err = None
                         break
                     except Exception as exc:
                         last_err = str(exc)
-                        schema = self._schema.fetch()
+                        repaired = repair_fn(cypher)
+                        if repaired.strip() != cypher.strip():
+                            cypher = repaired
+                            continue
                         regen = self._cypher.generate(
                             step.purpose, schema, 10, previous_cypher=cypher, execution_error=last_err
                         )
                         if not regen or regen.strip() == cypher.strip():
                             break
-                        cypher = regen.strip()
+                        cypher = repair_fn(regen.strip())
                 if last_err is not None:
                     out.append({
                         "id": f"{step.id}_error",

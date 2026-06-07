@@ -92,7 +92,7 @@ PDF_ENABLE_OCR = os.environ.get("PDF_ENABLE_OCR", "false").lower() in ("1", "tru
 PDF_OCR_BACKEND = os.environ.get("PDF_OCR_BACKEND", "none").lower()
 
 # Structured queries: skip LLM synthesis when Cypher rows are self-explanatory (table/chart UI).
-STRUCTURED_FAST_ANSWER = os.environ.get("STRUCTURED_FAST_ANSWER", "true").lower() in ("1", "true", "yes")
+STRUCTURED_FAST_ANSWER = os.environ.get("STRUCTURED_FAST_ANSWER", "false").lower() in ("1", "true", "yes")
 # If true, always run the multistep LLM planner before Text-to-Cypher (slower; default uses regex gate).
 STRUCTURED_ALWAYS_MULTISTEP_PLAN = os.environ.get(
     "STRUCTURED_ALWAYS_MULTISTEP_PLAN", "false"
@@ -123,6 +123,11 @@ STRUCTURED_TEXT2CYPHER_LONG_MAX_TOKENS = llm_max_tokens("STRUCTURED_TEXT2CYPHER_
 STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS = int(
     os.environ.get("STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS", "180")
 )
+# Cypher execution / repair budgets (lower = faster; repair runs before LLM regen).
+STRUCTURED_CYPHER_MAX_ATTEMPTS = int(os.environ.get("STRUCTURED_CYPHER_MAX_ATTEMPTS", "2"))
+STRUCTURED_CYPHER_SQL_LLM_RETRIES = int(os.environ.get("STRUCTURED_CYPHER_SQL_LLM_RETRIES", "1"))
+STRUCTURED_EMPTY_RESULT_LLM_RETRIES = int(os.environ.get("STRUCTURED_EMPTY_RESULT_LLM_RETRIES", "1"))
+STRUCTURED_MULTISTEP_STEP_ATTEMPTS = int(os.environ.get("STRUCTURED_MULTISTEP_STEP_ATTEMPTS", "2"))
 # Fixed override for multistep planner; empty = use heuristic tiers below.
 STRUCTURED_PLAN_MAX_TOKENS = (os.environ.get("STRUCTURED_PLAN_MAX_TOKENS") or "").strip()
 STRUCTURED_PLAN_TOKENS_SMALL = llm_max_tokens("STRUCTURED_PLAN_TOKENS_SMALL", 900, minimum=300)
