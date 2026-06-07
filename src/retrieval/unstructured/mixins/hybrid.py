@@ -1,7 +1,8 @@
 """Document RAG retriever — hybrid."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Optional, TypeVar
 
 from ....auth.rbac_setup import GraphRBAC
 from ....auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
@@ -29,8 +30,15 @@ from ..query_intent import (
     is_visual_page_question,
 )
 
+_T = TypeVar("_T")
+
 
 class HybridRetrieveMixin:
+    def _neo4j_session_call(self, fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
+        """Run a Neo4j read in its own session (safe for thread-pool parallelism)."""
+        with self.driver.session() as session:
+            return fn(session, *args, **kwargs)
+
     def semantic_retrieve(
         self,
         query: str,
@@ -238,43 +246,66 @@ class HybridRetrieveMixin:
         graph_2hop = 24 if synthesis else _GRAPH_2HOP_LIMIT
 
         embedding = self._get_embedding(query)
-        with self.driver.session() as session:
-            lexical_hits = self._merge_retrieval_chunks(
-                self._structural_phrase_retrieve(session, query),
-                self._structural_keyword_retrieve(session, query),
-            )
-            vector_hits = self._vector_seed(session, embedding, vector_limit)
-            fulltext_hits = self._fulltext_seed(session, query, _FULLTEXT_LIMIT)
-            seed_ids = [h["id"] for h in vector_hits if h.get("id")]
-            seed_scores = {h["id"]: float(h["score"]) for h in vector_hits if h.get("id")}
 
-            graph_hits: list[dict] = []
-            if seed_ids:
-                graph_hits.extend(
-                    self._graph_expand(session, seed_ids, hops=1, limit=graph_1hop)
-                )
-                graph_hits.extend(
-                    self._graph_expand(session, seed_ids, hops=2, limit=graph_2hop)
-                )
-
-            items = self._merge_and_rank(
-                query,
-                vector_hits,
-                fulltext_hits,
-                graph_hits,
-                seed_scores,
-                lexical_hits=lexical_hits,
-                synthesis=synthesis,
-                limit=max(1, int(fetch_limit)),
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="hybrid_seed") as pool:
+            phrase_future = pool.submit(
+                self._neo4j_session_call, self._structural_phrase_retrieve, query
             )
-            if lexical_hits:
-                items = self._pin_precision_lexical_chunks(
-                    query, items, lexical_hits, limit=max(1, int(fetch_limit))
+            keyword_future = pool.submit(
+                self._neo4j_session_call, self._structural_keyword_retrieve, query
+            )
+            vector_future = pool.submit(
+                self._neo4j_session_call, self._vector_seed, embedding, vector_limit
+            )
+            fulltext_future = pool.submit(
+                self._neo4j_session_call, self._fulltext_seed, query, _FULLTEXT_LIMIT
+            )
+            phrase_hits = phrase_future.result()
+            keyword_hits = keyword_future.result()
+            vector_hits = vector_future.result()
+            fulltext_hits = fulltext_future.result()
+
+        lexical_hits = self._merge_retrieval_chunks(phrase_hits, keyword_hits)
+        seed_ids = [h["id"] for h in vector_hits if h.get("id")]
+        seed_scores = {h["id"]: float(h["score"]) for h in vector_hits if h.get("id")}
+
+        graph_hits: list[dict] = []
+        if seed_ids:
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="hybrid_graph") as pool:
+                hop1_future = pool.submit(
+                    self._neo4j_session_call,
+                    self._graph_expand,
+                    seed_ids,
+                    hops=1,
+                    limit=graph_1hop,
                 )
-            if synthesis and lexical_hits:
-                items = self._pin_contrast_lexical_chunks(
-                    query, items, lexical_hits, limit=max(1, int(fetch_limit))
+                hop2_future = pool.submit(
+                    self._neo4j_session_call,
+                    self._graph_expand,
+                    seed_ids,
+                    hops=2,
+                    limit=graph_2hop,
                 )
+                graph_hits = hop1_future.result() + hop2_future.result()
+
+        items = self._merge_and_rank(
+            query,
+            vector_hits,
+            fulltext_hits,
+            graph_hits,
+            seed_scores,
+            lexical_hits=lexical_hits,
+            synthesis=synthesis,
+            limit=max(1, int(fetch_limit)),
+        )
+        if lexical_hits:
+            items = self._pin_precision_lexical_chunks(
+                query, items, lexical_hits, limit=max(1, int(fetch_limit))
+            )
+        if synthesis and lexical_hits:
+            items = self._pin_contrast_lexical_chunks(
+                query, items, lexical_hits, limit=max(1, int(fetch_limit))
+            )
 
         response = self._format_response(query, items, user_context=ctx)
         response["mode"] = "graph_rag"

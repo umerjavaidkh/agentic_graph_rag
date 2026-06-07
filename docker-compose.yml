@@ -62,7 +62,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       ENABLE_PAGE_VISION: "false"
       FAST_ROUTE_QUERIES: "true"
-      STRUCTURED_FAST_ANSWER: "true"
+      STRUCTURED_FAST_ANSWER: ${STRUCTURED_FAST_ANSWER:-false}
       LOAD_NORTHWIND_DEMO: "true"
       ENABLE_PDF_INGEST: "true"
     volumes:

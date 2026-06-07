@@ -9,6 +9,7 @@ from langgraph.graph import END, StateGraph
 from .retriever import StructuredRetriever
 from ...config.prompts import load_prompt
 from ...config.settings import (
+    STRUCTURED_FAST_ANSWER,
     STRUCTURED_MODEL,
     STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS,
     STRUCTURED_SYNTHESIS_MAX_TOKENS,
@@ -32,6 +33,51 @@ SCHEMA_PHRASES = {
 def _is_schema_query(question: str) -> bool:
     q = question.lower()
     return any(p in q for p in SCHEMA_PHRASES)
+
+
+def _build_fast_structured_answer(
+    chunks: list[dict], strategy: str, question: str = ""
+) -> str:
+    """Format Cypher row / multistep chunks without an LLM synthesis pass."""
+    if strategy == "schema" and chunks:
+        return (chunks[0].get("text") or "").strip()
+
+    parts: list[str] = []
+    for chunk in chunks:
+        if chunk.get("id") in ("access_denied", "error"):
+            continue
+        text = (chunk.get("text") or "").strip()
+        if not text:
+            continue
+        title = (chunk.get("title") or "").strip()
+        if title and title.lower() not in text.lower()[:120]:
+            parts.append(f"{title}\n{text}")
+        else:
+            parts.append(text)
+
+    if not parts:
+        return "No matching records were found in the business database for that query."
+
+    count = len(parts)
+    header = (question or "").strip()
+    intro = f"Found {count} result{'s' if count != 1 else ''} from the database query."
+    if header:
+        return f"{header}\n\n{intro}\n\n" + "\n\n".join(parts)
+    return f"{intro}\n\n" + "\n\n".join(parts)
+
+
+def _should_fast_structured_answer(chunks: list[dict], strategy: str) -> bool:
+    if not STRUCTURED_FAST_ANSWER:
+        return False
+    if strategy in ("schema", "text2cypher", "multistep") and chunks:
+        if any(c.get("id") in ("access_denied", "error") for c in chunks):
+            return False
+        if strategy == "multistep" and any(
+            str(c.get("id", "")).endswith("_error") for c in chunks
+        ):
+            return False
+        return True
+    return False
 
 
 def retrieve_node(state: StructuredState):
@@ -97,6 +143,13 @@ def generate_node(state: StructuredState):
                 "Try rephrasing the question or narrowing the filter."
             ),
             "low_confidence": True,
+        }
+
+    strategy = state.get("strategy") or retrieved_context.get("strategy") or "text2cypher"
+    if _should_fast_structured_answer(chunks, strategy):
+        return {
+            "answer": _build_fast_structured_answer(chunks, strategy, question),
+            "low_confidence": False,
         }
 
     context_lines = []

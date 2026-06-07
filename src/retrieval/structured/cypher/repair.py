@@ -180,6 +180,90 @@ def _repair_invalid_edges(path: str, schema_edges: list[tuple[str, str, str]]) -
     return "".join(segments)
 
 
+def _split_top_level_commas(expr: str) -> list[str]:
+    """Split a WITH/RETURN expression list on commas outside parentheses."""
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(expr):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(expr[start:i])
+            start = i + 1
+    parts.append(expr[start:])
+    return parts
+
+
+def fix_with_missing_aliases(cypher: str) -> str:
+    """Add AS aliases for bare property expressions in WITH clauses."""
+
+    def _fix_with_block(match: re.Match[str]) -> str:
+        prefix, body = match.group(1), match.group(2)
+        order_m = re.search(r"\s+ORDER\s+BY\s+", body, re.I)
+        if order_m:
+            main, order_part = body[: order_m.start()], body[order_m.start() :]
+        else:
+            main, order_part = body, ""
+
+        fixed_parts: list[str] = []
+        for part in _split_top_level_commas(main):
+            token = part.strip()
+            if re.fullmatch(r"\w+\.\w+", token):
+                alias = token.rsplit(".", 1)[-1]
+                fixed_parts.append(f"{token} AS {alias}")
+            else:
+                fixed_parts.append(token)
+        return prefix + ", ".join(fixed_parts) + order_part
+
+    return re.sub(
+        r"(\bWITH\s+(?:DISTINCT\s+)?)(.+?)(?=\s+(?:WHERE|MATCH|RETURN|SET|DELETE|CREATE|MERGE|UNWIND|CALL)\b|\s*$)",
+        _fix_with_block,
+        cypher,
+        flags=re.I | re.S,
+    )
+
+
+def fix_extra_paren_as_alias(cypher: str) -> str:
+    """Fix `AS x) AS y` → `AS x AS y` (common LLM typo)."""
+    return re.sub(r"\bAS\s+(\w+)\)\s+AS\s+", r"AS \1 AS ", cypher, flags=re.I)
+
+
+def fix_order_contains_property_access(cypher: str) -> str:
+    """
+    Replace `node.ORDER_CONTAINS.field` with `li.field` when a ORDER_CONTAINS rel is bound as li.
+    """
+    if not re.search(r"\.ORDER_CONTAINS\.", cypher, re.I):
+        return cypher
+    if not re.search(r"\[li\s*:\s*ORDER_CONTAINS\]", cypher, re.I):
+        return cypher
+    return re.sub(
+        r"\b\w+\.ORDER_CONTAINS\.(\w+)\b",
+        r"li.\1",
+        cypher,
+        flags=re.I,
+    )
+
+
+def normalize_generated_cypher(cypher: str, schema: str) -> str:
+    """Apply deterministic repairs before execute or LLM regeneration."""
+    fixed = (cypher or "").strip()
+    if not fixed:
+        return fixed
+    fixed = fix_extra_paren_as_alias(fixed)
+    fixed = fix_with_missing_aliases(fixed)
+    fixed = fix_order_contains_property_access(fixed)
+    fixed = fix_relationship_directions(fixed, schema)
+    fixed = repair_schema_paths(fixed, schema)
+    return fixed
+
+
+def _relationship_hop_count(path: str) -> int:
+    return len(re.findall(r"-\s*\[", path or ""))
+
+
 def repair_schema_paths(cypher: str, schema: str) -> str:
     """Repair invalid relationship hops in MATCH clauses using schema paths."""
     schema_edges = parse_schema_relationships(schema)
@@ -194,6 +278,10 @@ def repair_schema_paths(cypher: str, schema: str) -> str:
     parts = [p.strip() for p in match_m.group(1).split(",")]
     repaired: list[str] = []
     for part in parts:
+        # Multi-hop paths (incl. valid reverse traversals) must not be rewritten here.
+        if _relationship_hop_count(part) > 1:
+            repaired.append(part)
+            continue
         part = _repair_hanging_reverse_paths(part, schema_set)
         part = _repair_invalid_edges(part, schema_edges)
         repaired.append(part)

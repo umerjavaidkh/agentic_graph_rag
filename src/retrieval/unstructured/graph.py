@@ -34,6 +34,33 @@ _STRUCTURED_MISROUTE = re.compile(
     re.I,
 )
 
+# Retrieval modes where chunks are already the answer (TOC, page, box, subsection).
+_STRUCTURAL_FAST_MODES = frozenset({
+    "structural_toc",
+    "structural_page",
+    "structural_page_visual",
+    "page_visual_list",
+    "structural_box_list",
+    "structural_box_content",
+    "subsection_tree",
+    "section_detail",
+    "needs_clarification",
+})
+
+
+def _build_fast_unstructured_answer(chunks: list[dict]) -> str:
+    parts: list[str] = []
+    for chunk in chunks:
+        text = (chunk.get("text") or "").strip()
+        if not text:
+            continue
+        title = (chunk.get("title") or "").strip()
+        if title and title.lower() not in text.lower()[:80]:
+            parts.append(f"**{title}**\n{text}")
+        else:
+            parts.append(text)
+    return "\n\n".join(parts).strip()
+
 
 def _fix_misrouted_structured_answer(answer: str, question: str) -> str:
     """LLM sometimes mis-applies the Northwind redirect on document questions."""
@@ -90,6 +117,19 @@ def generate_node(state: ESGState):
             "answer": "I could not find relevant information in the ingested documents.",
             "low_confidence": False,
         }
+
+    denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
+    if denied:
+        return {
+            "answer": (denied.get("text") or "Access denied for document data.").strip(),
+            "low_confidence": False,
+        }
+
+    mode = (retrieved.get("mode") or "").strip()
+    if mode in _STRUCTURAL_FAST_MODES:
+        answer = _build_fast_unstructured_answer(chunks)
+        if answer:
+            return {"answer": answer, "low_confidence": False}
 
     context_lines: list[str] = []
     for i, c in enumerate(chunks, 1):

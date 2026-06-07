@@ -40,10 +40,6 @@ SQL_CYPHER_ISSUES: list[tuple[str, str]] = [
         "Bind ORDER_CONTAINS as a variable: (o)-[li:ORDER_CONTAINS]->(p) and use li.quantity, li.unitPrice, li.discount.",
     ),
     (
-        r"\bWITH\b[^\n]*[, ]\s*\w+\.\w+\s*(?!\s+AS\b)",
-        "Cypher syntax: every expression in WITH must be aliased using AS (e.g. `WITH p.productName AS productName`).",
-    ),
-    (
         r"\bAS\s+\w+\)\s+AS\s+\w+",
         "Cypher syntax: you have an extra ')' before an AS alias (e.g. 'AS x) AS y'). Remove the extra parenthesis.",
     ),
@@ -57,12 +53,50 @@ SQL_CYPHER_ISSUES: list[tuple[str, str]] = [
 
 _QUESTION_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 
+_WITH_MISSING_ALIAS_MSG = (
+    "Cypher syntax: every expression in WITH must be aliased using AS "
+    "(e.g. `WITH p.productName AS productName`)."
+)
+
+
+def _split_top_level_commas(expr: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(expr):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(expr[start:i])
+            start = i + 1
+    parts.append(expr[start:])
+    return parts
+
+
+def _with_missing_alias_issue(cypher: str) -> Optional[str]:
+    """Flag bare `n.prop` items in WITH lists (not inside COUNT(...) etc.)."""
+    for match in re.finditer(
+        r"\bWITH\s+(?:DISTINCT\s+)?(.+?)(?=\s+(?:WHERE|MATCH|RETURN|SET|DELETE|CREATE|MERGE|UNWIND|CALL)\b|\s*$)",
+        cypher,
+        flags=re.I | re.S,
+    ):
+        body = match.group(1)
+        order_m = re.search(r"\s+ORDER\s+BY\s+", body, re.I)
+        main = body[: order_m.start()] if order_m else body
+        for part in _split_top_level_commas(main):
+            token = part.strip()
+            if re.fullmatch(r"\w+\.\w+", token):
+                return _WITH_MISSING_ALIAS_MSG
+    return None
+
 
 def sql_cypher_issue(cypher: str) -> Optional[str]:
     for pattern, msg in SQL_CYPHER_ISSUES:
         if re.search(pattern, cypher, re.I | re.S):
             return msg
-    return None
+    return _with_missing_alias_issue(cypher)
 
 
 def dropped_year_filter_issue(cypher: str, query: str) -> Optional[str]:

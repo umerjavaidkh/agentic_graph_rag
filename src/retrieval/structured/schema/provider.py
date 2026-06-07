@@ -7,6 +7,14 @@ from neo4j import Driver
 
 
 class SchemaProvider:
+    """
+    In-memory cache for Neo4j schema introspection.
+
+    The graph schema string is built once per process (first fetch) and reused for
+    every Text-to-Cypher / multistep call. It is still embedded in each LLM prompt
+    (token cost), but Neo4j is not re-queried on every request.
+    """
+
     def __init__(self, driver: Driver):
         self._driver = driver
         self._cache: Optional[str] = None
