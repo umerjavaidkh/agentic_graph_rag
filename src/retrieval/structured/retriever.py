@@ -16,6 +16,7 @@ from ...config.settings import (
     NEO4J_URI,
     NEO4J_USER,
     STRUCTURED_ALWAYS_MULTISTEP_PLAN,
+    STRUCTURED_EMPTY_MULTISTEP_FALLBACK,
 )
 from ...graph.driver import get_neo4j_driver
 from ...telemetry import pipeline_step
@@ -63,6 +64,26 @@ class StructuredRetriever:
     def close(self) -> None:
         """No-op: driver is process-wide; use close_neo4j_driver() on shutdown."""
 
+    def _run_multistep(
+        self,
+        query: str,
+        schema: str,
+        user_context: UserContext,
+        *,
+        reason: str = "gate",
+    ) -> list | None:
+        """Plan and execute multistep Cypher; return chunks or None if not applicable."""
+        with pipeline_step("structured.multistep.plan", reason=reason):
+            plan = self._planner.plan(query, schema)
+        if not plan or not plan.needs_multistep or not plan.steps:
+            return None
+        with pipeline_step(
+            "structured.multistep.execute",
+            steps=len(plan.steps),
+            reason=reason,
+        ):
+            return self._multistep.execute(plan, user_context=user_context, query=query)
+
     def retrieve(
         self,
         query: str,
@@ -77,18 +98,24 @@ class StructuredRetriever:
 
             schema = self._schema.fetch()
             if STRUCTURED_ALWAYS_MULTISTEP_PLAN or likely_needs_multistep_plan(query):
-                with pipeline_step("structured.multistep.plan"):
-                    plan = self._planner.plan(query, schema)
-                if plan and plan.needs_multistep and plan.steps:
-                    with pipeline_step(
-                        "structured.multistep.execute",
-                        steps=len(plan.steps),
-                    ):
-                        chunks = self._multistep.execute(plan, user_context=ctx, query=query)
+                chunks = self._run_multistep(query, schema, ctx, reason="gate")
+                if chunks is not None:
                     return format_response(query, chunks, strategy="multistep")
 
             with pipeline_step("structured.text2cypher"):
                 chunks = self._text2cypher_pipeline.run(query, limit, user_context=ctx)
+
+            if (
+                STRUCTURED_EMPTY_MULTISTEP_FALLBACK
+                and not chunks
+                and not any(c.get("id") == "error" for c in chunks)
+            ):
+                fallback_chunks = self._run_multistep(
+                    query, schema, ctx, reason="empty_text2cypher"
+                )
+                if fallback_chunks:
+                    return format_response(query, fallback_chunks, strategy="multistep")
+
             return format_response(query, chunks, strategy="text2cypher")
 
     def get_schema(self) -> dict:

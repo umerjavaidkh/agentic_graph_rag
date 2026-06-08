@@ -35,6 +35,29 @@ _SINGULAR_BEST = re.compile(
     re.I,
 )
 
+# Negation / exclusion filters on graph entities (category, product, supplier, …).
+_NEGATION_ANALYTICS = re.compile(
+    r"\b(?:never|not\s+in|without|excluding|except)\b.{0,100}\b(?:category|categories|"
+    r"product|products|supplier|suppliers|customer|customers|order|orders|region|regions)\b"
+    r"|\b(?:category|categories|product|products|supplier|suppliers)\b.{0,100}\b"
+    r"(?:never|not\s+in|without|excluding|except)\b",
+    re.I | re.S,
+)
+
+# Year (or date) combined with exclusion — common multi-constraint analytics shape.
+_YEAR_WITH_NEGATION = re.compile(
+    r"\b(?:19|20)\d{2}\b.+\b(?:never|not\s+in|without|excluding)\b"
+    r"|\b(?:never|not\s+in|without|excluding)\b.+\b(?:19|20)\d{2}\b",
+    re.I | re.S,
+)
+
+# Superlative ranking plus an extra filter clause (not already caught by top-N-per-group).
+_RANK_WITH_EXTRA_FILTER = re.compile(
+    r"\b(?:most|highest|greatest|largest|fewest|lowest)\b.+\b(?:but|that|which|who|where|"
+    r"never|not\s+in|without|excluding|in\s+\d{4}|category|categories|supplier)\b",
+    re.I | re.S,
+)
+
 
 def is_singular_best_query(question: str) -> bool:
     """User wants one winner (best product), not a top-N leaderboard."""
@@ -78,5 +101,9 @@ def likely_needs_multistep_plan(question: str) -> bool:
     if _TOP_PER_GROUP.search(q) or _TOP_AMONG_TOP.search(q) or _SEQUENTIAL_TOPS.search(q):
         return True
     if len(_TOP_N.findall(q)) >= 2:
+        return True
+    if _NEGATION_ANALYTICS.search(q) or _YEAR_WITH_NEGATION.search(q):
+        return True
+    if _RANK_WITH_EXTRA_FILTER.search(q):
         return True
     return False
