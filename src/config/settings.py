@@ -222,6 +222,14 @@ RETRIEVAL_FEEDBACK_HINT_CACHE_SEC = int(
 )
 
 
+# When true, POST /query/stream returns phased NDJSON (tokens + early charts).
+QUERY_STREAM_ENABLED = os.environ.get("QUERY_STREAM_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
 def estimate_route_max_tokens(question: str) -> int:
     """Budget for MCP tool routing: base + room to echo question in tool arguments."""
     if ROUTE_MAX_TOKENS.isdigit():

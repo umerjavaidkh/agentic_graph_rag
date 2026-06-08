@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from .graph.driver import close_neo4j_driver, get_neo4j_driver
 from pydantic import BaseModel, Field
@@ -30,8 +30,10 @@ from .config.settings import (
     RETRIEVAL_FEEDBACK_HINT_CACHE_SEC,
     RETRIEVAL_FEEDBACK_MIN_MARGIN,
     RETRIEVAL_FEEDBACK_MIN_SAMPLES,
+    QUERY_STREAM_ENABLED,
     get_model_config,
 )
+from .streaming import iter_query_stream
 from .ingestion.service import IngestionManager
 from .ingestion.job_store import get_job_store
 from .ingestion.queue import enqueue_ingest, list_failed_jobs, queue_depth
@@ -271,6 +273,58 @@ async def query(request: QueryRequest):
             status_code=500,
             detail=f"Internal server error (request_id={request_id}). Check server logs.",
         )
+
+
+@app.post("/query/stream")
+async def query_stream(request: QueryRequest):
+    """
+    Stream query results as NDJSON lines.
+
+    Event types: status, presentation (partial charts/tables), token, done, error.
+    Retrieval matches /query; synthesis tokens stream when LLM is used.
+    """
+    if not QUERY_STREAM_ENABLED:
+        raise HTTPException(status_code=404, detail="Query streaming is disabled.")
+
+    request_id = uuid.uuid4().hex[:12]
+    thread_id = request.thread_id or "default"
+    user_id = request.user_id or "public_001"
+    logger.info(
+        "query stream start request_id=%s user=%s thread=%s",
+        request_id,
+        user_id,
+        thread_id,
+    )
+
+    try:
+        role = validate_role(request.role or "public")
+        context = UserContext(
+            user_id=user_id,
+            role=role,
+            department=request.department,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+    def _stream():
+        try:
+            yield from iter_query_stream(
+                request.question,
+                user_context=context,
+                thread_id=thread_id,
+                request_id=request_id,
+            )
+        except Exception:
+            logger.exception("query stream failed request_id=%s", request_id)
+            yield json.dumps(
+                {
+                    "type": "error",
+                    "message": f"Stream failed (request_id={request_id}).",
+                    "request_id": request_id,
+                }
+            ) + "\n"
+
+    return StreamingResponse(_stream(), media_type="application/x-ndjson")
 
 
 @app.post("/chat/clear")
