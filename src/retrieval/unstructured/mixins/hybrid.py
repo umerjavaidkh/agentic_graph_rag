@@ -15,6 +15,7 @@ from ....config.settings import (
 )
 from ....graph.driver import get_neo4j_driver
 from ....telemetry.context import TelemetryEvent, get_telemetry
+from ....telemetry.pipeline import record_pipeline_step
 from ..constants import (
     _FULLTEXT_LIMIT,
     _GRAPH_1HOP_LIMIT,
@@ -317,6 +318,16 @@ class HybridRetrieveMixin:
         response["vector_seeds"] = len(vector_hits)
         response["fulltext_hits"] = len(fulltext_hits)
         response["graph_expanded"] = len(graph_hits)
+        record_pipeline_step(
+            "document.hybrid.merge",
+            meta={
+                "mode": response.get("mode"),
+                "vector_seeds": len(vector_hits),
+                "fulltext_hits": len(fulltext_hits),
+                "graph_expanded": len(graph_hits),
+                "returned": len(items),
+            },
+        )
         return response
 
     def close(self) -> None:

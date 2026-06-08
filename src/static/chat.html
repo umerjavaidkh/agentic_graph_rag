@@ -1124,7 +1124,23 @@
       const t = telemetry.totals;
       const tok = Number(t.total_tokens || 0);
       const calls = `chat:${t.chat_calls || 0} emb:${t.embed_calls || 0}`;
-      return `tokens:${tok.toLocaleString()} (${calls})`;
+      const route = telemetry.route || {};
+      const routeBit = route.tool ? `route:${route.tool}` : '';
+      const failBit = telemetry.failed_step ? `fail:${telemetry.failed_step}` : '';
+      const parts = [`tokens:${tok.toLocaleString()} (${calls})`];
+      if (routeBit) parts.push(routeBit);
+      if (failBit) parts.push(failBit);
+      return parts.join(' · ');
+    }
+
+    function formatPipelineSummary(telemetry) {
+      const steps = (telemetry && telemetry.pipeline) || [];
+      if (!steps.length) return null;
+      return steps.map(s => {
+        const ms = s.duration_ms != null ? `${s.duration_ms}ms` : '';
+        const st = s.status === 'error' ? '✗' : '✓';
+        return `${st} ${s.step}${ms ? ' (' + ms + ')' : ''}`;
+      }).join(' → ');
     }
 
     function extractTries(telemetry) {
@@ -1185,6 +1201,7 @@
       if (telChip) {
         const span = document.createElement('span');
         span.className = 'meta-chip';
+        span.title = formatPipelineSummary(telemetry) || telChip;
         span.textContent = telChip;
         metaRow.appendChild(span);
       }

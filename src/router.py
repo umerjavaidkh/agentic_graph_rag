@@ -18,7 +18,7 @@ from .routing import (
     select_mcp_tool,
     run_via_mcp_tool,
 )
-from .telemetry import clear_telemetry, get_telemetry, start_telemetry
+from .telemetry import clear_telemetry, get_telemetry, pipeline_step, start_telemetry
 
 _rbac: GraphRBAC | None = None
 
@@ -196,34 +196,52 @@ MCP_TOOLS = [
 ]
 
 
-def ask(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
-    prior = get_turn(thread_id)
-    tool_name = None
-    if prior:
-        resolved = resolve_follow_up(question, prior)
-        if resolved.get("use_prior"):
-            fk = resolved.get("follow_up_kind") or ""
-            if fk in ("subsection_detail", "page", "page_visual_focus", "clarification_document"):
-                tool_name = "search_documents"
-            elif fk == "structured_clarification":
-                tool_name = "query_data"
-    if not tool_name:
-        tool_name = select_mcp_tool(question)
+def ask(
+    question: str,
+    user_context: Optional[UserContext] = None,
+    thread_id: str = "default",
+    request_id: Optional[str] = None,
+) -> dict:
+    start_telemetry()
+    tel = get_telemetry()
+    if tel is not None and request_id:
+        tel.route["request_id"] = request_id
 
-    ctx = user_context or DEFAULT_PUBLIC_CONTEXT
-    if (
-        tool_name == "query_data"
-        and is_structured_data_question(question)
-        and not _rbac_check().can_query_knowledge_area(ctx.user_id, "structured")
-    ):
-        out = make_structured_access_denied_result(question, ctx)
-        save_turn(thread_id, question, out)
-        return out
+    try:
+        prior = get_turn(thread_id)
+        tool_name = None
+        with pipeline_step("route.select"):
+            if prior:
+                resolved = resolve_follow_up(question, prior)
+                if resolved.get("use_prior"):
+                    fk = resolved.get("follow_up_kind") or ""
+                    if fk in ("subsection_detail", "page", "page_visual_focus", "clarification_document"):
+                        tool_name = "search_documents"
+                    elif fk == "structured_clarification":
+                        tool_name = "query_data"
+            if not tool_name:
+                tool_name = select_mcp_tool(question)
 
-    return run_via_mcp_tool(
-        question,
-        tool_name,
-        MCP_HANDLERS,
-        user_context=user_context,
-        thread_id=thread_id,
-    )
+        ctx = user_context or DEFAULT_PUBLIC_CONTEXT
+        if (
+            tool_name == "query_data"
+            and is_structured_data_question(question)
+            and not _rbac_check().can_query_knowledge_area(ctx.user_id, "structured")
+        ):
+            out = make_structured_access_denied_result(question, ctx)
+            if tel is not None:
+                tel.set_route("query_data", "structured_access_denied")
+                out["_telemetry"] = tel.summary()
+            clear_telemetry()
+            save_turn(thread_id, question, out)
+            return out
+
+        return run_via_mcp_tool(
+            question,
+            tool_name,
+            MCP_HANDLERS,
+            user_context=user_context,
+            thread_id=thread_id,
+        )
+    except Exception:
+        raise

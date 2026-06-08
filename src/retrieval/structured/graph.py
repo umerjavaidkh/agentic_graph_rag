@@ -6,6 +6,7 @@ Uses the structured retriever and synthesizes a natural-language answer.
 
 from langgraph.graph import END, StateGraph
 
+from ...telemetry import pipeline_step, record_pipeline_step
 from .retriever import StructuredRetriever
 from ...config.prompts import load_prompt
 from ...config.settings import (
@@ -84,13 +85,14 @@ def retrieve_node(state: StructuredState):
     question = state["question"]
     user_context = state.get("user_context")
 
-    if _is_schema_query(question):
-        context = retriever.get_schema()
-        strategy = "schema"
-    else:
-        lim = analytics_result_limit(question, 5)
-        context = retriever.retrieve(question, limit=lim, user_context=user_context)
-        strategy = context.get("strategy", "text2cypher")
+    with pipeline_step("structured.graph.retrieve"):
+        if _is_schema_query(question):
+            context = retriever.get_schema()
+            strategy = "schema"
+        else:
+            lim = analytics_result_limit(question, 5)
+            context = retriever.retrieve(question, limit=lim, user_context=user_context)
+            strategy = context.get("strategy", "text2cypher")
 
     cypher = None
     if context.get("chunks"):
@@ -110,6 +112,20 @@ def generate_node(state: StructuredState):
     chunks = retrieved_context.get("chunks", [])
     question = state["question"]
 
+    with pipeline_step(
+        "structured.graph.generate",
+        strategy=state.get("strategy") or retrieved_context.get("strategy"),
+        chunks=len(chunks),
+    ):
+        return _generate_structured_answer(state, retrieved_context, chunks, question)
+
+
+def _generate_structured_answer(
+    state: StructuredState,
+    retrieved_context: dict,
+    chunks: list,
+    question: str,
+) -> dict:
     if (retrieved_context.get("mode") or "") == "needs_clarification":
         # Return the clarification prompt as-is (no LLM synthesis).
         if chunks:
@@ -136,6 +152,11 @@ def generate_node(state: StructuredState):
     if has_error:
         err_chunk = next((c for c in chunks if c.get("id") == "error"), None)
         err_text = (err_chunk or {}).get("text") or "The database query failed."
+        record_pipeline_step(
+            "structured.cypher",
+            status="error",
+            error=err_text[:500],
+        )
         return {
             "answer": (
                 "I couldn't run that query successfully.\n\n"
