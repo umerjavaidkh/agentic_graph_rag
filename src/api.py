@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from .graph.driver import close_neo4j_driver, get_neo4j_driver
@@ -17,6 +17,7 @@ from .conversation import clear_turn
 from .logging_config import setup_logging
 from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
+from .auth.oidc import auth_public_config, resolve_user_context
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
@@ -122,6 +123,28 @@ async def chat_page():
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
+@app.get("/auth/config")
+async def auth_config():
+    """Public OIDC settings for the chat UI (no secrets)."""
+    return auth_public_config()
+
+
+@app.get("/auth/me")
+async def auth_me(authorization: Optional[str] = Header(default=None)):
+    """Return the resolved principal from a Bearer token (or dev body fallback)."""
+    session = resolve_user_context(authorization=authorization)
+    out = {
+        "user_id": session.user.user_id,
+        "role": session.user.role.value,
+        "department": session.user.department,
+        "auth_mode": session.auth_mode,
+    }
+    if session.claims:
+        out["email"] = session.claims.email
+        out["name"] = session.claims.name
+    return out
+
+
 class IngestionResponse(BaseModel):
     job_id: str
     status: str
@@ -164,8 +187,8 @@ class IngestionJobSummary(BaseModel):
 
 class QueryRequest(BaseModel):
     question:    str           = Field(..., description="User's question")
-    role:        Optional[str] = Field(default="public", description="User role for access control")
-    user_id:     Optional[str] = Field(default="public_001", description="User identifier")
+    role:        Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
+    user_id:     Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
     department:  Optional[str] = Field(default=None, description="User department")
     thread_id:   Optional[str] = Field(default="default")
 
@@ -192,26 +215,30 @@ class QueryResponse(BaseModel):
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query(request: QueryRequest):
+async def query(
+    request: QueryRequest,
+    authorization: Optional[str] = Header(default=None),
+):
     request_id = uuid.uuid4().hex[:12]
     thread_id = request.thread_id or "default"
-    user_id = request.user_id or "public_001"
+    session = resolve_user_context(
+        authorization=authorization,
+        body_user_id=request.user_id,
+        body_role=request.role,
+        body_department=request.department,
+    )
+    context = session.user
+    user_id = context.user_id
     question_preview = (request.question or "")[:160]
     logger.info(
-        "query start request_id=%s user=%s thread=%s q=%r",
+        "query start request_id=%s user=%s auth=%s thread=%s q=%r",
         request_id,
         user_id,
+        session.auth_mode,
         thread_id,
         question_preview,
     )
     try:
-        role = validate_role(request.role or "public")
-        context = UserContext(
-            user_id=user_id,
-            role=role,
-            department=request.department,
-        )
-
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             _query_executor,
@@ -248,7 +275,7 @@ async def query(request: QueryRequest):
             total_chunks = len(result.get("sources", [])),
             agent        = result.get("agent", "unstructured"),
             strategy     = result.get("strategy", "semantic"),
-            access_level = result.get("_access_level", role.value),
+            access_level = result.get("_access_level", context.role.value),
             route_tool   = result.get("_route_tool"),
             route_method = result.get("_route_method"),
             presentation = result.get("presentation"),
@@ -276,7 +303,10 @@ async def query(request: QueryRequest):
 
 
 @app.post("/query/stream")
-async def query_stream(request: QueryRequest):
+async def query_stream(
+    request: QueryRequest,
+    authorization: Optional[str] = Header(default=None),
+):
     """
     Stream query results as NDJSON lines.
 
@@ -288,23 +318,20 @@ async def query_stream(request: QueryRequest):
 
     request_id = uuid.uuid4().hex[:12]
     thread_id = request.thread_id or "default"
-    user_id = request.user_id or "public_001"
+    session = resolve_user_context(
+        authorization=authorization,
+        body_user_id=request.user_id,
+        body_role=request.role,
+        body_department=request.department,
+    )
+    context = session.user
     logger.info(
-        "query stream start request_id=%s user=%s thread=%s",
+        "query stream start request_id=%s user=%s auth=%s thread=%s",
         request_id,
-        user_id,
+        context.user_id,
+        session.auth_mode,
         thread_id,
     )
-
-    try:
-        role = validate_role(request.role or "public")
-        context = UserContext(
-            user_id=user_id,
-            role=role,
-            department=request.department,
-        )
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
 
     def _stream():
         try:

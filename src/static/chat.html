@@ -447,6 +447,36 @@
       margin-top: 10px;
       white-space: pre-wrap;
     }
+    .auth-panel{
+      margin-bottom: 14px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .google-signin-slot{
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+    }
+    .auth-user-chip{
+      font-size: var(--font-size-sm);
+      color: var(--muted);
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-top: 8px;
+      word-break: break-all;
+    }
+    .auth-signout{
+      margin-top: 8px;
+      width: 100%;
+      font-size: var(--font-size-sm);
+    }
+    .dev-hint{
+      color: var(--muted);
+      font-weight: normal;
+      font-size: 11px;
+    }
     .pres-bar-col{
       flex: 1;
       display: flex;
@@ -644,19 +674,28 @@
         </h2>
       </div>
       <div class="content">
-        <label>Role</label>
-        <select id="role">
-          <option value="public">public</option>
-          <option value="regular_office">regular_office</option>
-          <option value="compliance_officer">compliance_officer</option>
-          <option value="admin">admin</option>
-        </select>
+        <div id="auth_panel" class="auth-panel">
+          <label>Sign in</label>
+          <div id="google_signin" class="google-signin-slot"></div>
+          <div id="auth_user_chip" class="auth-user-chip" style="display:none;"></div>
+          <button type="button" id="auth_signout" class="auth-signout" style="display:none;">Sign out</button>
+        </div>
 
-        <label>User ID</label>
-        <input id="user_id" type="text" value="public_001" />
+        <div id="dev_identity" class="dev-identity">
+          <label>Role <span class="dev-hint">(dev)</span></label>
+          <select id="role">
+            <option value="public">public</option>
+            <option value="regular_office">regular_office</option>
+            <option value="compliance_officer">compliance_officer</option>
+            <option value="admin">admin</option>
+          </select>
 
-        <label>Department</label>
-        <input id="department" type="text" placeholder="Optional" />
+          <label>User ID</label>
+          <input id="user_id" type="text" value="public_001" />
+
+          <label>Department</label>
+          <input id="department" type="text" placeholder="Optional" />
+        </div>
 
         <label class="stream-toggle">
           <input id="use_stream" type="checkbox" checked />
@@ -695,12 +734,121 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script>
     const chatBody = document.getElementById('chat_body');
     const q = document.getElementById('q');
     const sendBtn = document.getElementById('send');
     const statusBadge = document.getElementById('status');
     const errBox = document.getElementById('err');
+
+    const AUTH_TOKEN_KEY = 'rag_id_token';
+    let authConfig = { enabled: false, google_client_id: '', allow_body_fallback: true };
+
+    function getStoredToken() {
+      try { return sessionStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch (_) { return ''; }
+    }
+
+    function setStoredToken(token) {
+      try {
+        if (token) sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+        else sessionStorage.removeItem(AUTH_TOKEN_KEY);
+      } catch (_) { /* ignore */ }
+    }
+
+    function authHeaders(extra) {
+      const h = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+      const token = getStoredToken();
+      if (token) h['Authorization'] = 'Bearer ' + token;
+      return h;
+    }
+
+    function parseJwtPayload(token) {
+      try {
+        const part = token.split('.')[1];
+        return JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+      } catch (_) { return null; }
+    }
+
+    function updateAuthUI() {
+      const panel = document.getElementById('auth_panel');
+      const devBox = document.getElementById('dev_identity');
+      const chip = document.getElementById('auth_user_chip');
+      const signout = document.getElementById('auth_signout');
+      const googleSlot = document.getElementById('google_signin');
+      const token = getStoredToken();
+
+      if (!authConfig.enabled) {
+        panel.style.display = 'none';
+        devBox.style.display = 'block';
+        return;
+      }
+
+      panel.style.display = 'block';
+      devBox.style.display = authConfig.allow_body_fallback ? 'block' : 'none';
+
+      if (token) {
+        const payload = parseJwtPayload(token);
+        const email = payload && (payload.email || payload.sub);
+        chip.textContent = email ? ('Signed in: ' + email) : 'Signed in';
+        chip.style.display = 'block';
+        signout.style.display = 'block';
+        googleSlot.style.display = 'none';
+      } else {
+        chip.style.display = 'none';
+        signout.style.display = 'none';
+        googleSlot.style.display = 'flex';
+        initGoogleSignIn();
+      }
+    }
+
+    function handleGoogleCredential(response) {
+      if (response && response.credential) {
+        setStoredToken(response.credential);
+        updateAuthUI();
+        setStatus('Signed in');
+      }
+    }
+
+    function initGoogleSignIn() {
+      if (!authConfig.enabled || !authConfig.google_client_id) return;
+      if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) {
+        setTimeout(initGoogleSignIn, 400);
+        return;
+      }
+      const slot = document.getElementById('google_signin');
+      slot.innerHTML = '';
+      google.accounts.id.initialize({
+        client_id: authConfig.google_client_id,
+        callback: handleGoogleCredential,
+        auto_select: false,
+      });
+      google.accounts.id.renderButton(slot, {
+        theme: 'outline',
+        size: 'large',
+        width: 260,
+        text: 'signin_with',
+      });
+    }
+
+    async function loadAuthConfig() {
+      try {
+        const res = await fetch('/auth/config');
+        if (res.ok) authConfig = await res.json();
+      } catch (_) { /* dev without auth */ }
+      updateAuthUI();
+    }
+
+    document.getElementById('auth_signout').addEventListener('click', () => {
+      setStoredToken('');
+      if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
+        google.accounts.id.disableAutoSelect();
+      }
+      updateAuthUI();
+      setStatus('Signed out');
+    });
+
+    loadAuthConfig();
 
     let thinkingEl = null;
 
@@ -1279,6 +1427,11 @@
       if (!question) return;
       clearError();
 
+      if (authConfig.enabled && !getStoredToken() && !authConfig.allow_body_fallback) {
+        showError('Sign in with Google to continue.');
+        return;
+      }
+
       addMessage('user', question);
       q.value = '';
       setStatus('Thinking…');
@@ -1307,7 +1460,7 @@
     async function sendClassic(question, ctx) {
       const res = await fetch('/query', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           question,
           role: ctx.role,
@@ -1446,7 +1599,7 @@
     async function sendStreaming(question, ctx) {
       const res = await fetch('/query/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           question,
           role: ctx.role,
