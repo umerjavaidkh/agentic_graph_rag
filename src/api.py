@@ -26,11 +26,23 @@ from .config.settings import (
     OPENAI_API_KEY,
     PROJECT_ROOT,
     REDIS_URL,
+    RETRIEVAL_FEEDBACK_ENABLED,
+    RETRIEVAL_FEEDBACK_HINT_CACHE_SEC,
+    RETRIEVAL_FEEDBACK_MIN_MARGIN,
+    RETRIEVAL_FEEDBACK_MIN_SAMPLES,
     get_model_config,
 )
 from .ingestion.service import IngestionManager
 from .ingestion.job_store import get_job_store
 from .ingestion.queue import enqueue_ingest, list_failed_jobs, queue_depth
+from .telemetry.feedback import (
+    best_mode_for_question,
+    maybe_attach_feedback_outcome,
+    maybe_record_retrieval_feedback,
+    pattern_hash,
+    retrieval_pattern,
+)
+from .telemetry.feedback.store import get_feedback_store
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +186,7 @@ class QueryResponse(BaseModel):
     query_type:   Optional[str] = None
     follow_up:    Optional[str] = None  # set when last-turn context was used
     telemetry:    Optional[dict] = None  # {_telemetry} from router (tokens/tries)
+    request_id:   Optional[str] = None   # correlates with feedback / logs
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -220,6 +233,12 @@ async def query(request: QueryRequest):
             telemetry.get("failed_step"),
         )
 
+        maybe_record_retrieval_feedback(
+            request_id=request_id,
+            question=request.question,
+            result=result,
+        )
+
         return QueryResponse(
             answer       = result.get("answer", "No answer generated."),
             sources      = result.get("sources", []),
@@ -234,6 +253,7 @@ async def query(request: QueryRequest):
             query_type   = result.get("query_type"),
             follow_up    = result.get("_follow_up"),
             telemetry    = telemetry,
+            request_id   = request_id,
         )
     except ValueError as ve:
         logger.warning(
@@ -258,6 +278,65 @@ async def chat_clear(request: ClearThreadRequest):
     """Forget the last critical document turn for this thread (e.g. New chat)."""
     clear_turn(request.thread_id or "default")
     return {"ok": True, "thread_id": request.thread_id or "default"}
+
+
+class FeedbackOutcomeRequest(BaseModel):
+    request_id: str
+    passed: bool
+    case_id: Optional[str] = None
+
+
+@app.post("/feedback/outcome")
+async def feedback_outcome(body: FeedbackOutcomeRequest):
+    """
+    Attach pass/fail to a prior query (eval runner, user thumbs).
+
+    Requires RETRIEVAL_FEEDBACK_ENABLED=true on the server.
+    """
+    if not RETRIEVAL_FEEDBACK_ENABLED:
+        raise HTTPException(status_code=404, detail="Retrieval feedback is disabled.")
+    maybe_attach_feedback_outcome(
+        body.request_id,
+        passed=body.passed,
+        case_id=body.case_id,
+    )
+    return {"status": "accepted", "request_id": body.request_id}
+
+
+@app.get("/feedback/stats")
+async def feedback_stats(question: str, agent: Optional[str] = None):
+    """
+    Read aggregated mode stats for a question pattern (ops / dashboards).
+
+    Does not change retrieval behavior.
+    """
+    if not RETRIEVAL_FEEDBACK_ENABLED:
+        raise HTTPException(status_code=404, detail="Retrieval feedback is disabled.")
+    pattern = retrieval_pattern(question, agent=agent or "")
+    p_hash = pattern_hash(pattern)
+    stats = get_feedback_store().aggregate_stats(p_hash)
+    hint = best_mode_for_question(
+        question,
+        agent=agent or "",
+        min_samples=RETRIEVAL_FEEDBACK_MIN_SAMPLES,
+        min_margin=RETRIEVAL_FEEDBACK_MIN_MARGIN,
+        cache_sec=RETRIEVAL_FEEDBACK_HINT_CACHE_SEC,
+    )
+    return {
+        "pattern": pattern,
+        "pattern_hash": p_hash,
+        "by_mode": stats,
+        "hint": (
+            {
+                "mode": hint.mode,
+                "pass_rate": hint.pass_rate,
+                "samples": hint.samples,
+                "confidence": hint.confidence,
+            }
+            if hint
+            else None
+        ),
+    }
 
 
 @app.post("/ingest/unstructured", response_model=IngestionResponse)

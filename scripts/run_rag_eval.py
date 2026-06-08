@@ -67,6 +67,26 @@ def post_query(
         return json.loads(resp.read().decode("utf-8"))
 
 
+def post_feedback_outcome(
+    base_url: str,
+    request_id: str,
+    *,
+    passed: bool,
+    case_id: str,
+    timeout: float = 30.0,
+) -> None:
+    payload = {"request_id": request_id, "passed": passed, "case_id": case_id}
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url.rstrip('/')}/feedback/outcome",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        resp.read()
+
+
 def run_case(
     base_url: str,
     suite_meta: dict[str, Any],
@@ -74,6 +94,7 @@ def run_case(
     *,
     timeout: float,
     dry_run: bool,
+    attach_feedback: bool,
 ) -> dict[str, Any]:
     user_id = case.get("user_id") or suite_meta.get("default_user_id", "public_001")
     role = case.get("role") or suite_meta.get("default_role", "public")
@@ -107,6 +128,7 @@ def run_case(
             {
                 "status": "pass" if validation.passed else "fail",
                 "elapsed_s": round(elapsed, 2),
+                "request_id": response.get("request_id"),
                 "route_tool": response.get("route_tool"),
                 "agent": response.get("agent"),
                 "total_chunks": response.get("total_chunks"),
@@ -115,6 +137,16 @@ def run_case(
                 "failures": validation.failures,
             }
         )
+        if attach_feedback and response.get("request_id"):
+            try:
+                post_feedback_outcome(
+                    base_url,
+                    response["request_id"],
+                    passed=validation.passed,
+                    case_id=case["id"],
+                )
+            except Exception as exc:
+                record["feedback_attach_error"] = str(exc)[:200]
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")[:500]
         record.update({"status": "error", "error": f"HTTP {e.code}: {body}"})
@@ -186,6 +218,11 @@ def main() -> int:
     )
     parser.add_argument("--output", help="Write JSON report to this path")
     parser.add_argument("--dry-run", action="store_true", help="List cases without calling API")
+    parser.add_argument(
+        "--attach-feedback",
+        action="store_true",
+        help="POST pass/fail to /feedback/outcome (requires RETRIEVAL_FEEDBACK_ENABLED on server)",
+    )
     args = parser.parse_args()
 
     pairs = collect_cases(args.suite, args.id)
@@ -195,7 +232,14 @@ def main() -> int:
 
     print(f"Running {len(pairs)} case(s) against {args.base_url} (suite={args.suite})")
     results = [
-        run_case(args.base_url, meta, case, timeout=args.timeout, dry_run=args.dry_run)
+        run_case(
+            args.base_url,
+            meta,
+            case,
+            timeout=args.timeout,
+            dry_run=args.dry_run,
+            attach_feedback=args.attach_feedback,
+        )
         for meta, case in pairs
     ]
 

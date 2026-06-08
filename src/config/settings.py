@@ -182,6 +182,45 @@ ROUTE_MAX_TOKENS_CAP = llm_max_tokens("ROUTE_MAX_TOKENS_CAP", 1024, minimum=128)
 # Fixed override; when set (digits only), skips length-based estimate.
 ROUTE_MAX_TOKENS = (os.environ.get("ROUTE_MAX_TOKENS") or "").strip()
 
+# ── Retrieval feedback (observe-only by default) ───────────────────────────
+# Persists existing pipeline telemetry after /query — no retrieval behavior change.
+RETRIEVAL_FEEDBACK_ENABLED = os.environ.get("RETRIEVAL_FEEDBACK_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+# When true, read-side hints may suggest a mode (caller must opt in to act on them).
+RETRIEVAL_FEEDBACK_ROUTING = os.environ.get("RETRIEVAL_FEEDBACK_ROUTING", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+RETRIEVAL_FEEDBACK_STORE_QUESTION = os.environ.get(
+    "RETRIEVAL_FEEDBACK_STORE_QUESTION", "false"
+).lower() in ("1", "true", "yes")
+RETRIEVAL_FEEDBACK_DIR = os.environ.get(
+    "RETRIEVAL_FEEDBACK_DIR",
+    str(PROJECT_ROOT / "data" / "feedback"),
+)
+RETRIEVAL_FEEDBACK_JSONL_RETAIN_DAYS = int(
+    os.environ.get("RETRIEVAL_FEEDBACK_JSONL_RETAIN_DAYS", "30")
+)
+RETRIEVAL_FEEDBACK_REDIS_STREAM = os.environ.get(
+    "RETRIEVAL_FEEDBACK_REDIS_STREAM", "rag:feedback:events"
+)
+RETRIEVAL_FEEDBACK_STREAM_MAXLEN = int(
+    os.environ.get("RETRIEVAL_FEEDBACK_STREAM_MAXLEN", "100000")
+)
+RETRIEVAL_FEEDBACK_REQ_TTL_SEC = int(
+    os.environ.get("RETRIEVAL_FEEDBACK_REQ_TTL_SEC", str(7 * 24 * 3600))
+)
+RETRIEVAL_FEEDBACK_AGG_TTL_DAYS = int(os.environ.get("RETRIEVAL_FEEDBACK_AGG_TTL_DAYS", "90"))
+RETRIEVAL_FEEDBACK_MIN_SAMPLES = int(os.environ.get("RETRIEVAL_FEEDBACK_MIN_SAMPLES", "30"))
+RETRIEVAL_FEEDBACK_MIN_MARGIN = float(os.environ.get("RETRIEVAL_FEEDBACK_MIN_MARGIN", "0.15"))
+RETRIEVAL_FEEDBACK_HINT_CACHE_SEC = int(
+    os.environ.get("RETRIEVAL_FEEDBACK_HINT_CACHE_SEC", "60")
+)
+
 
 def estimate_route_max_tokens(question: str) -> int:
     """Budget for MCP tool routing: base + room to echo question in tool arguments."""
