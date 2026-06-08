@@ -9,6 +9,7 @@ venv/
 
 # Output and generated data
 data/assets/
+data/feedback/
 output/
 output_v2/
 output_v3/
