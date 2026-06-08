@@ -20,6 +20,7 @@ from .config.settings import (
     estimate_route_max_tokens,
 )
 from .model_providers.factory import get_model_provider
+from .telemetry import get_telemetry, pipeline_step
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +210,8 @@ def run_via_mcp_tool(
 ) -> dict:
     """Execute the chosen MCP tool handler."""
     fn = handlers.get(tool_name) or handlers["search_documents"]
-    result = fn(question, user_context=user_context, thread_id=thread_id)
+    with pipeline_step("agent.invoke", tool=tool_name):
+        result = fn(question, user_context=user_context, thread_id=thread_id)
     route_method = "fast" if _fast_route_tool(question) else "llm_mcp"
 
     if tool_name == "query_data" and _result_has_structured_access_denied(result):
@@ -221,13 +223,17 @@ def run_via_mcp_tool(
             route_method = "structured_access_denied"
         else:
             logger.info("Routing fallback: query_data access denied → search_documents")
-            doc_fn = handlers.get("search_documents") or fn
-            result = doc_fn(question, user_context=user_context, thread_id=thread_id)
+            with pipeline_step("agent.fallback", from_tool="query_data", to_tool="search_documents"):
+                doc_fn = handlers.get("search_documents") or fn
+                result = doc_fn(question, user_context=user_context, thread_id=thread_id)
             tool_name = "search_documents"
             route_method = "fallback_structured_denied"
 
     result["_route_tool"] = tool_name
     result["_route_method"] = route_method
+    tel = get_telemetry()
+    if tel is not None:
+        tel.set_route(tool_name, route_method, agent=result.get("agent"), strategy=result.get("strategy"))
     return result
 
 

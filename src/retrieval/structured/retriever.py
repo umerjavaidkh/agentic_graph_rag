@@ -18,6 +18,7 @@ from ...config.settings import (
     STRUCTURED_ALWAYS_MULTISTEP_PLAN,
 )
 from ...graph.driver import get_neo4j_driver
+from ...telemetry import pipeline_step
 from .cypher.generator import OpenAICypherGenerator
 from .cypher.pipeline import Text2CypherPipeline
 from .formatting.chunks import format_response
@@ -69,19 +70,26 @@ class StructuredRetriever:
         user_context: Optional[UserContext] = None,
     ) -> dict:
         ctx = user_context or self.user_context
-        clarification = needs_clarification(query)
-        if clarification:
-            return clarification
+        with pipeline_step("structured.retrieve", limit=limit):
+            clarification = needs_clarification(query)
+            if clarification:
+                return clarification
 
-        schema = self._schema.fetch()
-        if STRUCTURED_ALWAYS_MULTISTEP_PLAN or likely_needs_multistep_plan(query):
-            plan = self._planner.plan(query, schema)
-            if plan and plan.needs_multistep and plan.steps:
-                chunks = self._multistep.execute(plan, user_context=ctx, query=query)
-                return format_response(query, chunks, strategy="multistep")
+            schema = self._schema.fetch()
+            if STRUCTURED_ALWAYS_MULTISTEP_PLAN or likely_needs_multistep_plan(query):
+                with pipeline_step("structured.multistep.plan"):
+                    plan = self._planner.plan(query, schema)
+                if plan and plan.needs_multistep and plan.steps:
+                    with pipeline_step(
+                        "structured.multistep.execute",
+                        steps=len(plan.steps),
+                    ):
+                        chunks = self._multistep.execute(plan, user_context=ctx, query=query)
+                    return format_response(query, chunks, strategy="multistep")
 
-        chunks = self._text2cypher_pipeline.run(query, limit, user_context=ctx)
-        return format_response(query, chunks, strategy="text2cypher")
+            with pipeline_step("structured.text2cypher"):
+                chunks = self._text2cypher_pipeline.run(query, limit, user_context=ctx)
+            return format_response(query, chunks, strategy="text2cypher")
 
     def get_schema(self) -> dict:
         schema = self._schema.fetch()

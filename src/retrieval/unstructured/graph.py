@@ -24,6 +24,7 @@ from ...config.settings import (
     RETRIEVAL_FINAL_LIMIT,
 )
 from ...model_providers.factory import get_model_provider
+from ...telemetry import pipeline_step
 from .state import ESGState
 
 retriever = DocumentRAGRetriever()
@@ -80,11 +81,12 @@ def retrieve_node(state: ESGState):
     user_context = state.get("user_context")
 
     limit = max(RETRIEVAL_FINAL_LIMIT, 12) if is_synthesis_question(question) else RETRIEVAL_FINAL_LIMIT
-    context = retriever.hybrid_retrieve(
-        query=question,
-        limit=limit,
-        user_context=user_context,
-    )
+    with pipeline_step("document.graph.retrieve", limit=limit):
+        context = retriever.hybrid_retrieve(
+            query=question,
+            limit=limit,
+            user_context=user_context,
+        )
     strategy = context.get("strategy", "graph_rag")
     return {
         "retrieved_context": context,
@@ -99,6 +101,15 @@ def generate_node(state: ESGState):
     retrieved = state.get("retrieved_context", {}) or {}
     chunks = retrieved.get("chunks", []) or []
 
+    with pipeline_step(
+        "document.graph.generate",
+        mode=retrieved.get("mode"),
+        chunks=len(chunks),
+    ):
+        return _generate_document_answer(question, retrieved, chunks)
+
+
+def _generate_document_answer(question: str, retrieved: dict, chunks: list) -> dict:
     # Guard against true structured questions being sent to the document agent.
     # Do NOT trigger this for document questions that happen to contain words like "data"
     # (e.g. report sections that mention a product name containing "data").
@@ -142,37 +153,37 @@ def generate_node(state: ESGState):
         context_lines.append(f"[Chunk {i}] {title}{rel_note}\n{text}")
     context_text = "\n\n".join(context_lines)
 
-    if is_toc_question(state["question"]):
+    if is_toc_question(question):
         prompt_name = "document_toc"
-    elif is_visual_page_question(state["question"]):
+    elif is_visual_page_question(question):
         prompt_name = "document_visual"
-    elif is_page_question(state["question"]):
+    elif is_page_question(question):
         prompt_name = "document_page"
-    elif is_synthesis_question(state["question"]):
+    elif is_synthesis_question(question):
         prompt_name = "document_synthesis"
     else:
         prompt_name = "document_default"
-    system_prompt = load_prompt(prompt_name, context=context_text, question=state["question"])
+    system_prompt = load_prompt(prompt_name, context=context_text, question=question)
     response = provider.chat_completion(
         model=CHAT_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": str(state["question"])},
+            {"role": "user", "content": str(question)},
         ],
         temperature=0.1,
         max_tokens=(
             DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS
             if (
-                is_toc_question(state["question"])
-                or is_page_question(state["question"])
-                or is_visual_page_question(state["question"])
+                is_toc_question(question)
+                or is_page_question(question)
+                or is_visual_page_question(question)
             )
             else DOCUMENT_SYNTHESIS_MAX_TOKENS
         ),
     )
     return {
         "answer": _fix_misrouted_structured_answer(
-            response.choices[0].message.content.strip(), state["question"]
+            response.choices[0].message.content.strip(), question
         ),
         "low_confidence": False,
     }

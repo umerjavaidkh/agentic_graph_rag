@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
@@ -12,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from .bridge import ask
 from .conversation import clear_turn
+from .logging_config import setup_logging
 from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
 from .config.settings import (
@@ -28,6 +31,8 @@ from .config.settings import (
 from .ingestion.service import IngestionManager
 from .ingestion.job_store import get_job_store
 from .ingestion.queue import enqueue_ingest, list_failed_jobs, queue_depth
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Agentic Graph RAG API")
 
@@ -65,6 +70,8 @@ async def _ensure_rbac_schema_initialized():
 
     This is idempotent (Cypher uses MERGE/IF NOT EXISTS) and safe to run on each boot.
     """
+    setup_logging()
+    logger.info("Agentic Graph RAG API starting")
     rbac = GraphRBAC(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     try:
         if not rbac.is_initialized():
@@ -171,10 +178,21 @@ class QueryResponse(BaseModel):
 
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
+    request_id = uuid.uuid4().hex[:12]
+    thread_id = request.thread_id or "default"
+    user_id = request.user_id or "public_001"
+    question_preview = (request.question or "")[:160]
+    logger.info(
+        "query start request_id=%s user=%s thread=%s q=%r",
+        request_id,
+        user_id,
+        thread_id,
+        question_preview,
+    )
     try:
         role = validate_role(request.role or "public")
         context = UserContext(
-            user_id=request.user_id or "public_001",
+            user_id=user_id,
             role=role,
             department=request.department,
         )
@@ -185,8 +203,21 @@ async def query(request: QueryRequest):
             lambda: ask(
                 request.question,
                 user_context=context,
-                thread_id=request.thread_id or "default",
+                thread_id=thread_id,
+                request_id=request_id,
             ),
+        )
+
+        telemetry = result.get("_telemetry") or {}
+        totals = telemetry.get("totals") or {}
+        route = telemetry.get("route") or {}
+        logger.info(
+            "query ok request_id=%s agent=%s route=%s tokens=%s failed_step=%s",
+            request_id,
+            result.get("agent"),
+            route.get("tool"),
+            totals.get("total_tokens"),
+            telemetry.get("failed_step"),
         )
 
         return QueryResponse(
@@ -202,12 +233,24 @@ async def query(request: QueryRequest):
             presentation = result.get("presentation"),
             query_type   = result.get("query_type"),
             follow_up    = result.get("_follow_up"),
-            telemetry    = result.get("_telemetry"),
+            telemetry    = telemetry,
         )
     except ValueError as ve:
+        logger.warning(
+            "query validation error request_id=%s: %s",
+            request_id,
+            ve,
+            exc_info=True,
+        )
         raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("query failed request_id=%s", request_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error (request_id={request_id}). Check server logs.",
+        )
 
 
 @app.post("/chat/clear")
