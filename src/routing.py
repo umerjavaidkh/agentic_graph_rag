@@ -93,14 +93,84 @@ _DATA_ROUTE = re.compile(
     r"cypher|neo4j|how\s+many\s+(?:orders?|products?|customers?|suppliers?|units?)|"
     r"count\s+of\s+(?:orders?|products?|customers?|suppliers?)|"
     r"belong\s+to\s+(?:the\s+)?\w+\s+categor|aggregate|schema|monthly|timeline|trend|"
-    r"volume|chronological)\b",
+    r"volume|chronological|"
+    r"structured\s+(?:data|graph|query)|graph\s+(?:data|query|analytics)|"
+    r"analytics|metrics?|tabular|database\s+query|query\s+(?:the\s+)?(?:graph|database))\b",
     re.I,
 )
 
 
 def is_structured_data_question(question: str) -> bool:
-    """Northwind-style business graph (products, orders, …) — not PDF documents."""
+    """Likely a structured graph / analytics query — not ingested PDF documents."""
     return bool(_DATA_ROUTE.search(question or ""))
+
+
+def is_misrouted_structured_question(question: str) -> bool:
+    """Document agent was chosen but the question looks like structured graph analytics."""
+    return is_structured_data_question(question) and not has_document_cue(question)
+
+
+def structured_misroute_message(user_id: str = "unknown") -> str:
+    """User-facing hint when document routing cannot serve a structured-graph question."""
+    return (
+        "This question looks like a structured graph or analytics query, not a document search. "
+        f"Your account ({user_id}) does not have permission to query the structured graph. "
+        "Use a role with structured access, or rephrase as a document question (PDF, section, policy)."
+    )
+
+
+def user_can_query_structured(user_context: Optional[UserContext]) -> bool:
+    if not user_context:
+        return False
+    from .router import _rbac_check
+
+    return _rbac_check().can_query_knowledge_area(user_context.user_id, "structured")
+
+
+def run_structured_autofix(question: str, user_context: Optional[UserContext]) -> Optional[dict]:
+    """
+    When routing sent a structured-graph question to the document agent, re-run on structured.
+
+    Schema-agnostic: works for any Neo4j graph the structured retriever can query.
+    Returns structured agent state dict, or None if not applicable / no access.
+    """
+    if not is_misrouted_structured_question(question):
+        return None
+    if not user_can_query_structured(user_context):
+        return None
+    from .retrieval.structured.graph import structured_agent
+
+    state: dict[str, Any] = {"question": question}
+    if user_context is not None:
+        state["user_context"] = user_context
+    return structured_agent.invoke(state)
+
+
+def document_agent_structured_guard(
+    question: str,
+    user_context: Optional[UserContext],
+) -> Optional[dict]:
+    """
+    Handle structured-shaped questions that reached the document pipeline.
+
+    Auto-routes to structured when RBAC allows; otherwise returns a generic message dict.
+    """
+    if not is_misrouted_structured_question(question):
+        return None
+    fixed = run_structured_autofix(question, user_context)
+    if fixed is not None:
+        return {
+            "answer": (fixed.get("answer") or "").strip(),
+            "low_confidence": bool(fixed.get("low_confidence")),
+            "sources": fixed.get("sources") or [],
+            "strategy": fixed.get("strategy"),
+            "_autofix_agent": "structured",
+        }
+    uid = user_context.user_id if user_context else "unknown"
+    return {
+        "answer": structured_misroute_message(uid),
+        "low_confidence": False,
+    }
 
 
 def has_document_cue(question: str) -> bool:
@@ -243,12 +313,12 @@ def make_structured_access_denied_result(
     *,
     routed_tool: str = "query_data",
 ) -> dict:
-    """Clear response when the user lacks RBAC for the business database."""
+    """Clear response when the user lacks RBAC for the structured graph."""
     uid = user_context.user_id if user_context else "unknown"
     answer = (
-        "This question requires the business database (products, orders, customers, suppliers). "
+        "This question requires the structured knowledge graph (analytics, entities, relationships). "
         f"Your account ({uid}) does not have permission to query that data. "
-        "Use a user with structured access, for example: regular_001, compliance_001, or admin_001."
+        "Use a role with structured graph access."
     )
     return {
         "answer": answer,

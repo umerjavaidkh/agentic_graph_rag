@@ -8,7 +8,7 @@ from langgraph.graph import END, StateGraph
 
 import re
 
-from ...routing import has_document_cue, is_structured_data_question
+from ...routing import document_agent_structured_guard, has_document_cue
 from .retriever import (
     DocumentRAGRetriever,
     is_page_question,
@@ -106,22 +106,22 @@ def generate_node(state: ESGState):
         mode=retrieved.get("mode"),
         chunks=len(chunks),
     ):
-        return _generate_document_answer(question, retrieved, chunks)
+        return _generate_document_answer(
+            question, retrieved, chunks, user_context=state.get("user_context")
+        )
 
 
-def _generate_document_answer(question: str, retrieved: dict, chunks: list) -> dict:
-    # Guard against true structured questions being sent to the document agent.
-    # Do NOT trigger this for document questions that happen to contain words like "data"
-    # (e.g. report sections that mention a product name containing "data").
-    if is_structured_data_question(question) and not has_document_cue(question):
-        return {
-            "answer": (
-                "This question is about the business database (products, orders, customers), "
-                "not ingested PDF documents. Re-run with structured access (e.g. regular_001 or "
-                "compliance_001) so the system can query product and category data."
-            ),
-            "low_confidence": False,
-        }
+def _generate_document_answer(
+    question: str,
+    retrieved: dict,
+    chunks: list,
+    *,
+    user_context=None,
+) -> dict:
+    # Misroute guard: structured-graph question sent to document agent → autofix or generic hint.
+    guard = document_agent_structured_guard(question, user_context)
+    if guard is not None:
+        return guard
 
     if not chunks:
         return {

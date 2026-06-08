@@ -24,7 +24,8 @@ from ..retrieval.unstructured.retriever import (
     is_toc_question,
     is_visual_page_question,
 )
-from ..routing import has_document_cue, is_structured_data_question
+from ..routing import document_agent_structured_guard
+from .structured import iter_structured_stream
 from .events import stream_event
 
 
@@ -84,6 +85,24 @@ def iter_document_stream(
     if prior_context:
         state["prior_context"] = prior_context
 
+    if guard := document_agent_structured_guard(question, user_context):
+        if guard.get("_autofix_agent") == "structured":
+            yield stream_event(type="status", phase="reroute", agent="structured", reason="misroute_autofix")
+            yield from iter_structured_stream(
+                question,
+                user_context=user_context,
+                resolved_question=resolved_question,
+            )
+            return
+        yield stream_event(
+            type="done",
+            agent="unstructured",
+            answer=guard.get("answer", ""),
+            sources=[],
+            strategy="graph_rag",
+        )
+        return
+
     yield stream_event(type="status", phase="retrieval", agent="unstructured")
     partial = retrieve_node(state)
     retrieved = partial.get("retrieved_context") or {}
@@ -98,15 +117,6 @@ def iter_document_stream(
         mode=retrieved.get("mode"),
         chunks=len(chunks),
     )
-
-    if is_structured_data_question(question) and not has_document_cue(question):
-        answer = (
-            "This question is about the business database (products, orders, customers), "
-            "not ingested PDF documents. Re-run with structured access (e.g. regular_001 or "
-            "compliance_001) so the system can query product and category data."
-        )
-        yield stream_event(type="done", agent="unstructured", answer=answer, sources=[], strategy=query_type)
-        return
 
     if not chunks:
         answer = "I could not find relevant information in the ingested documents."
