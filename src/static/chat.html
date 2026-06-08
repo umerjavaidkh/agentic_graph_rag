@@ -435,6 +435,18 @@
       background: rgba(0,0,0,0.2);
       overflow: hidden;
     }
+    .stream-toggle{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      margin-top: 8px;
+      cursor: pointer;
+    }
+    .stream-markdown{
+      margin-top: 10px;
+      white-space: pre-wrap;
+    }
     .pres-bar-col{
       flex: 1;
       display: flex;
@@ -645,6 +657,11 @@
 
         <label>Department</label>
         <input id="department" type="text" placeholder="Optional" />
+
+        <label class="stream-toggle">
+          <input id="use_stream" type="checkbox" checked />
+          Stream responses (NDJSON)
+        </label>
 
         <div class="btn-row">
           <button id="new_chat">New chat</button>
@@ -1269,36 +1286,14 @@
       showThinking();
 
       const ctx = getCtx();
+      const useStream = document.getElementById('use_stream').checked;
+
       try {
-        const res = await fetch('/query', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            question,
-            role: ctx.role,
-            user_id: ctx.user_id,
-            department: ctx.department,
-            thread_id: ctx.thread_id
-          })
-        });
-
-        const payloadText = await res.text();
-        if (!res.ok) throw new Error(payloadText || 'Request failed');
-        const payload = JSON.parse(payloadText);
-
-        addAssistantResponse(
-          payload.answer,
-          payload.sources,
-          payload.access_level,
-          payload.agent,
-          payload.strategy,
-          payload.route_tool,
-          payload.route_method,
-          payload.presentation,
-          payload.query_type,
-          payload.follow_up,
-          payload.telemetry
-        );
+        if (useStream) {
+          await sendStreaming(question, ctx);
+        } else {
+          await sendClassic(question, ctx);
+        }
         setStatus('Ready');
       } catch (e) {
         removeThinking();
@@ -1306,6 +1301,228 @@
         setStatus('Error');
       } finally {
         sendBtn.disabled = false;
+      }
+    }
+
+    async function sendClassic(question, ctx) {
+      const res = await fetch('/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          role: ctx.role,
+          user_id: ctx.user_id,
+          department: ctx.department,
+          thread_id: ctx.thread_id
+        })
+      });
+
+      const payloadText = await res.text();
+      if (!res.ok) throw new Error(payloadText || 'Request failed');
+      const payload = JSON.parse(payloadText);
+
+      addAssistantResponse(
+        payload.answer,
+        payload.sources,
+        payload.access_level,
+        payload.agent,
+        payload.strategy,
+        payload.route_tool,
+        payload.route_method,
+        payload.presentation,
+        payload.query_type,
+        payload.follow_up,
+        payload.telemetry
+      );
+    }
+
+    function createStreamingAssistantShell() {
+      removeThinking();
+      const wrap = document.createElement('div');
+      wrap.className = 'msg assistant';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'msg-avatar';
+      avatar.textContent = 'AI';
+
+      const inner = document.createElement('div');
+      inner.className = 'msg-inner';
+
+      const label = document.createElement('div');
+      label.className = 'msg-label';
+      label.textContent = 'Assistant';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble plain-text';
+      bubble.textContent = '';
+
+      inner.appendChild(label);
+      inner.appendChild(bubble);
+      wrap.appendChild(avatar);
+      wrap.appendChild(inner);
+      chatBody.appendChild(wrap);
+      scrollToBottom();
+
+      return { wrap, inner, bubble, text: '', mdEl: null, hasPresentation: false };
+    }
+
+    function appendStreamToken(state, delta) {
+      if (!delta) return;
+      state.text += delta;
+      if (state.hasPresentation) {
+        if (!state.mdEl) {
+          state.mdEl = document.createElement('div');
+          state.mdEl.className = 'pres-block stream-markdown pres-md';
+          state.bubble.appendChild(state.mdEl);
+        }
+        state.bubble.classList.remove('plain-text');
+        renderMarkdownSimple(state.mdEl, state.text);
+      } else {
+        state.bubble.textContent = state.text;
+      }
+      scrollToBottom();
+    }
+
+    function finalizeStreamingAssistant(state, event) {
+      const answer = event.answer || state.text || '';
+      const presentation = event.presentation;
+      const sources = event.sources || [];
+      const telemetry = event.telemetry || null;
+
+      if (presentation && presentation.blocks && presentation.blocks.length) {
+        renderPresentation(state.bubble, presentation, answer);
+        if (!state.bubble.textContent.trim() && !state.bubble.querySelector('.pres-md, .pres-block, img')) {
+          state.bubble.classList.add('plain-text');
+          state.bubble.textContent = answer || '(no answer)';
+        }
+      } else if (!state.text && answer) {
+        state.bubble.classList.add('plain-text');
+        state.bubble.textContent = answer;
+      }
+
+      const metaRow = buildMetaChips(
+        event.access_level,
+        event.agent,
+        event.strategy,
+        event.route_tool,
+        event.query_type,
+        presentation && presentation.kind,
+        event.follow_up
+      );
+      const telChip = formatTelemetryChip(telemetry);
+      if (telChip) {
+        const span = document.createElement('span');
+        span.className = 'meta-chip telemetry-chip';
+        span.textContent = telChip;
+        span.title = formatPipelineSummary(telemetry) || telChip;
+        metaRow.appendChild(span);
+      }
+      state.inner.appendChild(metaRow);
+
+      if (sources && sources.length) {
+        const details = document.createElement('details');
+        details.className = 'sources-panel';
+        const summary = document.createElement('summary');
+        summary.textContent = `View sources (${sources.length})`;
+        details.appendChild(summary);
+        sources.slice(0, 10).forEach(s => {
+          const pre = document.createElement('div');
+          pre.className = 'source';
+          pre.textContent = JSON.stringify(s, null, 2);
+          details.appendChild(pre);
+        });
+        if (sources.length > 10) {
+          const more = document.createElement('div');
+          more.className = 'source';
+          more.textContent = `… ${sources.length - 10} more sources not shown`;
+          details.appendChild(more);
+        }
+        state.inner.appendChild(details);
+      }
+
+      scrollToBottom();
+    }
+
+    async function sendStreaming(question, ctx) {
+      const res = await fetch('/query/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          role: ctx.role,
+          user_id: ctx.user_id,
+          department: ctx.department,
+          thread_id: ctx.thread_id
+        })
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || 'Stream request failed');
+      }
+
+      let state = null;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let event;
+          try {
+            event = JSON.parse(line);
+          } catch (err) {
+            console.warn('Bad stream line', line, err);
+            continue;
+          }
+
+          if (event.type === 'error') {
+            throw new Error(event.message || 'Stream error');
+          }
+
+          if (event.type === 'status') {
+            if (!state) state = createStreamingAssistantShell();
+            const phase = event.phase || 'working';
+            setStatus(phase === 'synthesis' ? 'Writing…' : phase === 'retrieval' ? 'Retrieving…' : 'Thinking…');
+            continue;
+          }
+
+          if (event.type === 'presentation' && event.partial && event.blocks) {
+            if (!state) state = createStreamingAssistantShell();
+            state.hasPresentation = true;
+            state.bubble.classList.remove('plain-text');
+            state.bubble.textContent = '';
+            renderPresentation(state.bubble, { kind: 'mixed', blocks: event.blocks }, '');
+            setStatus('Writing…');
+            continue;
+          }
+
+          if (event.type === 'token') {
+            if (!state) state = createStreamingAssistantShell();
+            appendStreamToken(state, event.delta || '');
+            continue;
+          }
+
+          if (event.type === 'done') {
+            if (!state) state = createStreamingAssistantShell();
+            finalizeStreamingAssistant(state, event);
+            continue;
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        try {
+          const event = JSON.parse(buffer);
+          if (event.type === 'done' && state) finalizeStreamingAssistant(state, event);
+        } catch (_) { /* ignore trailing partial */ }
       }
     }
 
