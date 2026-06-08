@@ -97,6 +97,10 @@ STRUCTURED_FAST_ANSWER = os.environ.get("STRUCTURED_FAST_ANSWER", "false").lower
 STRUCTURED_ALWAYS_MULTISTEP_PLAN = os.environ.get(
     "STRUCTURED_ALWAYS_MULTISTEP_PLAN", "false"
 ).lower() in ("1", "true", "yes")
+# When single-shot Text-to-Cypher returns no rows, try the multistep planner once.
+STRUCTURED_EMPTY_MULTISTEP_FALLBACK = os.environ.get(
+    "STRUCTURED_EMPTY_MULTISTEP_FALLBACK", "true"
+).lower() in ("1", "true", "yes")
 # Skip routing LLM when question clearly targets documents vs graph data.
 FAST_ROUTE_QUERIES = os.environ.get("FAST_ROUTE_QUERIES", "true").lower() in ("1", "true", "yes")
 
