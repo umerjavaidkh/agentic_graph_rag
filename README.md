@@ -261,6 +261,10 @@ Requires `RETRIEVAL_FEEDBACK_ENABLED=true` in `.env` (and `docker compose up -d 
 | **Recent events** | Last queries: `request_id`, mode, route, outcome, whether `feedback.routing` ran |
 | **Question probe** | Type any question to inspect pattern stats via `/feedback/stats` |
 
+### Chat thumbs (👍 / 👎)
+
+When `RETRIEVAL_FEEDBACK_ENABLED=true`, each assistant reply in `/chat` shows **Helpful?** buttons. A click posts to `POST /feedback/outcome` with that message’s `request_id` (same path as eval labeling). Votes appear on the dashboard after refresh.
+
 ### Typical workflow
 
 1. Enable feedback in `.env`:
