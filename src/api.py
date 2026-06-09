@@ -16,7 +16,7 @@ from .bridge import ask
 from .conversation import clear_turn
 from .logging_config import setup_logging
 from .auth.rbac_setup import GraphRBAC
-from .auth.oidc import auth_public_config, require_admin_session, resolve_user_context
+from .auth.oidc import auth_public_config, require_admin_session, resolve_scoped_thread_id, resolve_user_context
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
@@ -37,14 +37,15 @@ from .streaming import iter_query_stream
 from .ingestion.service import IngestionManager
 from .ingestion.job_store import get_job_store
 from .ingestion.queue import enqueue_ingest, list_failed_jobs, queue_depth
-from .telemetry.feedback import (
+from .feedback_loop import (
     best_mode_for_question,
+    build_dashboard_overview,
+    get_feedback_store,
     maybe_attach_feedback_outcome,
     maybe_record_retrieval_feedback,
     pattern_hash,
     retrieval_pattern,
 )
-from .telemetry.feedback.store import get_feedback_store
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,13 @@ async def chat_page():
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
+@app.get("/feedback", response_class=HTMLResponse)
+async def feedback_dashboard_page():
+    """Ops dashboard: feedback store, hints, and routing apply status."""
+    html_path = Path(__file__).resolve().parent / "static" / "feedback.html"
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
 @app.get("/auth/config")
 async def auth_config():
     """Public OIDC settings for the chat UI (no secrets)."""
@@ -194,6 +202,8 @@ class QueryRequest(BaseModel):
 
 class ClearThreadRequest(BaseModel):
     thread_id: Optional[str] = Field(default="default")
+    user_id: Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
+    role: Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
 
 
 class QueryResponse(BaseModel):
@@ -219,13 +229,13 @@ async def query(
     authorization: Optional[str] = Header(default=None),
 ):
     request_id = uuid.uuid4().hex[:12]
-    thread_id = request.thread_id or "default"
     session = resolve_user_context(
         authorization=authorization,
         body_user_id=request.user_id,
         body_role=request.role,
         body_department=request.department,
     )
+    thread_id = resolve_scoped_thread_id(session, request.thread_id)
     context = session.user
     user_id = context.user_id
     question_preview = (request.question or "")[:160]
@@ -316,13 +326,13 @@ async def query_stream(
         raise HTTPException(status_code=404, detail="Query streaming is disabled.")
 
     request_id = uuid.uuid4().hex[:12]
-    thread_id = request.thread_id or "default"
     session = resolve_user_context(
         authorization=authorization,
         body_user_id=request.user_id,
         body_role=request.role,
         body_department=request.department,
     )
+    thread_id = resolve_scoped_thread_id(session, request.thread_id)
     context = session.user
     logger.info(
         "query stream start request_id=%s user=%s auth=%s thread=%s",
@@ -354,10 +364,19 @@ async def query_stream(
 
 
 @app.post("/chat/clear")
-async def chat_clear(request: ClearThreadRequest):
-    """Forget the last critical document turn for this thread (e.g. New chat)."""
-    clear_turn(request.thread_id or "default")
-    return {"ok": True, "thread_id": request.thread_id or "default"}
+async def chat_clear(
+    request: ClearThreadRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Forget the last critical document turn for this user's thread (e.g. New chat)."""
+    session = resolve_user_context(
+        authorization=authorization,
+        body_user_id=request.user_id,
+        body_role=request.role,
+    )
+    thread_id = resolve_scoped_thread_id(session, request.thread_id)
+    clear_turn(thread_id)
+    return {"ok": True, "thread_id": thread_id}
 
 
 class FeedbackOutcomeRequest(BaseModel):
@@ -417,6 +436,24 @@ async def feedback_stats(question: str, agent: Optional[str] = None):
             else None
         ),
     }
+
+
+@app.get("/feedback/dashboard")
+async def feedback_dashboard(
+    recent_limit: int = 50,
+    pattern_limit: int = 25,
+):
+    """
+    Aggregated feedback analytics for the ops dashboard UI.
+
+    Read-only; does not change retrieval.
+    """
+    if not RETRIEVAL_FEEDBACK_ENABLED:
+        raise HTTPException(status_code=404, detail="Retrieval feedback is disabled.")
+    return build_dashboard_overview(
+        recent_limit=min(max(recent_limit, 1), 200),
+        pattern_limit=min(max(pattern_limit, 1), 100),
+    )
 
 
 @app.post("/ingest/unstructured", response_model=IngestionResponse)

@@ -24,6 +24,29 @@ Built with **Neo4j · FastAPI · LangGraph · OpenAI**.
 
 ---
 
+## Current status
+
+The core platform is **feature-complete** for a production-oriented v1:
+
+| Area | Status |
+|------|--------|
+| Dual-graph RAG (structured + documents + hybrid) | ✅ |
+| Scalable ingestion (Redis + RQ workers, versioning) | ✅ |
+| Google OIDC auth, RBAC, per-user thread isolation | ✅ |
+| Streaming answers (`/query/stream`) with charts | ✅ |
+| Retrieval feedback loop + ops dashboard (`/feedback`) | ✅ |
+| Regression eval suites | ✅ |
+
+### Roadmap (future)
+
+| Planned | Description |
+|---------|-------------|
+| **Short memory (per user)** | Recent turns and session context across a thread — beyond today's single last-turn snapshot |
+| **Long memory (per user)** | Durable facts and preferences retrieved at query time (graph-backed or dedicated store) |
+| **Multi-language** | Query and answer in multiple languages (detection, prompts, and UI i18n) |
+
+---
+
 ## Why this is different
 
 | Typical flat RAG | Agentic GraphRAG |
@@ -72,7 +95,7 @@ flowchart TB
 
 ## Complex questions this stack is built for
 
-Use the bundled **30-case eval** (`python3 scripts/run_rag_eval.py --suite all`) or try these in chat:
+Try these in chat, or run the bundled eval suites (`python3 scripts/run_rag_eval.py --help`):
 
 | Complexity | Structured (Northwind · `regular_001` / `regular_office`) | Unstructured (Go.Data · `public_001`) |
 |------------|-----------------------------------------------------------|----------------------------------------|
@@ -82,24 +105,6 @@ Use the bundled **30-case eval** (`python3 scripts/run_rag_eval.py --suite all`)
 | **Temporal** | Show monthly order count in 1997. | Which deployment came first: Cox's Bazar or Kasese, Uganda? |
 | **Compare / synthesize** | Revenue share by category (doughnut). | Contrast proximity tracing tools vs. Go.Data as categorized by WHO. |
 | **Anti-hallucination** | Which categories have never appeared in an order? | Which Silicon Valley firm wrote the Go.Data iOS app? *(should deny—not invent)* |
-
----
-
-## What's new (June 2026)
-
-| Change | Details |
-|--------|---------|
-| **Lightweight PDF parser** | PyMuPDF + pdfplumber. ~1 GB image, no Java. |
-| **Image storage removed** | No binary JPEGs. Visual content stored as `Page.visual_content` text in Neo4j. |
-| **Document versioning** | Immutable `DocRevision` per upload. Same file → skipped. Changed file → new revision, old one expired. |
-| **Scalable ingestion** | Redis + RQ workers. Durable job state, auto-retry, per-doc lock, candidate-pair cap. Falls back to in-process `BackgroundTasks` when `REDIS_URL` is unset. |
-| **Parallel Axis 2** | NER and LLM relationship passes run in parallel thread pools (8 NER / 6 LLM calls concurrently). |
-| **Batched Neo4j writes** | `UNWIND` grouped by label/rel type. Default chunk 2 000 nodes. |
-| **Bulk upload UI** | Drop multiple PDFs at once; each gets its own live status card on `/upload`. |
-| **New API endpoints** | `GET /ingest/jobs` · `GET /ingest/queue/status`. No more 409 on concurrent uploads. |
-| **Retrieval refactor** | Structured and unstructured retrievers split into focused packages (`cypher/`, `multistep/`, `mixins/`, etc.) — same public APIs, easier to extend. |
-| **Google sign-in (OIDC)** | Chat and upload UIs use Google Identity Services. JWT verified server-side; roles synced to Neo4j on login (`AUTH_JIT_PROVISION`). |
-| **Ingestion gated to admin** | `/ingest/*` and `/admin/*` require a valid Bearer token **and** `admin` role — configured via `AUTH_EMAIL_ROLE_MAP`. |
 
 ---
 
@@ -132,6 +137,7 @@ Open:
 |------|-----|
 | **Chat** | http://localhost:8000/chat |
 | **Upload** | http://localhost:8000/upload |
+| **Feedback monitor** | http://localhost:8000/feedback |
 | **API docs** | http://localhost:8000/docs |
 | **Health** | http://localhost:8000/health |
 
@@ -224,94 +230,60 @@ What is the URL for the Go.Data Community of Practice portal?
 Show compliance incidents and summarize the related policy guidance.
 ```
 
-### Structured evaluation set (10 questions)
+### Regression eval (optional)
 
-Use these to exercise retrieval depth, chart types, and hallucination resistance. In chat, set **User ID** to `regular_001` and **role** to `regular_office` (not `regular`).
-
-| # | Level | Question | Expected UI |
-|---|-------|----------|-------------|
-| 1 | Simple lookup | Which supplier provides Chai? | Table or short text (no chart) |
-| 2 | Filter / rank | What are the top 5 most expensive products? | **Bar** chart + table |
-| 3 | Aggregation | How many products exist in each category? | **Bar** chart + table |
-| 4 | Share / part-to-whole | Show the revenue share by product category in 1997. | **Doughnut** + table |
-| 5 | Time series | Show monthly order count in 1997. | **Line** chart + table |
-| 6 | Many categories | What are the top 12 customers by total order count? | **Horizontal bar** + table |
-| 7 | Multi-hop | Which customers purchased products in the Seafood category? | Table (+ narrative) |
-| 8 | Business ranking | What are the top 10 best-selling products by order count? | **Bar** or horizontal bar + table |
-| 9 | Hallucination test | Which categories have never appeared in an order? | Table only (may be empty — must not invent rows) |
-| 10 | Advanced BI | Which supplier's products appear in the greatest number of orders? | **Bar** chart + table |
-
-Copy-paste list:
-
-```
-1. Which supplier provides Chai?
-2. What are the top 5 most expensive products?
-3. How many products exist in each category?
-4. Show the revenue share by product category in 1997.
-5. Show monthly order count in 1997.
-6. What are the top 12 customers by total order count?
-7. Which customers purchased products in the Seafood category?
-8. What are the top 10 best-selling products by order count?
-9. Which categories have never appeared in an order?
-10. Which supplier's products appear in the greatest number of orders?
-```
-
-Chart type is chosen automatically from the question and result shape (bar, horizontal bar, line, pie/doughnut). Hard-refresh `/chat` after deploy so Chart.js loads.
-
-### Combined RAG eval (40 questions: 20 document + 10 structured + 10 advanced)
-
-Runnable smoke suite with heuristic checks (routing, non-empty answers, soft keywords, chart types, anti-hallucination hints). Not a substitute for human golden labels — use it to catch regressions after ingest or deploy changes. Current status on the reference fixtures: **40/40 pass**.
-
-> **Corpus-agnostic by design.** All document-specific expectations (ISBN, licence, language names, network acronyms, etc.) live **only** in the eval JSON. The retriever and router contain **no per-document or per-topic keywords** — document selection uses query-derived anchors plus vector-majority resolution, so swapping in a different PDF needs no code changes.
-
-| Suite | File | User | Prerequisite |
-|-------|------|------|--------------|
-| Document | `eval/document_rag_suite.json` | `public_001` | Target PDF ingested (suite keywords are fixture-specific) |
-| Structured (Northwind) | `eval/structured_rag_suite.json` | `regular_001` + role `regular_office` | `northwind-data.cypher` loaded |
-| Advanced structured | `eval/advanced_structured_suite.json` | `regular_001` + role `regular_office` | `northwind-data.cypher` loaded |
-
-The **advanced structured** suite adds 10 *hard, multi-step* analytics questions in new scenarios — per-group top-N (top product per category), argmax-per-group (top category per country), cross-year revenue growth, average-order-value with thresholds, and derived gross/discount/net metrics. Each case's expected keywords are the **actual ground-truth entities computed directly from Neo4j**, so a wrong roll-up (e.g. a silently dropped year filter) fails the case rather than passing on a plausible-looking number.
+Smoke suites under `eval/` exercise routing, answers, charts, and anti-hallucination cases against `/query`. Corpus-specific expectations live in JSON only — not in retriever code.
 
 ```bash
-# All 40 cases (default) — smoke + routing + keyword/chart checks
-python3 scripts/run_rag_eval.py --suite all
-
-python3 scripts/run_rag_eval.py --suite document     # 20 Go.Data
-python3 scripts/run_rag_eval.py --suite structured   # 10 Northwind
-python3 scripts/run_rag_eval.py --suite advanced     # 10 advanced analytics
-
-python3 scripts/run_rag_eval.py --id adv_06 --output /tmp/rag_eval.json
-pytest tests/test_rag_eval_validators.py -q   # offline validators
+python3 scripts/run_rag_eval.py --suite all          # document + structured + advanced
+python3 scripts/run_rag_eval.py --attach-feedback    # label pass/fail for feedback loop
+pytest tests/test_rag_eval_validators.py -q
 ```
 
-Set `EVAL_BASE_URL` (default `http://localhost:8000`) and `EVAL_TIMEOUT` (default `180`) for slow LLM calls. Each case uses a fresh `thread_id`.
+Set `EVAL_BASE_URL` (default `http://localhost:8000`) and `EVAL_TIMEOUT` (default `180`) for slow LLM calls.
 
-### Recorded UI run (video report)
+---
 
-`scripts/run_rag_eval_ui.py` drives the **real `/chat` page** with Playwright: it types each question, waits for the rendered answer (charts, tables, sources, meta chips), and records the whole session to a `.webm`. It also intercepts each `/query` response and runs the same validators, so the video doubles as a pass/fail report with an on-screen `[n/N] case_id — PASS/FAIL` banner.
+## Feedback monitor
 
-One-time setup (kept out of the server venv):
+A dedicated **ops window** at **http://localhost:8000/feedback** shows how the feedback loop is performing — separate from chat, read-only, auto-refreshes every 30 seconds.
 
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install playwright
-.venv/bin/python -m playwright install chromium
-```
+Requires `RETRIEVAL_FEEDBACK_ENABLED=true` in `.env` (and `docker compose up -d --build app` after changes).
 
-Record a run (server must be up with the corpus ingested):
+### What you see
 
-```bash
-# 20 document questions → eval/ui_runs/<timestamp>/rag_eval_ui_document.webm + report.json
-.venv/bin/python scripts/run_rag_eval_ui.py --suite document
+| Panel | Purpose |
+|-------|---------|
+| **KPI cards** | Recording on/off, routing apply on/off, store type (Redis or JSONL), event and label counts |
+| **Label coverage chart** | Pass / fail / unlabeled breakdown |
+| **Pass rate by mode** | Which retrieval modes (`graph_rag_lexical`, `text2cypher`, etc.) perform best |
+| **Patterns table** | Learned question buckets, pass rates, retrieval + route hints, whether routing **would apply** |
+| **Recent events** | Last queries: `request_id`, mode, route, outcome, whether `feedback.routing` ran |
+| **Question probe** | Type any question to inspect pattern stats via `/feedback/stats` |
 
-# 10 advanced analytics — readable Q&A walkthrough (pans through each long answer)
-.venv/bin/python scripts/run_rag_eval_ui.py --suite advanced --pause 6
+### Typical workflow
 
-.venv/bin/python scripts/run_rag_eval_ui.py --suite all --pause 2.5   # all 40
-.venv/bin/python scripts/run_rag_eval_ui.py --id godata_a01 --headed  # single case, watch live
-```
+1. Enable feedback in `.env`:
+   ```env
+   RETRIEVAL_FEEDBACK_ENABLED=true
+   RETRIEVAL_FEEDBACK_ROUTING=false   # observe first; set true when labels are ready
+   RETRIEVAL_FEEDBACK_STORE_QUESTION=false
+   REDIS_URL=redis://redis:6379/0
+   ```
+2. Use **chat** or run eval with `--attach-feedback` to label pass/fail.
+3. Open **/feedback** in a second browser tab while testing.
+4. When patterns have enough labeled samples (`RETRIEVAL_FEEDBACK_MIN_SAMPLES`), enable `RETRIEVAL_FEEDBACK_ROUTING=true` and watch **Routing applied** in recent events.
 
-Flags: `--pause` (seconds lingered on each answer; the runner gently pans the chat from the question through the full answer so long responses stay readable), `--headed` (show the browser), `--keep-history` (continuous scroll instead of resetting between questions), `--out-dir`. Output `.webm` plays in any browser or VLC. Recorded artifacts under `eval/ui_runs/` are git-ignored.
+### API
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /feedback` | Dashboard UI |
+| `GET /feedback/dashboard` | JSON aggregate (powers the UI) |
+| `GET /feedback/stats?question=…` | Stats + hint for one question pattern |
+| `POST /feedback/outcome` | Attach pass/fail to a prior `request_id` |
+
+Feedback shares the same Redis instance as ingestion (different key namespaces). Fine for current scale; see architecture notes if you outgrow a single Redis.
 
 ---
 
@@ -320,11 +292,25 @@ Flags: `--pause` (seconds lingered on each answer; the runner gently pans the ch
 **Query path**
 
 ```
-User Query → MCP Router (routing.py)
-                 ├─ Structured Agent → Text-to-Cypher → Neo4j → charts/tables
+User Query → MCP Router (routing.py + feedback_loop resolver)
+                 ├─ Structured Agent → Text-to-Cypher / multistep → Neo4j → charts/tables
                  ├─ Unstructured Agent → hybrid retrieval → Neo4j → narrative + sources
                  └─ Hybrid (compliance role) → both paths → merged answer
+                      │
+                      ▼
+              feedback_loop (observe → label → learn → optional apply)
 ```
+
+**Feedback loop** (`src/feedback_loop/`) — observe pipeline telemetry, label outcomes, optionally improve routing:
+
+| Stage | What happens |
+|-------|----------------|
+| **Observe** | After `/query` and `/query/stream`, persist compact telemetry (Redis stream or JSONL) |
+| **Label** | `POST /feedback/outcome` or eval `--attach-feedback` marks pass/fail per `request_id` |
+| **Learn** | Aggregate pass rates by question **pattern** (intent flags) + retrieval mode or route tool |
+| **Apply** | When `RETRIEVAL_FEEDBACK_ROUTING=true`, `FeedbackRoutingService` adjusts multistep vs text2cypher, document hybrid mode, or MCP route — only after enough labeled samples |
+
+See **[Feedback monitor](#feedback-monitor)** below for the ops UI. Application code imports from `src/feedback_loop`; `src/telemetry/feedback/` is a deprecated shim.
 
 **Unstructured retrieval modes** (selected per question): vector similarity · full-text · graph expand from NER · TOC structural fetch · page-by-number · phrase/fact lookup (URLs, licenses).
 
@@ -427,6 +413,30 @@ Public config for the UI: `GET /auth/config` · current principal: `GET /auth/me
 | `ALLOW_CYPHER_INGEST` | `false` | Enable `.cypher` file upload endpoint |
 | `ALLOW_DB_RESET` | `false` | Enable `/admin/reset-neo4j` |
 
+### Retrieval feedback loop
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RETRIEVAL_FEEDBACK_ENABLED` | `false` | Record pipeline telemetry after queries (no behavior change) |
+| `RETRIEVAL_FEEDBACK_ROUTING` | `false` | Apply labeled hints to routing/retrieval (`true` = self-improvement) |
+| `RETRIEVAL_FEEDBACK_STORE_QUESTION` | `false` | Store first 120 chars of question in feedback events (privacy: keep `false` in prod) |
+| `RETRIEVAL_FEEDBACK_MIN_SAMPLES` | `30` | Minimum labeled outcomes before a hint can apply |
+| `RETRIEVAL_FEEDBACK_MIN_MARGIN` | `0.15` | Required pass-rate gap between best and second-best mode |
+| `REDIS_URL` | *(unset)* | Recommended for production feedback aggregates (same Redis as ingestion) |
+
+```bash
+# Label a prior query (e.g. from eval or thumbs)
+curl -X POST http://localhost:8000/feedback/outcome \
+  -H "Content-Type: application/json" \
+  -d '{"request_id": "abc123", "passed": true}'
+
+# Inspect pattern stats + suggested hint (read-only)
+curl "http://localhost:8000/feedback/stats?question=Top%205%20products%20by%20revenue&agent=structured"
+
+# Full ops dashboard JSON (powers /feedback UI)
+curl http://localhost:8000/feedback/dashboard
+```
+
 ### NEO4J_URI — when to set it
 
 | Setup | Value |
@@ -472,6 +482,12 @@ curl -H "Authorization: Bearer $GOOGLE_ID_TOKEN" http://localhost:8000/auth/me
 # Health / active models
 curl http://localhost:8000/health
 curl http://localhost:8000/config/models
+
+# Feedback loop (requires RETRIEVAL_FEEDBACK_ENABLED=true)
+curl -X POST http://localhost:8000/feedback/outcome \
+  -H "Content-Type: application/json" \
+  -d '{"request_id": "YOUR_REQUEST_ID", "passed": true}'
+curl "http://localhost:8000/feedback/stats?question=monthly%20order%20count%20in%201997"
 ```
 
 Response fields from `/ingest/jobs/{id}`: `status`, `dispatch` (`worker` / `background_task`), `logical_doc_id`, `revision_id`, `version_number`, `skipped_duplicate`, `logs[]`, `error`.
@@ -522,6 +538,8 @@ flowchart LR
 | `admin_001` | `admin` | ✅ | ✅ |
 
 Google sign-in creates JIT users in Neo4j (`AUTH_JIT_PROVISION=true`). Role is taken from `AUTH_EMAIL_ROLE_MAP` first, else `AUTH_DEFAULT_ROLE`, and re-synced on each login.
+
+**Follow-up memory (`thread_id`):** scoped per user as `{user_id}:{session_uuid}` on the server. Two different Google users never share follow-up context; **New chat** only clears the current user's thread. Today this is a **single last-turn** snapshot (`conversation/thread_memory.py`). Per-user **short** and **long** memory are on the [roadmap](#roadmap-future).
 
 **Google OAuth `origin_mismatch`:** the browser origin must exactly match an **Authorized JavaScript origin** (e.g. `http://localhost:8000`, not `127.0.0.1` unless both are registered).
 
@@ -580,15 +598,19 @@ agentic_graph_rag/
 │   ├── graph/                 # Neo4j constants, lifecycle helpers
 │   ├── presentation/          # UI blocks (markdown, tables, charts)
 │   ├── conversation/          # Thread memory + clarification
+│   ├── feedback_loop/         # Observe → label → learn → optional routing apply
+│   │   ├── pattern.py · profile.py · store.py · record.py · hints.py · dashboard.py
+│   │   ├── resolver.py        # Shared MCP tool resolution (router + stream)
+│   │   └── routing/           # Policy-based FeedbackRoutingService
+│   ├── static/
+│   │   ├── chat.html · upload.html · feedback.html   # Feedback ops monitor
 │   ├── auth/                  # RBAC + OIDC (Google JWT, JIT provision, deps)
+│   ├── streaming/             # NDJSON /query/stream orchestrator
 │   └── prompts/               # LLM prompts
-├── eval/
-│   ├── document_rag_suite.json          # 20 Go.Data document questions
-│   ├── structured_rag_suite.json        # 10 Northwind questions
-│   ├── advanced_structured_suite.json   # 10 hard multi-step analytics (ground-truth-checked)
-│   └── validators.py
-├── scripts/run_rag_eval.py        # 40-case smoke eval against /query
+├── eval/                      # JSON smoke suites + validators
+├── scripts/run_rag_eval.py    # Regression eval against /query
 ├── tests/
+│   ├── test_retrieval_feedback_unit.py
 │   ├── test_scalable_pipeline_unit.py
 │   ├── test_document_versioning_unit.py
 │   ├── test_toc_retrieval_unit.py
