@@ -571,6 +571,40 @@
       border-color: rgba(59,130,246,0.35);
       background: var(--accent-soft);
     }
+    .feedback-bar{
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
+    .feedback-bar .feedback-label{ margin-right: 4px; }
+    .feedback-btn{
+      padding: 4px 10px;
+      font-size: var(--font-size-xs);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.05);
+      cursor: pointer;
+      line-height: 1.3;
+    }
+    .feedback-btn:hover:not(:disabled){ background: rgba(255,255,255,0.1); }
+    .feedback-btn:disabled{ opacity: 0.45; cursor: default; }
+    .feedback-btn.selected-pass{
+      border-color: rgba(74, 222, 128, 0.5);
+      background: rgba(74, 222, 128, 0.12);
+      color: #86efac;
+    }
+    .feedback-btn.selected-fail{
+      border-color: rgba(248, 113, 113, 0.5);
+      background: rgba(248, 113, 113, 0.12);
+      color: #fca5a5;
+    }
+    .feedback-thanks{ color: var(--text-secondary); font-size: var(--font-size-xs); }
     details.sources-panel{
       margin-top: 12px;
       border: 1px solid var(--border);
@@ -756,7 +790,8 @@
     const AUTH_TOKEN_KEY = 'rag_id_token';
     const THREAD_SUFFIX_KEY = 'rag_thread_suffix';
     const THREAD_OWNER_KEY = 'rag_thread_owner';
-    let authConfig = { enabled: false, google_client_id: '', allow_body_fallback: true };
+    let authConfig = { enabled: false, google_client_id: '', allow_body_fallback: true, feedback_enabled: false };
+    const FEEDBACK_VOTE_PREFIX = 'feedback_vote:';
     let cachedAuthUserId = null;
 
     function newThreadSuffix() {
@@ -1467,7 +1502,110 @@
       return null;
     }
 
-    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType, followUp, telemetry) {
+    function getStoredFeedbackVote(requestId) {
+      if (!requestId) return null;
+      try {
+        return sessionStorage.getItem(FEEDBACK_VOTE_PREFIX + requestId);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function setStoredFeedbackVote(requestId, vote) {
+      if (!requestId) return;
+      try {
+        sessionStorage.setItem(FEEDBACK_VOTE_PREFIX + requestId, vote);
+      } catch (_) { /* ignore */ }
+    }
+
+    function setFeedbackBarState(bar, vote, thanksText) {
+      const up = bar.querySelector('[data-vote="pass"]');
+      const down = bar.querySelector('[data-vote="fail"]');
+      const thanks = bar.querySelector('.feedback-thanks');
+      if (up) {
+        up.disabled = true;
+        up.classList.toggle('selected-pass', vote === 'pass');
+      }
+      if (down) {
+        down.disabled = true;
+        down.classList.toggle('selected-fail', vote === 'fail');
+      }
+      if (thanks) thanks.textContent = thanksText || 'Thanks — feedback recorded.';
+    }
+
+    async function submitFeedbackVote(requestId, passed, bar) {
+      if (!requestId || !bar) return;
+      const vote = passed ? 'pass' : 'fail';
+      const up = bar.querySelector('[data-vote="pass"]');
+      const down = bar.querySelector('[data-vote="fail"]');
+      if (up) up.disabled = true;
+      if (down) down.disabled = true;
+      try {
+        const res = await fetch('/feedback/outcome', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ request_id: requestId, passed: passed }),
+        });
+        if (!res.ok) {
+          const detail = await res.text();
+          throw new Error(detail || 'Feedback failed');
+        }
+        setStoredFeedbackVote(requestId, vote);
+        setFeedbackBarState(bar, vote, 'Thanks — feedback recorded.');
+      } catch (err) {
+        if (up) up.disabled = false;
+        if (down) down.disabled = false;
+        const thanks = bar.querySelector('.feedback-thanks');
+        if (thanks) thanks.textContent = (err && err.message) ? String(err.message).slice(0, 120) : 'Could not save feedback';
+      }
+    }
+
+    function buildFeedbackBar(requestId) {
+      if (!authConfig.feedback_enabled || !requestId) return null;
+      const bar = document.createElement('div');
+      bar.className = 'feedback-bar';
+      bar.dataset.requestId = requestId;
+
+      const label = document.createElement('span');
+      label.className = 'feedback-label';
+      label.textContent = 'Helpful?';
+      bar.appendChild(label);
+
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'feedback-btn';
+      up.dataset.vote = 'pass';
+      up.setAttribute('aria-label', 'Good answer');
+      up.textContent = '👍';
+      up.addEventListener('click', () => submitFeedbackVote(requestId, true, bar));
+
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.className = 'feedback-btn';
+      down.dataset.vote = 'fail';
+      down.setAttribute('aria-label', 'Poor answer');
+      down.textContent = '👎';
+      down.addEventListener('click', () => submitFeedbackVote(requestId, false, bar));
+
+      const thanks = document.createElement('span');
+      thanks.className = 'feedback-thanks';
+      bar.appendChild(up);
+      bar.appendChild(down);
+      bar.appendChild(thanks);
+
+      const prior = getStoredFeedbackVote(requestId);
+      if (prior === 'pass' || prior === 'fail') {
+        setFeedbackBarState(bar, prior, 'Feedback recorded earlier.');
+      }
+      return bar;
+    }
+
+    function appendFeedbackBar(inner, requestId) {
+      const bar = buildFeedbackBar(requestId);
+      if (bar) inner.appendChild(bar);
+    }
+
+    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType, followUp, telemetry, requestId) {
       removeThinking();
       const wrap = document.createElement('div');
       wrap.className = 'msg assistant';
@@ -1520,6 +1658,7 @@
         metaRow.appendChild(span);
       }
       inner.appendChild(metaRow);
+      appendFeedbackBar(inner, requestId);
 
       if (sources && sources.length) {
         const details = document.createElement('details');
@@ -1634,7 +1773,8 @@
         payload.presentation,
         payload.query_type,
         payload.follow_up,
-        payload.telemetry
+        payload.telemetry,
+        payload.request_id
       );
     }
 
@@ -1735,6 +1875,7 @@
         metaRow.appendChild(span);
       }
       state.inner.appendChild(metaRow);
+      appendFeedbackBar(state.inner, event.request_id);
 
       if (sources && sources.length) {
         const details = document.createElement('details');

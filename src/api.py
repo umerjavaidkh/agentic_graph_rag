@@ -133,7 +133,9 @@ async def feedback_dashboard_page():
 @app.get("/auth/config")
 async def auth_config():
     """Public OIDC settings for the chat UI (no secrets)."""
-    return auth_public_config()
+    out = auth_public_config()
+    out["feedback_enabled"] = RETRIEVAL_FEEDBACK_ENABLED
+    return out
 
 
 @app.get("/auth/me")
