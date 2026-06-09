@@ -398,7 +398,7 @@ Active model resolution: `GET /config/models`
 AUTH_ENABLED=true
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 AUTH_DEFAULT_ROLE=compliance_officer
-AUTH_EMAIL_ROLE_MAP=kh.m.umerjavaid@gmail.com=admin
+AUTH_EMAIL_ROLE_MAP=you@company.com=admin
 AUTH_ALLOW_BODY_FALLBACK=false   # production: Google only for /query
 ```
 

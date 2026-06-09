@@ -43,11 +43,11 @@ class TestOidcClaims(unittest.TestCase):
 
     def test_admin_email_role_map(self):
         cfg = self._cfg(
-            email_role_map={"kh.m.umerjavaid@gmail.com": Role.ADMIN},
+            email_role_map={"admin@example.com": Role.ADMIN},
             default_role=Role.COMPLIANCE_OFFICER,
         )
         ctx = build_user_context(
-            {"sub": "g1", "email": "kh.m.umerjavaid@gmail.com"},
+            {"sub": "g1", "email": "admin@example.com"},
             cfg=cfg,
             rbac=None,
         )
