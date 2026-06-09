@@ -409,31 +409,42 @@
     table.pres-table.interactive th:hover{ background: rgba(59,130,246,0.2); }
     table.pres-table.interactive tbody tr:hover{ background: rgba(255,255,255,0.04); }
     table.pres-table tr.row-highlight{ background: var(--accent-soft); }
+    /* Wider assistant column when showing charts/tables */
+    .msg-inner.has-rich-ui{
+      max-width: min(920px, 96%);
+    }
     .pres-chart-canvas-wrap{
       position: relative;
       margin: 10px 0;
-      padding: 12px 14px;
+      padding: 8px 10px 4px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       background: rgba(0,0,0,0.2);
-      max-height: 320px;
+      width: 100%;
+      height: var(--chart-h, 280px);
+      min-height: var(--chart-h, 280px);
+      box-sizing: border-box;
     }
     .pres-chart-canvas-wrap canvas{
       display: block;
       width: 100% !important;
-      max-height: 280px;
+      height: 100% !important;
     }
     .pres-chart{
       display: flex;
       align-items: flex-end;
       gap: 10px;
-      min-height: 200px;
+      width: 100%;
+      min-height: 220px;
+      height: 220px;
       margin: 10px 0;
       padding: 14px 14px 12px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       background: rgba(0,0,0,0.2);
-      overflow: hidden;
+      overflow-x: auto;
+      overflow-y: hidden;
+      box-sizing: border-box;
     }
     .stream-toggle{
       display: flex;
@@ -446,6 +457,36 @@
     .stream-markdown{
       margin-top: 10px;
       white-space: pre-wrap;
+    }
+    .auth-panel{
+      margin-bottom: 14px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .google-signin-slot{
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+    }
+    .auth-user-chip{
+      font-size: var(--font-size-sm);
+      color: var(--muted);
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-top: 8px;
+      word-break: break-all;
+    }
+    .auth-signout{
+      margin-top: 8px;
+      width: 100%;
+      font-size: var(--font-size-sm);
+    }
+    .dev-hint{
+      color: var(--muted);
+      font-weight: normal;
+      font-size: 11px;
     }
     .pres-bar-col{
       flex: 1;
@@ -644,19 +685,28 @@
         </h2>
       </div>
       <div class="content">
-        <label>Role</label>
-        <select id="role">
-          <option value="public">public</option>
-          <option value="regular_office">regular_office</option>
-          <option value="compliance_officer">compliance_officer</option>
-          <option value="admin">admin</option>
-        </select>
+        <div id="auth_panel" class="auth-panel">
+          <label>Sign in</label>
+          <div id="google_signin" class="google-signin-slot"></div>
+          <div id="auth_user_chip" class="auth-user-chip" style="display:none;"></div>
+          <button type="button" id="auth_signout" class="auth-signout" style="display:none;">Sign out</button>
+        </div>
 
-        <label>User ID</label>
-        <input id="user_id" type="text" value="public_001" />
+        <div id="dev_identity" class="dev-identity">
+          <label>Role <span class="dev-hint">(dev)</span></label>
+          <select id="role">
+            <option value="public">public</option>
+            <option value="regular_office">regular_office</option>
+            <option value="compliance_officer">compliance_officer</option>
+            <option value="admin">admin</option>
+          </select>
 
-        <label>Department</label>
-        <input id="department" type="text" placeholder="Optional" />
+          <label>User ID</label>
+          <input id="user_id" type="text" value="public_001" />
+
+          <label>Department</label>
+          <input id="department" type="text" placeholder="Optional" />
+        </div>
 
         <label class="stream-toggle">
           <input id="use_stream" type="checkbox" checked />
@@ -695,12 +745,139 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script>
     const chatBody = document.getElementById('chat_body');
     const q = document.getElementById('q');
     const sendBtn = document.getElementById('send');
     const statusBadge = document.getElementById('status');
     const errBox = document.getElementById('err');
+
+    const AUTH_TOKEN_KEY = 'rag_id_token';
+    let authConfig = { enabled: false, google_client_id: '', allow_body_fallback: true };
+
+    function getStoredToken() {
+      try { return sessionStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch (_) { return ''; }
+    }
+
+    function setStoredToken(token) {
+      try {
+        if (token) sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+        else sessionStorage.removeItem(AUTH_TOKEN_KEY);
+      } catch (_) { /* ignore */ }
+    }
+
+    function authHeaders(extra) {
+      const h = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+      const token = getStoredToken();
+      if (token) h['Authorization'] = 'Bearer ' + token;
+      return h;
+    }
+
+    function parseJwtPayload(token) {
+      try {
+        const part = token.split('.')[1];
+        return JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+      } catch (_) { return null; }
+    }
+
+    async function refreshAuthChip() {
+      const chip = document.getElementById('auth_user_chip');
+      const token = getStoredToken();
+      if (!token) return;
+      try {
+        const res = await fetch('/auth/me', { headers: authHeaders({}) });
+        if (res.ok) {
+          const me = await res.json();
+          const who = me.email || me.user_id || 'user';
+          chip.textContent = 'Signed in: ' + who + ' · role: ' + (me.role || '?');
+          return;
+        }
+      } catch (_) { /* fall through */ }
+      const payload = parseJwtPayload(token);
+      const email = payload && (payload.email || payload.sub);
+      chip.textContent = email ? ('Signed in: ' + email) : 'Signed in';
+    }
+
+    function updateAuthUI() {
+      const panel = document.getElementById('auth_panel');
+      const devBox = document.getElementById('dev_identity');
+      const chip = document.getElementById('auth_user_chip');
+      const signout = document.getElementById('auth_signout');
+      const googleSlot = document.getElementById('google_signin');
+      const token = getStoredToken();
+
+      if (!authConfig.enabled) {
+        panel.style.display = 'none';
+        devBox.style.display = 'block';
+        return;
+      }
+
+      panel.style.display = 'block';
+
+      if (token) {
+        // JWT wins on the API — hide dev role/user pickers so they are not misleading.
+        devBox.style.display = 'none';
+        chip.style.display = 'block';
+        signout.style.display = 'block';
+        googleSlot.style.display = 'none';
+        refreshAuthChip();
+      } else {
+        chip.style.display = 'none';
+        signout.style.display = 'none';
+        googleSlot.style.display = 'flex';
+        devBox.style.display = authConfig.allow_body_fallback ? 'block' : 'none';
+        initGoogleSignIn();
+      }
+    }
+
+    function handleGoogleCredential(response) {
+      if (response && response.credential) {
+        setStoredToken(response.credential);
+        updateAuthUI();
+        setStatus('Signed in');
+      }
+    }
+
+    function initGoogleSignIn() {
+      if (!authConfig.enabled || !authConfig.google_client_id) return;
+      if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) {
+        setTimeout(initGoogleSignIn, 400);
+        return;
+      }
+      const slot = document.getElementById('google_signin');
+      slot.innerHTML = '';
+      google.accounts.id.initialize({
+        client_id: authConfig.google_client_id,
+        callback: handleGoogleCredential,
+        auto_select: false,
+      });
+      google.accounts.id.renderButton(slot, {
+        theme: 'outline',
+        size: 'large',
+        width: 260,
+        text: 'signin_with',
+      });
+    }
+
+    async function loadAuthConfig() {
+      try {
+        const res = await fetch('/auth/config');
+        if (res.ok) authConfig = await res.json();
+      } catch (_) { /* dev without auth */ }
+      updateAuthUI();
+    }
+
+    document.getElementById('auth_signout').addEventListener('click', () => {
+      setStoredToken('');
+      if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
+        google.accounts.id.disableAutoSelect();
+      }
+      updateAuthUI();
+      setStatus('Signed out');
+    });
+
+    loadAuthConfig();
 
     let thinkingEl = null;
 
@@ -874,6 +1051,48 @@
       'hsla(12, 72%, 58%, 0.85)',
     ];
 
+    function chartContainerHeight(chartType, labelCount) {
+      const ctype = (chartType || 'bar').toLowerCase();
+      const n = Math.max(2, labelCount || 2);
+      if (ctype === 'bar-horizontal') {
+        return Math.min(420, Math.max(240, n * 26 + 48));
+      }
+      if (ctype === 'pie' || ctype === 'doughnut') {
+        return 300;
+      }
+      if (ctype === 'line') {
+        return 280;
+      }
+      return 280;
+    }
+
+    function destroyChartsIn(root) {
+      if (!root) return;
+      root.querySelectorAll('.pres-chart-canvas-wrap').forEach((wrap) => {
+        if (wrap._chartResizeObserver) {
+          wrap._chartResizeObserver.disconnect();
+          wrap._chartResizeObserver = null;
+        }
+      });
+      root.querySelectorAll('canvas').forEach((canvas) => {
+        if (canvas.chartInstance) {
+          canvas.chartInstance.destroy();
+          canvas.chartInstance = null;
+        }
+      });
+    }
+
+    function observeChartResize(canvasWrap, chart) {
+      if (!canvasWrap || !chart || typeof ResizeObserver === 'undefined') return;
+      const ro = new ResizeObserver(() => {
+        if (canvasWrap.isConnected && chart.canvas) {
+          chart.resize();
+        }
+      });
+      ro.observe(canvasWrap);
+      canvasWrap._chartResizeObserver = ro;
+    }
+
     function renderChartBarsLegacy(block, wrap, vals, labels) {
       const chart = document.createElement('div');
       chart.className = 'pres-chart';
@@ -929,7 +1148,7 @@
 
       const options = {
         responsive: true,
-        maintainAspectRatio: true,
+        maintainAspectRatio: false,
         plugins: {
           legend: {
             display: isPie,
@@ -975,11 +1194,20 @@
         }
       }
 
-      canvas.chartInstance = new Chart(canvas, {
+      if (canvas.chartInstance) {
+        canvas.chartInstance.destroy();
+      }
+      const instance = new Chart(canvas, {
         type: jsType,
         data: { labels, datasets: [dataset] },
         options,
       });
+      canvas.chartInstance = instance;
+      requestAnimationFrame(() => {
+        if (canvas.chartInstance) canvas.chartInstance.resize();
+      });
+      const wrap = canvas.parentElement;
+      if (wrap) observeChartResize(wrap, instance);
     }
 
     const BLOCK_RENDERERS = {
@@ -1080,6 +1308,8 @@
         if (typeof Chart !== 'undefined') {
           const canvasWrap = document.createElement('div');
           canvasWrap.className = 'pres-chart-canvas-wrap';
+          const chartH = chartContainerHeight(chartType, labels.length);
+          canvasWrap.style.setProperty('--chart-h', chartH + 'px');
           const canvas = document.createElement('canvas');
           canvasWrap.appendChild(canvas);
           wrap.appendChild(canvasWrap);
@@ -1102,10 +1332,19 @@
       },
     };
 
+    function markRichUi(inner, blocks) {
+      if (!inner || !blocks || !blocks.length) return;
+      const rich = blocks.some((b) => b.type === 'chart' || b.type === 'table');
+      if (rich) inner.classList.add('has-rich-ui');
+    }
+
     function renderPresentation(bubble, presentation, fallbackAnswer) {
+      destroyChartsIn(bubble);
       bubble.classList.remove('plain-text');
       bubble.textContent = '';
       const blocks = (presentation && presentation.blocks) || [];
+      const inner = bubble.closest('.msg-inner');
+      markRichUi(inner, blocks);
       if (!blocks.length) {
         bubble.classList.add('plain-text');
         bubble.textContent = fallbackAnswer || '(no answer)';
@@ -1279,6 +1518,11 @@
       if (!question) return;
       clearError();
 
+      if (authConfig.enabled && !getStoredToken() && !authConfig.allow_body_fallback) {
+        showError('Sign in with Google to continue.');
+        return;
+      }
+
       addMessage('user', question);
       q.value = '';
       setStatus('Thinking…');
@@ -1307,7 +1551,7 @@
     async function sendClassic(question, ctx) {
       const res = await fetch('/query', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           question,
           role: ctx.role,
@@ -1390,7 +1634,22 @@
       const telemetry = event.telemetry || null;
 
       if (presentation && presentation.blocks && presentation.blocks.length) {
-        renderPresentation(state.bubble, presentation, answer);
+        const hasChartOrTable = state.bubble.querySelector('.pres-chart-canvas-wrap, .pres-chart, .pres-table');
+        if (!hasChartOrTable) {
+          renderPresentation(state.bubble, presentation, answer);
+        } else {
+          markRichUi(state.inner, presentation.blocks);
+          const hasMd = presentation.blocks.some((b) => b.type === 'markdown');
+          if (hasMd && state.text) {
+            let mdEl = state.bubble.querySelector('.stream-markdown');
+            if (!mdEl) {
+              mdEl = document.createElement('div');
+              mdEl.className = 'pres-block stream-markdown pres-md';
+              state.bubble.appendChild(mdEl);
+            }
+            renderMarkdownSimple(mdEl, state.text || answer);
+          }
+        }
         if (!state.bubble.textContent.trim() && !state.bubble.querySelector('.pres-md, .pres-block, img')) {
           state.bubble.classList.add('plain-text');
           state.bubble.textContent = answer || '(no answer)';
@@ -1446,7 +1705,7 @@
     async function sendStreaming(question, ctx) {
       const res = await fetch('/query/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           question,
           role: ctx.role,
@@ -1499,6 +1758,7 @@
             state.hasPresentation = true;
             state.bubble.classList.remove('plain-text');
             state.bubble.textContent = '';
+            markRichUi(state.inner, event.blocks);
             renderPresentation(state.bubble, { kind: 'mixed', blocks: event.blocks }, '');
             setStatus('Writing…');
             continue;

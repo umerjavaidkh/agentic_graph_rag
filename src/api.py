@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from .graph.driver import close_neo4j_driver, get_neo4j_driver
@@ -15,8 +15,8 @@ from pydantic import BaseModel, Field
 from .bridge import ask
 from .conversation import clear_turn
 from .logging_config import setup_logging
-from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
+from .auth.oidc import auth_public_config, require_admin_session, resolve_user_context
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
@@ -122,6 +122,28 @@ async def chat_page():
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
+@app.get("/auth/config")
+async def auth_config():
+    """Public OIDC settings for the chat UI (no secrets)."""
+    return auth_public_config()
+
+
+@app.get("/auth/me")
+async def auth_me(authorization: Optional[str] = Header(default=None)):
+    """Return the resolved principal from a Bearer token (or dev body fallback)."""
+    session = resolve_user_context(authorization=authorization)
+    out = {
+        "user_id": session.user.user_id,
+        "role": session.user.role.value,
+        "department": session.user.department,
+        "auth_mode": session.auth_mode,
+    }
+    if session.claims:
+        out["email"] = session.claims.email
+        out["name"] = session.claims.name
+    return out
+
+
 class IngestionResponse(BaseModel):
     job_id: str
     status: str
@@ -164,8 +186,8 @@ class IngestionJobSummary(BaseModel):
 
 class QueryRequest(BaseModel):
     question:    str           = Field(..., description="User's question")
-    role:        Optional[str] = Field(default="public", description="User role for access control")
-    user_id:     Optional[str] = Field(default="public_001", description="User identifier")
+    role:        Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
+    user_id:     Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
     department:  Optional[str] = Field(default=None, description="User department")
     thread_id:   Optional[str] = Field(default="default")
 
@@ -192,26 +214,30 @@ class QueryResponse(BaseModel):
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query(request: QueryRequest):
+async def query(
+    request: QueryRequest,
+    authorization: Optional[str] = Header(default=None),
+):
     request_id = uuid.uuid4().hex[:12]
     thread_id = request.thread_id or "default"
-    user_id = request.user_id or "public_001"
+    session = resolve_user_context(
+        authorization=authorization,
+        body_user_id=request.user_id,
+        body_role=request.role,
+        body_department=request.department,
+    )
+    context = session.user
+    user_id = context.user_id
     question_preview = (request.question or "")[:160]
     logger.info(
-        "query start request_id=%s user=%s thread=%s q=%r",
+        "query start request_id=%s user=%s auth=%s thread=%s q=%r",
         request_id,
         user_id,
+        session.auth_mode,
         thread_id,
         question_preview,
     )
     try:
-        role = validate_role(request.role or "public")
-        context = UserContext(
-            user_id=user_id,
-            role=role,
-            department=request.department,
-        )
-
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             _query_executor,
@@ -248,7 +274,7 @@ async def query(request: QueryRequest):
             total_chunks = len(result.get("sources", [])),
             agent        = result.get("agent", "unstructured"),
             strategy     = result.get("strategy", "semantic"),
-            access_level = result.get("_access_level", role.value),
+            access_level = result.get("_access_level", context.role.value),
             route_tool   = result.get("_route_tool"),
             route_method = result.get("_route_method"),
             presentation = result.get("presentation"),
@@ -276,7 +302,10 @@ async def query(request: QueryRequest):
 
 
 @app.post("/query/stream")
-async def query_stream(request: QueryRequest):
+async def query_stream(
+    request: QueryRequest,
+    authorization: Optional[str] = Header(default=None),
+):
     """
     Stream query results as NDJSON lines.
 
@@ -288,23 +317,20 @@ async def query_stream(request: QueryRequest):
 
     request_id = uuid.uuid4().hex[:12]
     thread_id = request.thread_id or "default"
-    user_id = request.user_id or "public_001"
+    session = resolve_user_context(
+        authorization=authorization,
+        body_user_id=request.user_id,
+        body_role=request.role,
+        body_department=request.department,
+    )
+    context = session.user
     logger.info(
-        "query stream start request_id=%s user=%s thread=%s",
+        "query stream start request_id=%s user=%s auth=%s thread=%s",
         request_id,
-        user_id,
+        context.user_id,
+        session.auth_mode,
         thread_id,
     )
-
-    try:
-        role = validate_role(request.role or "public")
-        context = UserContext(
-            user_id=user_id,
-            role=role,
-            department=request.department,
-        )
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
 
     def _stream():
         try:
@@ -405,7 +431,9 @@ async def ingest_unstructured(
             "Re-ingests with the same key create a new revision; identical file hash is skipped."
         ),
     ),
+    authorization: Optional[str] = Header(default=None),
 ):
+    require_admin_session(authorization=authorization)
     # No 409 gate: multiple concurrent uploads are fine. The per-doc Redis lock
     # (inside IngestionManager._doc_lock) serialises revision installs for the
     # same logical document while allowing different documents to run in parallel.
@@ -425,33 +453,20 @@ async def ingest_cypher(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     job_name: Optional[str] = Form(None),
-    role: Optional[str] = Form(default="public"),
-    user_id: Optional[str] = Form(default="public_001"),
-    department: Optional[str] = Form(default=None),
     openai_key: Optional[str] = Form(default=None),
+    authorization: Optional[str] = Header(default=None),
 ):
     """
     Upload and execute arbitrary Cypher against Neo4j.
 
     Security:
     - Disabled by default (set ALLOW_CYPHER_INGEST=true to enable)
-    - When enabled, requires role >= COMPLIANCE_OFFICER
+    - Requires Google/OIDC sign-in and admin role
     """
     if not ALLOW_CYPHER_INGEST:
         raise HTTPException(status_code=403, detail="Cypher ingestion is disabled. Set ALLOW_CYPHER_INGEST=true to enable.")
 
-    try:
-        validated_role = validate_role(role or "public")
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-
-    ctx = UserContext(
-        user_id=user_id or "public_001",
-        role=validated_role,
-        department=department,
-    )
-    if not ctx.has_role(Role.COMPLIANCE_OFFICER):
-        raise HTTPException(status_code=403, detail="Insufficient role to execute Cypher ingestion (requires compliance_officer or admin).")
+    require_admin_session(authorization=authorization)
 
     cypher_params = {}
     effective_openai_key = openai_key or OPENAI_API_KEY
@@ -470,12 +485,16 @@ async def ingest_cypher(
 
 
 @app.get("/ingest/jobs", response_model=List[IngestionJobSummary])
-async def list_ingestion_jobs(limit: int = 50):
+async def list_ingestion_jobs(
+    limit: int = 50,
+    authorization: Optional[str] = Header(default=None),
+):
     """
     List recent ingestion jobs (newest first).
 
     Works in both in-process (InMemoryJobStore) and Redis-backed modes.
     """
+    require_admin_session(authorization=authorization)
     store = get_job_store()
     ids = store.list_ids(limit=limit)
     summaries = []
@@ -501,7 +520,11 @@ async def list_ingestion_jobs(limit: int = 50):
 
 
 @app.get("/ingest/jobs/{job_id}", response_model=IngestionStatusResponse)
-async def get_ingestion_job(job_id: str):
+async def get_ingestion_job(
+    job_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    require_admin_session(authorization=authorization)
     job = ingestion_manager.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -527,13 +550,14 @@ async def get_ingestion_job(job_id: str):
 
 
 @app.get("/ingest/queue/status")
-async def ingest_queue_status():
+async def ingest_queue_status(authorization: Optional[str] = Header(default=None)):
     """
     Queue depth and dead-letter (failed) job visibility.
 
     Returns queue depth and recent failed jobs from the RQ FailedJobRegistry.
     When Redis is not configured all counts are None.
     """
+    require_admin_session(authorization=authorization)
     depth = queue_depth()
     failed = list_failed_jobs(limit=20)
     return {
@@ -544,16 +568,12 @@ async def ingest_queue_status():
 
 
 @app.post("/admin/reset-neo4j")
-async def reset_neo4j(
-    role: Optional[str] = Form(default="public"),
-    user_id: Optional[str] = Form(default="public_001"),
-    department: Optional[str] = Form(default=None),
-):
+async def reset_neo4j(authorization: Optional[str] = Header(default=None)):
     """
     DANGEROUS: Wipes Neo4j database contents.
 
     - Disabled by default (ALLOW_DB_RESET=true to enable)
-    - Requires admin role
+    - Requires Google/OIDC sign-in and admin role
     """
     if not ALLOW_DB_RESET:
         raise HTTPException(
@@ -561,18 +581,7 @@ async def reset_neo4j(
             detail="DB reset is disabled. Set ALLOW_DB_RESET=true to enable.",
         )
 
-    try:
-        validated_role = validate_role(role or "public")
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-
-    ctx = UserContext(
-        user_id=user_id or "public_001",
-        role=validated_role,
-        department=department,
-    )
-    if not ctx.has_role(Role.ADMIN):
-        raise HTTPException(status_code=403, detail="Insufficient role (requires admin).")
+    require_admin_session(authorization=authorization)
 
     driver = get_neo4j_driver()
     dropped_indexes = 0
