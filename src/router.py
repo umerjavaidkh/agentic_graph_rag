@@ -12,13 +12,8 @@ from .auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
 from .presentation import build_presentation
 from .auth.rbac_setup import GraphRBAC
 from .config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
-from .routing import (
-    is_structured_data_question,
-    make_structured_access_denied_result,
-    select_mcp_tool,
-    run_via_mcp_tool,
-)
-from .telemetry import clear_telemetry, get_telemetry, pipeline_step, start_telemetry
+from .feedback_loop import resolve_query_tool
+from .telemetry import clear_telemetry, get_telemetry, start_telemetry
 
 _rbac: GraphRBAC | None = None
 
@@ -28,7 +23,12 @@ def _rbac_check() -> GraphRBAC:
     if _rbac is None:
         _rbac = GraphRBAC(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     return _rbac
-from .conversation import get_turn, resolve_follow_up, save_turn
+from .conversation import get_turn, save_turn
+from .routing import (
+    is_structured_data_question,
+    make_structured_access_denied_result,
+    run_via_mcp_tool,
+)
 
 
 # ─────────────────────────────────────────
@@ -208,19 +208,7 @@ def ask(
         tel.route["request_id"] = request_id
 
     try:
-        prior = get_turn(thread_id)
-        tool_name = None
-        with pipeline_step("route.select"):
-            if prior:
-                resolved = resolve_follow_up(question, prior)
-                if resolved.get("use_prior"):
-                    fk = resolved.get("follow_up_kind") or ""
-                    if fk in ("subsection_detail", "page", "page_visual_focus", "clarification_document"):
-                        tool_name = "search_documents"
-                    elif fk == "structured_clarification":
-                        tool_name = "query_data"
-            if not tool_name:
-                tool_name = select_mcp_tool(question)
+        tool_name, _resolved = resolve_query_tool(question, thread_id)
 
         ctx = user_context or DEFAULT_PUBLIC_CONTEXT
         if (

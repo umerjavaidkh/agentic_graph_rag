@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Feedback Loop Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg: #0f172a; --panel: #1e293b; --border: #334155;
+      --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
+      --ok: #4ade80; --bad: #f87171; --warn: #fbbf24;
+    }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      margin: 0; background: var(--bg); color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
+      display: flex; flex-wrap: wrap; align-items: center; gap: 1rem;
+      background: #0b1220;
+    }
+    header h1 { margin: 0; font-size: 1.25rem; font-weight: 700; }
+    header nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; font-size: 0.9rem; }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 1.25rem; }
+    .grid { display: grid; gap: 1rem; }
+    .grid-4 { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+    .grid-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 1rem 1.15rem;
+    }
+    .card h2 { margin: 0 0 0.75rem; font-size: 0.95rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    .kpi { font-size: 1.75rem; font-weight: 700; line-height: 1.2; }
+    .kpi-sub { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+    .badge {
+      display: inline-block; padding: 0.2rem 0.55rem; border-radius: 999px;
+      font-size: 0.75rem; font-weight: 700;
+    }
+    .badge-on { background: #14532d; color: var(--ok); }
+    .badge-off { background: #450a0a; color: var(--bad); }
+    .badge-warn { background: #422006; color: var(--warn); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    .mono { font-family: ui-monospace, monospace; font-size: 0.78rem; }
+    .chart-box { position: relative; height: 240px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+    button, input {
+      background: #334155; color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.45rem 0.75rem; font-size: 0.85rem;
+    }
+    button { cursor: pointer; }
+    button:hover { background: #475569; }
+    input { flex: 1; min-width: 200px; }
+    .error { background: #450a0a; color: #fecaca; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+    .hidden { display: none !important; }
+    .hint-active { color: var(--ok); font-weight: 600; }
+    .hint-none { color: var(--muted); }
+    .outcome-pass { color: var(--ok); }
+    .outcome-fail { color: var(--bad); }
+    .outcome-null { color: var(--muted); }
+    footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 1.5rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Feedback Loop Monitor</h1>
+    <nav>
+      <a href="/chat">Chat</a>
+      <a href="/upload">Upload</a>
+      <a href="/docs">API</a>
+    </nav>
+    <span id="refresh-label" style="margin-left:auto;color:var(--muted);font-size:0.85rem;"></span>
+  </header>
+
+  <div class="wrap">
+    <div id="error" class="error hidden"></div>
+
+    <div class="toolbar">
+      <button type="button" id="btn-refresh">Refresh now</button>
+      <label style="display:flex;align-items:center;gap:0.35rem;color:var(--muted);font-size:0.85rem;">
+        <input type="checkbox" id="auto-refresh" checked /> Auto-refresh (30s)
+      </label>
+    </div>
+
+    <div class="grid grid-4" id="kpis"></div>
+
+    <div class="grid grid-2" style="margin-top:1rem;">
+      <div class="card">
+        <h2>Label coverage</h2>
+        <div class="chart-box"><canvas id="chart-labels"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Pass rate by retrieval mode</h2>
+        <div class="chart-box"><canvas id="chart-modes"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <h2>Probe a question</h2>
+      <div class="toolbar">
+        <input id="probe-q" placeholder="Type a question to inspect pattern stats…" />
+        <input id="probe-agent" placeholder="agent (optional)" style="max-width:140px;flex:0;" />
+        <button type="button" id="btn-probe">Inspect</button>
+      </div>
+      <pre id="probe-out" class="mono" style="white-space:pre-wrap;margin:0;color:var(--muted);"></pre>
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <h2>Patterns (learned buckets)</h2>
+      <div style="overflow-x:auto;">
+        <table id="tbl-patterns">
+          <thead>
+            <tr>
+              <th>Pattern</th><th>Queries</th><th>Labeled</th><th>Pass rate</th>
+              <th>Retrieval hint</th><th>Route hint</th><th>Would apply</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <h2>Recent events</h2>
+      <div style="overflow-x:auto;">
+        <table id="tbl-events">
+          <thead>
+            <tr>
+              <th>Time</th><th>Request</th><th>Agent</th><th>Mode</th><th>Route</th>
+              <th>Outcome</th><th>Routing applied</th><th>Preview</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <footer>Read-only ops view · data from Redis stream or JSONL · routing changes only when RETRIEVAL_FEEDBACK_ROUTING=true</footer>
+
+  <script>
+    let chartLabels = null;
+    let chartModes = null;
+    let timer = null;
+
+    function fmtPct(v) {
+      if (v == null) return "—";
+      return (v * 100).toFixed(1) + "%";
+    }
+
+    function outcomeCell(v) {
+      if (v === true) return '<span class="outcome-pass">pass</span>';
+      if (v === false) return '<span class="outcome-fail">fail</span>';
+      return '<span class="outcome-null">unlabeled</span>';
+    }
+
+    function hintCell(h) {
+      if (!h) return '<span class="hint-none">insufficient data</span>';
+      return `<span class="hint-active">${h.mode}</span> (${fmtPct(h.pass_rate)}, n=${h.samples})`;
+    }
+
+    function renderKpis(data) {
+      const c = data.config;
+      const t = data.totals;
+      const passRate = t.labeled ? (t.pass / t.labeled) : null;
+      document.getElementById("kpis").innerHTML = `
+        <div class="card"><h2>Recording</h2><div class="kpi">${c.enabled ? "ON" : "OFF"}</div>
+          <div class="kpi-sub"><span class="badge ${c.enabled ? "badge-on" : "badge-off"}">${c.enabled ? "enabled" : "disabled"}</span></div></div>
+        <div class="card"><h2>Routing apply</h2><div class="kpi">${c.routing_enabled ? "ON" : "OFF"}</div>
+          <div class="kpi-sub">min samples ${c.min_samples}, margin ${c.min_margin}</div></div>
+        <div class="card"><h2>Store</h2><div class="kpi" style="font-size:1.1rem;">${c.store_type}</div>
+          <div class="kpi-sub">${c.store_type === "redis" ? c.redis_stream : c.data_dir || ""}</div></div>
+        <div class="card"><h2>Events</h2><div class="kpi">${t.events}</div>
+          <div class="kpi-sub">${t.patterns} patterns · ${t.routing_applied} routing applied</div></div>
+        <div class="card"><h2>Labeled</h2><div class="kpi">${t.labeled}</div>
+          <div class="kpi-sub">${t.unlabeled} unlabeled · pass rate ${fmtPct(passRate)}</div></div>
+      `;
+    }
+
+    function renderCharts(data) {
+      const t = data.totals;
+      const lblCtx = document.getElementById("chart-labels");
+      if (chartLabels) chartLabels.destroy();
+      chartLabels = new Chart(lblCtx, {
+        type: "doughnut",
+        data: {
+          labels: ["Pass", "Fail", "Unlabeled"],
+          datasets: [{ data: [t.pass, t.fail, t.unlabeled], backgroundColor: ["#4ade80", "#f87171", "#64748b"] }]
+        },
+        options: { plugins: { legend: { labels: { color: "#cbd5e1" } } }, maintainAspectRatio: false }
+      });
+
+      const modes = Object.entries(data.mode_totals || {});
+      const labels = modes.map(([m]) => m);
+      const passRates = modes.map(([, s]) => s.pass + s.fail > 0 ? s.pass / (s.pass + s.fail) : 0);
+      const modeCtx = document.getElementById("chart-modes");
+      if (chartModes) chartModes.destroy();
+      chartModes = new Chart(modeCtx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [{ label: "Pass rate", data: passRates, backgroundColor: "#38bdf8" }]
+        },
+        options: {
+          scales: {
+            y: { min: 0, max: 1, ticks: { color: "#94a3b8" }, grid: { color: "#334155" } },
+            x: { ticks: { color: "#94a3b8", maxRotation: 45 }, grid: { display: false } }
+          },
+          plugins: { legend: { display: false } },
+          maintainAspectRatio: false
+        }
+      });
+    }
+
+    function renderPatterns(patterns) {
+      const tbody = document.querySelector("#tbl-patterns tbody");
+      tbody.innerHTML = patterns.map(p => `
+        <tr>
+          <td class="mono">${p.pattern}</td>
+          <td>${p.queries}</td>
+          <td>${p.labeled}</td>
+          <td>${fmtPct(p.pass_rate)}</td>
+          <td>${hintCell(p.retrieval_hint)}</td>
+          <td>${hintCell(p.route_hint)}</td>
+          <td>${p.would_apply ? '<span class="hint-active">yes</span>' : '<span class="hint-none">no</span>'}</td>
+        </tr>
+      `).join("") || '<tr><td colspan="7" style="color:var(--muted)">No feedback events yet — run queries with RETRIEVAL_FEEDBACK_ENABLED=true</td></tr>';
+    }
+
+    function renderEvents(events) {
+      const tbody = document.querySelector("#tbl-events tbody");
+      tbody.innerHTML = events.map(e => `
+        <tr>
+          <td class="mono">${(e.ts || "").slice(0, 19)}</td>
+          <td class="mono">${e.request_id || ""}</td>
+          <td>${e.agent || ""}</td>
+          <td class="mono">${e.retrieval_mode || ""}</td>
+          <td class="mono">${e.route_tool || ""}</td>
+          <td>${outcomeCell(e.outcome)}</td>
+          <td>${e.routing_applied ? "✓" : ""}</td>
+          <td>${e.question_preview || "—"}</td>
+        </tr>
+      `).join("") || '<tr><td colspan="8" style="color:var(--muted)">No events recorded yet</td></tr>';
+    }
+
+    async function loadDashboard() {
+      const err = document.getElementById("error");
+      err.classList.add("hidden");
+      try {
+        const res = await fetch("/feedback/dashboard");
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || res.statusText);
+        }
+        const data = await res.json();
+        renderKpis(data);
+        renderCharts(data);
+        renderPatterns(data.patterns || []);
+        renderEvents(data.recent_events || []);
+        document.getElementById("refresh-label").textContent =
+          "Updated " + new Date().toLocaleTimeString();
+      } catch (e) {
+        err.textContent = String(e.message || e);
+        err.classList.remove("hidden");
+      }
+    }
+
+    async function probeQuestion() {
+      const q = document.getElementById("probe-q").value.trim();
+      const agent = document.getElementById("probe-agent").value.trim();
+      const out = document.getElementById("probe-out");
+      if (!q) { out.textContent = "Enter a question."; return; }
+      const url = "/feedback/stats?question=" + encodeURIComponent(q) +
+        (agent ? "&agent=" + encodeURIComponent(agent) : "");
+      const res = await fetch(url);
+      const data = await res.json();
+      out.textContent = JSON.stringify(data, null, 2);
+    }
+
+    document.getElementById("btn-refresh").addEventListener("click", loadDashboard);
+    document.getElementById("btn-probe").addEventListener("click", probeQuestion);
+    document.getElementById("auto-refresh").addEventListener("change", (e) => {
+      if (e.target.checked) {
+        timer = setInterval(loadDashboard, 30000);
+      } else if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    });
+
+    loadDashboard();
+    timer = setInterval(loadDashboard, 30000);
+  </script>
+</body>
+</html>

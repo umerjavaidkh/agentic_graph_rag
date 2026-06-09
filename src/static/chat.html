@@ -754,7 +754,59 @@
     const errBox = document.getElementById('err');
 
     const AUTH_TOKEN_KEY = 'rag_id_token';
+    const THREAD_SUFFIX_KEY = 'rag_thread_suffix';
+    const THREAD_OWNER_KEY = 'rag_thread_owner';
     let authConfig = { enabled: false, google_client_id: '', allow_body_fallback: true };
+    let cachedAuthUserId = null;
+
+    function newThreadSuffix() {
+      try {
+        if (crypto && crypto.randomUUID) return crypto.randomUUID();
+      } catch (_) { /* ignore */ }
+      return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    }
+
+    function getThreadOwnerId() {
+      if (cachedAuthUserId) return cachedAuthUserId;
+      const token = getStoredToken();
+      if (token) {
+        const payload = parseJwtPayload(token);
+        if (payload && payload.sub) return payload.sub;
+      }
+      if (!authConfig.enabled || authConfig.allow_body_fallback) {
+        return (document.getElementById('user_id').value || 'public_001').trim();
+      }
+      return 'anonymous';
+    }
+
+    function resetThreadSuffix() {
+      try {
+        sessionStorage.removeItem(THREAD_SUFFIX_KEY);
+        sessionStorage.removeItem(THREAD_OWNER_KEY);
+      } catch (_) { /* ignore */ }
+    }
+
+    function ensureThreadSuffix() {
+      const owner = getThreadOwnerId();
+      try {
+        const storedOwner = sessionStorage.getItem(THREAD_OWNER_KEY);
+        let suffix = sessionStorage.getItem(THREAD_SUFFIX_KEY);
+        if (!suffix || storedOwner !== owner) {
+          suffix = newThreadSuffix();
+          sessionStorage.setItem(THREAD_SUFFIX_KEY, suffix);
+          sessionStorage.setItem(THREAD_OWNER_KEY, owner);
+        }
+        return suffix;
+      } catch (_) {
+        return 'default';
+      }
+    }
+
+    function buildThreadId() {
+      const owner = getThreadOwnerId();
+      const suffix = ensureThreadSuffix();
+      return owner + ':' + suffix;
+    }
 
     function getStoredToken() {
       try { return sessionStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch (_) { return ''; }
@@ -789,8 +841,10 @@
         const res = await fetch('/auth/me', { headers: authHeaders({}) });
         if (res.ok) {
           const me = await res.json();
+          cachedAuthUserId = me.user_id || null;
           const who = me.email || me.user_id || 'user';
           chip.textContent = 'Signed in: ' + who + ' · role: ' + (me.role || '?');
+          ensureThreadSuffix();
           return;
         }
       } catch (_) { /* fall through */ }
@@ -834,6 +888,8 @@
     function handleGoogleCredential(response) {
       if (response && response.credential) {
         setStoredToken(response.credential);
+        cachedAuthUserId = null;
+        resetThreadSuffix();
         updateAuthUI();
         setStatus('Signed in');
       }
@@ -870,6 +926,8 @@
 
     document.getElementById('auth_signout').addEventListener('click', () => {
       setStoredToken('');
+      cachedAuthUserId = null;
+      resetThreadSuffix();
       if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
         google.accounts.id.disableAutoSelect();
       }
@@ -1509,7 +1567,7 @@
         role: document.getElementById('role').value,
         user_id: document.getElementById('user_id').value,
         department: document.getElementById('department').value || null,
-        thread_id: 'default'
+        thread_id: buildThreadId()
       };
     }
 
@@ -1795,16 +1853,23 @@
     });
 
     document.getElementById('new_chat').addEventListener('click', async () => {
+      const ctx = getCtx();
       chatBody.innerHTML = '';
       clearError();
       setStatus('Ready');
       try {
         await fetch('/chat/clear', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ thread_id: getCtx().thread_id }),
+          headers: authHeaders(),
+          body: JSON.stringify({
+            thread_id: ctx.thread_id,
+            user_id: ctx.user_id,
+            role: ctx.role,
+          }),
         });
       } catch (_) { /* non-fatal */ }
+      resetThreadSuffix();
+      ensureThreadSuffix();
       renderWelcome();
     });
 

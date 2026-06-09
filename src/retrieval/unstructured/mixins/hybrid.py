@@ -15,6 +15,7 @@ from ....config.settings import (
 )
 from ....graph.driver import get_neo4j_driver
 from ....telemetry.context import TelemetryEvent, get_telemetry
+from ....feedback_loop import get_feedback_routing
 from ....telemetry.pipeline import record_pipeline_step
 from ..constants import (
     _FULLTEXT_LIMIT,
@@ -246,7 +247,10 @@ class HybridRetrieveMixin:
         graph_1hop = 32 if synthesis else _GRAPH_1HOP_LIMIT
         graph_2hop = 24 if synthesis else _GRAPH_2HOP_LIMIT
 
-        embedding = self._get_embedding(query)
+        mode_hint = get_feedback_routing().document_mode(query)
+        skip_vector = mode_hint == "graph_rag_lexical"
+
+        embedding = None if skip_vector else self._get_embedding(query)
 
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="hybrid_seed") as pool:
             phrase_future = pool.submit(
@@ -255,15 +259,20 @@ class HybridRetrieveMixin:
             keyword_future = pool.submit(
                 self._neo4j_session_call, self._structural_keyword_retrieve, query
             )
-            vector_future = pool.submit(
-                self._neo4j_session_call, self._vector_seed, embedding, vector_limit
-            )
+            if skip_vector:
+                vector_future = None
+                vector_hits: list[dict] = []
+            else:
+                vector_future = pool.submit(
+                    self._neo4j_session_call, self._vector_seed, embedding, vector_limit
+                )
             fulltext_future = pool.submit(
                 self._neo4j_session_call, self._fulltext_seed, query, _FULLTEXT_LIMIT
             )
             phrase_hits = phrase_future.result()
             keyword_hits = keyword_future.result()
-            vector_hits = vector_future.result()
+            if vector_future is not None:
+                vector_hits = vector_future.result()
             fulltext_hits = fulltext_future.result()
 
         lexical_hits = self._merge_retrieval_chunks(phrase_hits, keyword_hits)
@@ -309,11 +318,16 @@ class HybridRetrieveMixin:
             )
 
         response = self._format_response(query, items, user_context=ctx)
-        response["mode"] = "graph_rag"
-        if lexical_hits and vector_hits:
-            response["mode"] = "graph_rag_hybrid"
-        elif lexical_hits:
+        if mode_hint == "graph_rag_lexical":
             response["mode"] = "graph_rag_lexical"
+        elif mode_hint == "graph_rag":
+            response["mode"] = "graph_rag"
+        else:
+            response["mode"] = "graph_rag"
+            if lexical_hits and vector_hits:
+                response["mode"] = "graph_rag_hybrid"
+            elif lexical_hits:
+                response["mode"] = "graph_rag_lexical"
         response["strategy"] = "graph_rag"
         response["vector_seeds"] = len(vector_hits)
         response["fulltext_hits"] = len(fulltext_hits)

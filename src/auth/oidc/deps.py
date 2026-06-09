@@ -8,6 +8,7 @@ from typing import Optional
 from fastapi import Header, HTTPException
 
 from ..rbac_setup import GraphRBAC
+from ..thread_scope import scoped_thread_id
 from ..roles import Role, UserContext, validate_role
 from ...config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 from .claims import VerifiedClaims, build_user_context, parse_verified_claims
@@ -134,6 +135,14 @@ def resolve_user_context(
         return AuthSession(user=user, auth_mode=mode)
 
     raise HTTPException(status_code=401, detail="Authentication required.")
+
+
+def resolve_scoped_thread_id(
+    session: AuthSession,
+    client_thread_id: Optional[str] = None,
+) -> str:
+    """Namespace follow-up memory to the resolved user (JWT or dev body user)."""
+    return scoped_thread_id(session.user.user_id, client_thread_id)
 
 
 def auth_public_config() -> dict:

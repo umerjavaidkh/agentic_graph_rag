@@ -5,10 +5,11 @@ import json
 from typing import Iterator, Optional
 
 from ..auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
-from ..conversation import get_turn, resolve_follow_up, save_turn
+from ..conversation import get_turn, save_turn
+from ..feedback_loop import maybe_record_retrieval_feedback, resolve_query_tool
 from ..presentation import build_presentation
 from ..router import _rbac_check
-from ..routing import is_structured_data_question, make_structured_access_denied_result, select_mcp_tool
+from ..routing import is_structured_data_question, make_structured_access_denied_result
 from ..telemetry import clear_telemetry, get_telemetry, pipeline_step, start_telemetry
 from .document import (
     _build_context_text,
@@ -41,21 +42,7 @@ from .structured import _viz_blocks_only, iter_structured_stream
 
 
 def _resolve_tool(question: str, thread_id: str) -> tuple[str, dict]:
-    prior = get_turn(thread_id)
-    tool_name = None
-    resolved = {"question": question, "use_prior": False}
-    with pipeline_step("route.select"):
-        if prior:
-            resolved = resolve_follow_up(question, prior)
-            if resolved.get("use_prior"):
-                fk = resolved.get("follow_up_kind") or ""
-                if fk in ("subsection_detail", "page", "page_visual_focus", "clarification_document"):
-                    tool_name = "search_documents"
-                elif fk == "structured_clarification":
-                    tool_name = "query_data"
-        if not tool_name:
-            tool_name = select_mcp_tool(question)
-    return tool_name, resolved
+    return resolve_query_tool(question, thread_id)
 
 
 def _enrich_and_persist(
@@ -328,6 +315,19 @@ def iter_query_stream(
             final=final_payload,
             request_id=request_id,
         )
+        if request_id:
+            maybe_record_retrieval_feedback(
+                request_id=request_id,
+                question=question,
+                result={
+                    "agent": enriched.get("agent") or final_payload.get("agent"),
+                    "strategy": enriched.get("strategy") or final_payload.get("strategy"),
+                    "_route_tool": tool_name,
+                    "_route_method": enriched.get("route_method"),
+                    "_telemetry": enriched.get("telemetry") or {},
+                },
+                source="query_stream",
+            )
         yield stream_event(**enriched)
     except Exception as exc:
         tel = get_telemetry()

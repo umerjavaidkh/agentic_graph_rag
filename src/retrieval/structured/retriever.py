@@ -27,6 +27,7 @@ from .multistep.executor import MultiStepExecutor
 from .multistep.planner import MultiStepPlanner
 from .policies.clarification import needs_clarification
 from .policies.rbac import StructuredRbac
+from ...feedback_loop import get_feedback_routing
 from .query_intent import likely_needs_multistep_plan
 from .schema.provider import SchemaProvider
 
@@ -97,7 +98,15 @@ class StructuredRetriever:
                 return clarification
 
             schema = self._schema.fetch()
-            if STRUCTURED_ALWAYS_MULTISTEP_PLAN or likely_needs_multistep_plan(query):
+            routing = get_feedback_routing()
+            use_multistep = STRUCTURED_ALWAYS_MULTISTEP_PLAN or likely_needs_multistep_plan(query)
+            path_hint = routing.structured_path(query)
+            if path_hint == "text2cypher_first" and not STRUCTURED_ALWAYS_MULTISTEP_PLAN:
+                use_multistep = False
+            elif path_hint == "multistep_first":
+                use_multistep = True
+
+            if use_multistep:
                 chunks = self._run_multistep(query, schema, ctx, reason="gate")
                 if chunks is not None:
                     return format_response(query, chunks, strategy="multistep")

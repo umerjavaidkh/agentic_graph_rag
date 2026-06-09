@@ -8,6 +8,7 @@ from .deps import (
     get_oidc_config,
     require_admin_session,
     require_bearer_session,
+    resolve_scoped_thread_id,
     resolve_user_context,
 )
 from .verifier import AuthenticationError, verify_bearer_token
@@ -23,6 +24,7 @@ __all__ = [
     "load_oidc_config",
     "require_admin_session",
     "require_bearer_session",
+    "resolve_scoped_thread_id",
     "resolve_user_context",
     "verify_bearer_token",
 ]
