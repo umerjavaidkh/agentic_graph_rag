@@ -19,7 +19,7 @@ def ensure_user_in_graph(
     name: Optional[str] = None,
     department: Optional[str] = None,
 ) -> None:
-    """MERGE User and HAS_ROLE; idempotent."""
+    """MERGE User and sync HAS_ROLE to the configured role (replaces stale assignments)."""
     cypher = """
         MERGE (u:User {user_id: $user_id})
         ON CREATE SET
@@ -31,6 +31,9 @@ def ensure_user_in_graph(
           u.email = coalesce($email, u.email),
           u.name = coalesce($name, u.name),
           u.department = coalesce($department, u.department)
+        WITH u
+        OPTIONAL MATCH (u)-[old:HAS_ROLE]->()
+        DELETE old
         WITH u
         MATCH (r:Role {name: $role_name})
         MERGE (u)-[:HAS_ROLE]->(r)

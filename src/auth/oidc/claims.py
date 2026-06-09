@@ -107,26 +107,26 @@ def build_user_context(
     cfg: OidcAuthConfig,
     rbac: Optional[GraphRBAC] = None,
 ) -> UserContext:
-    """Map verified OIDC claims to UserContext; optional Neo4j JIT + graph role override."""
+    """Map verified OIDC claims to UserContext; optional Neo4j JIT provisioning."""
     verified = parse_verified_claims(claims)
-    role = cfg.default_role
-    if rbac is not None:
+    configured_role = _role_from_claims(cfg, verified)
+
+    if rbac is not None and cfg.jit_provision:
+        # Config/email/claim maps are source of truth; sync Neo4j on each login.
+        ensure_user_in_graph(
+            rbac,
+            user_id=verified.user_id,
+            role=configured_role,
+            email=verified.email,
+            name=verified.name,
+            department=verified.department,
+        )
+        role = configured_role
+    elif rbac is not None:
         graph_role = _role_from_graph(rbac, verified.user_id)
-        if graph_role is not None:
-            role = graph_role
-        else:
-            role = _role_from_claims(cfg, verified)
-            if cfg.jit_provision:
-                ensure_user_in_graph(
-                    rbac,
-                    user_id=verified.user_id,
-                    role=role,
-                    email=verified.email,
-                    name=verified.name,
-                    department=verified.department,
-                )
+        role = graph_role if graph_role is not None else configured_role
     else:
-        role = _role_from_claims(cfg, verified)
+        role = configured_role
 
     return UserContext(
         user_id=verified.user_id,

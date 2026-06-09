@@ -15,9 +15,8 @@ from pydantic import BaseModel, Field
 from .bridge import ask
 from .conversation import clear_turn
 from .logging_config import setup_logging
-from .auth.roles import Role, UserContext, validate_role
 from .auth.rbac_setup import GraphRBAC
-from .auth.oidc import auth_public_config, resolve_user_context
+from .auth.oidc import auth_public_config, require_admin_session, resolve_user_context
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
@@ -432,7 +431,9 @@ async def ingest_unstructured(
             "Re-ingests with the same key create a new revision; identical file hash is skipped."
         ),
     ),
+    authorization: Optional[str] = Header(default=None),
 ):
+    require_admin_session(authorization=authorization)
     # No 409 gate: multiple concurrent uploads are fine. The per-doc Redis lock
     # (inside IngestionManager._doc_lock) serialises revision installs for the
     # same logical document while allowing different documents to run in parallel.
@@ -452,33 +453,20 @@ async def ingest_cypher(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     job_name: Optional[str] = Form(None),
-    role: Optional[str] = Form(default="public"),
-    user_id: Optional[str] = Form(default="public_001"),
-    department: Optional[str] = Form(default=None),
     openai_key: Optional[str] = Form(default=None),
+    authorization: Optional[str] = Header(default=None),
 ):
     """
     Upload and execute arbitrary Cypher against Neo4j.
 
     Security:
     - Disabled by default (set ALLOW_CYPHER_INGEST=true to enable)
-    - When enabled, requires role >= COMPLIANCE_OFFICER
+    - Requires Google/OIDC sign-in and admin role
     """
     if not ALLOW_CYPHER_INGEST:
         raise HTTPException(status_code=403, detail="Cypher ingestion is disabled. Set ALLOW_CYPHER_INGEST=true to enable.")
 
-    try:
-        validated_role = validate_role(role or "public")
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-
-    ctx = UserContext(
-        user_id=user_id or "public_001",
-        role=validated_role,
-        department=department,
-    )
-    if not ctx.has_role(Role.COMPLIANCE_OFFICER):
-        raise HTTPException(status_code=403, detail="Insufficient role to execute Cypher ingestion (requires compliance_officer or admin).")
+    require_admin_session(authorization=authorization)
 
     cypher_params = {}
     effective_openai_key = openai_key or OPENAI_API_KEY
@@ -497,12 +485,16 @@ async def ingest_cypher(
 
 
 @app.get("/ingest/jobs", response_model=List[IngestionJobSummary])
-async def list_ingestion_jobs(limit: int = 50):
+async def list_ingestion_jobs(
+    limit: int = 50,
+    authorization: Optional[str] = Header(default=None),
+):
     """
     List recent ingestion jobs (newest first).
 
     Works in both in-process (InMemoryJobStore) and Redis-backed modes.
     """
+    require_admin_session(authorization=authorization)
     store = get_job_store()
     ids = store.list_ids(limit=limit)
     summaries = []
@@ -528,7 +520,11 @@ async def list_ingestion_jobs(limit: int = 50):
 
 
 @app.get("/ingest/jobs/{job_id}", response_model=IngestionStatusResponse)
-async def get_ingestion_job(job_id: str):
+async def get_ingestion_job(
+    job_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    require_admin_session(authorization=authorization)
     job = ingestion_manager.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -554,13 +550,14 @@ async def get_ingestion_job(job_id: str):
 
 
 @app.get("/ingest/queue/status")
-async def ingest_queue_status():
+async def ingest_queue_status(authorization: Optional[str] = Header(default=None)):
     """
     Queue depth and dead-letter (failed) job visibility.
 
     Returns queue depth and recent failed jobs from the RQ FailedJobRegistry.
     When Redis is not configured all counts are None.
     """
+    require_admin_session(authorization=authorization)
     depth = queue_depth()
     failed = list_failed_jobs(limit=20)
     return {
@@ -571,16 +568,12 @@ async def ingest_queue_status():
 
 
 @app.post("/admin/reset-neo4j")
-async def reset_neo4j(
-    role: Optional[str] = Form(default="public"),
-    user_id: Optional[str] = Form(default="public_001"),
-    department: Optional[str] = Form(default=None),
-):
+async def reset_neo4j(authorization: Optional[str] = Header(default=None)):
     """
     DANGEROUS: Wipes Neo4j database contents.
 
     - Disabled by default (ALLOW_DB_RESET=true to enable)
-    - Requires admin role
+    - Requires Google/OIDC sign-in and admin role
     """
     if not ALLOW_DB_RESET:
         raise HTTPException(
@@ -588,18 +581,7 @@ async def reset_neo4j(
             detail="DB reset is disabled. Set ALLOW_DB_RESET=true to enable.",
         )
 
-    try:
-        validated_role = validate_role(role or "public")
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-
-    ctx = UserContext(
-        user_id=user_id or "public_001",
-        role=validated_role,
-        department=department,
-    )
-    if not ctx.has_role(Role.ADMIN):
-        raise HTTPException(status_code=403, detail="Insufficient role (requires admin).")
+    require_admin_session(authorization=authorization)
 
     driver = get_neo4j_driver()
     dropped_indexes = 0

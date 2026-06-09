@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import Header, HTTPException
 
 from ..rbac_setup import GraphRBAC
-from ..roles import UserContext, validate_role
+from ..roles import Role, UserContext, validate_role
 from ...config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 from .claims import VerifiedClaims, build_user_context, parse_verified_claims
 from .config import OidcAuthConfig, load_oidc_config
@@ -41,6 +41,52 @@ class AuthSession:
     user: UserContext
     auth_mode: str  # jwt | body_fallback | anonymous
     claims: Optional[VerifiedClaims] = None
+
+
+def require_bearer_session(
+    *,
+    authorization: Optional[str] = None,
+) -> AuthSession:
+    """
+    Require a valid Bearer JWT. Body user_id/role is never accepted.
+
+    Used for ingestion and other privileged operations.
+    """
+    cfg = get_oidc_config()
+    if not cfg.enabled:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication is required for this operation (set AUTH_ENABLED=true).",
+        )
+
+    token = extract_bearer_token(authorization)
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in with Google and send Authorization: Bearer <token>.",
+        )
+
+    try:
+        claims_dict = verify_bearer_token(token, cfg)
+        verified = parse_verified_claims(claims_dict)
+        user = build_user_context(claims_dict, cfg=cfg, rbac=_get_rbac())
+        return AuthSession(user=user, auth_mode="jwt", claims=verified)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+def require_admin_session(
+    *,
+    authorization: Optional[str] = None,
+) -> AuthSession:
+    """JWT required; principal must have admin role (e.g. via AUTH_EMAIL_ROLE_MAP)."""
+    session = require_bearer_session(authorization=authorization)
+    if not session.user.has_role(Role.ADMIN):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin role required. Ingestion is limited to mapped admin accounts.",
+        )
+    return session
 
 
 def resolve_user_context(

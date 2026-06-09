@@ -100,7 +100,7 @@ class OidcAuthConfig:
 
 def load_oidc_config() -> OidcAuthConfig:
     provider = (os.environ.get("AUTH_PROVIDER") or "google").strip().lower()
-    default_role_name = (os.environ.get("AUTH_DEFAULT_ROLE") or "public").strip().lower()
+    default_role_name = (os.environ.get("AUTH_DEFAULT_ROLE") or "compliance_officer").strip().lower()
     try:
         default_role = Role(default_role_name)
     except ValueError:

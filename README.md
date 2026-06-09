@@ -98,6 +98,8 @@ Use the bundled **30-case eval** (`python3 scripts/run_rag_eval.py --suite all`)
 | **Bulk upload UI** | Drop multiple PDFs at once; each gets its own live status card on `/upload`. |
 | **New API endpoints** | `GET /ingest/jobs` · `GET /ingest/queue/status`. No more 409 on concurrent uploads. |
 | **Retrieval refactor** | Structured and unstructured retrievers split into focused packages (`cypher/`, `multistep/`, `mixins/`, etc.) — same public APIs, easier to extend. |
+| **Google sign-in (OIDC)** | Chat and upload UIs use Google Identity Services. JWT verified server-side; roles synced to Neo4j on login (`AUTH_JIT_PROVISION`). |
+| **Ingestion gated to admin** | `/ingest/*` and `/admin/*` require a valid Bearer token **and** `admin` role — configured via `AUTH_EMAIL_ROLE_MAP`. |
 
 ---
 
@@ -170,22 +172,39 @@ curl -X POST http://localhost:8000/ingest/unstructured \
   -F "file=@sample_data_to_test/unstructured/rag_document.pdf" \
   -F "doc_key=rag-document"
 
-# Cypher data (requires ALLOW_CYPHER_INGEST=true)
+# Cypher data (requires ALLOW_CYPHER_INGEST=true + admin Google sign-in)
 curl -X POST http://localhost:8000/ingest/cypher \
-  -F "file=@sample_data_to_test/structured/northwind-data.cypher" \
-  -F "role=compliance_officer"
+  -H "Authorization: Bearer $GOOGLE_ID_TOKEN" \
+  -F "file=@sample_data_to_test/structured/northwind-data.cypher"
 ```
 
 `doc_key` controls versioning: same key + same file → skipped; same key + changed file → new revision.
+
+**Ingestion requires Google sign-in as an admin** — see [Authentication & roles](#authentication--roles). Use `/upload` in the browser (Sign in with Google) or pass the ID token from GIS as `Authorization: Bearer <token>`.
 
 ---
 
 ## Try it in chat
 
+### With Google sign-in (`AUTH_ENABLED=true`)
+
+1. Set `GOOGLE_CLIENT_ID` in `.env` and register `http://localhost:8000` as an **Authorized JavaScript origin** in Google Cloud Console.
+2. Open `/chat` → **Sign in with Google**.
+3. Default signed-in users get **`compliance_officer`** (documents + structured). Emails listed in `AUTH_EMAIL_ROLE_MAP` with `=admin` can use `/upload` for ingestion.
+
+| Track | Prerequisite | Signed-in role |
+|-------|--------------|----------------|
+| **Structured** | Northwind loaded via `/upload` (admin) | `compliance_officer` or `admin` |
+| **Unstructured** | PDF ingested via `/upload` (admin) | `compliance_officer` or `admin` |
+| **Hybrid** | Both loaded | `compliance_officer` or `admin` |
+| **Ingestion** | Admin email in `AUTH_EMAIL_ROLE_MAP` | `admin` only |
+
+### Dev / eval without Google (`AUTH_ENABLED=false`, or `AUTH_ALLOW_BODY_FALLBACK=true` while unsigned in)
+
 | Track | Prerequisite | User ID | Role |
 |-------|--------------|---------|------|
-| **Structured** | Upload `sample_data_to_test/structured/northwind-data.cypher` (Cypher tab; `ALLOW_CYPHER_INGEST=true`, `CYPHER_INGEST_SKIP_GENAI=true`) | `regular_001` | `regular_office` |
-| **Unstructured** | Upload Go.Data (or sample) PDF on `/upload` | `public_001` | `public` |
+| **Structured** | Northwind loaded | `regular_001` | `regular_office` |
+| **Unstructured** | PDF ingested | `public_001` | `public` |
 | **Hybrid** | Both loaded | `compliance_001` | `compliance_officer` |
 
 **Structured quick checks:**
@@ -360,6 +379,38 @@ Copy `.env.example` → `.env`. Key variables:
 
 Active model resolution: `GET /config/models`
 
+### Authentication & roles
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTH_ENABLED` | `false` | `true` → chat/upload require Google (or OIDC) for production paths |
+| `GOOGLE_CLIENT_ID` | *(empty)* | OAuth 2.0 Web client ID (GIS button in `/chat` and `/upload`) |
+| `AUTH_DEFAULT_ROLE` | `compliance_officer` | Role assigned to new Google users (chat: documents + structured) |
+| `AUTH_EMAIL_ROLE_MAP` | *(empty)* | Comma-separated `email=role` overrides, e.g. `you@corp.com=admin` |
+| `AUTH_JIT_PROVISION` | `true` | On each login, sync User + `HAS_ROLE` in Neo4j from config/maps |
+| `AUTH_ALLOW_BODY_FALLBACK` | `true` when auth off | `true` → unsigned `/query` may send `user_id`/`role` in JSON (eval/dev). Set **`false` in production**. |
+| `AUTH_PROVIDER` | `google` | `google` or `oidc` (corporate IdP via `OIDC_ISSUER`, `OIDC_AUDIENCE`) |
+| `AUTH_CLAIM_ROLE_MAP` | *(empty)* | Optional IdP group → role map (JSON or `Group=role` pairs) |
+
+**Admin configuration (ingestion):** map operator Google emails to `admin` in `.env`:
+
+```env
+AUTH_ENABLED=true
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+AUTH_DEFAULT_ROLE=compliance_officer
+AUTH_EMAIL_ROLE_MAP=kh.m.umerjavaid@gmail.com=admin
+AUTH_ALLOW_BODY_FALLBACK=false   # production: Google only for /query
+```
+
+- **`admin`** — ingestion (`/upload`, `/ingest/*`), `/admin/reset-neo4j`, full RBAC.
+- **`compliance_officer`** — chat only (`/query`, `/query/stream`): documents + structured data.
+- **`regular_office`** — structured data only (demo user `regular_001`).
+- **`public`** — document graph only (demo user `public_001`).
+
+When a Bearer JWT is present, the server **ignores** sidebar/body `user_id` and `role` — identity comes from Google claims + maps above.
+
+Public config for the UI: `GET /auth/config` · current principal: `GET /auth/me` (with `Authorization: Bearer …`).
+
 ### Ingestion & scalability
 
 | Variable | Default | Description |
@@ -390,19 +441,33 @@ Active model resolution: `GET /config/models`
 ## API reference
 
 ```bash
-# Query
+# Query (dev — body user_id/role when AUTH_ALLOW_BODY_FALLBACK=true)
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
   -d '{"question": "Which customers ordered the most?", "user_id": "regular_001", "role": "regular_office"}'
 
-# Upload PDF
+# Query (production — Google ID token)
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $GOOGLE_ID_TOKEN" \
+  -d '{"question": "List all table of contents for the Go.Data document."}'
+
+# Upload PDF (admin JWT required)
 curl -X POST http://localhost:8000/ingest/unstructured \
+  -H "Authorization: Bearer $GOOGLE_ID_TOKEN" \
   -F "file=@doc.pdf" -F "doc_key=my-doc"
 
-# Job status
-curl http://localhost:8000/ingest/jobs/{job_id}
-curl http://localhost:8000/ingest/jobs?limit=20
-curl http://localhost:8000/ingest/queue/status
+# Job status (admin JWT required)
+curl -H "Authorization: Bearer $GOOGLE_ID_TOKEN" \
+  http://localhost:8000/ingest/jobs/{job_id}
+curl -H "Authorization: Bearer $GOOGLE_ID_TOKEN" \
+  "http://localhost:8000/ingest/jobs?limit=20"
+curl -H "Authorization: Bearer $GOOGLE_ID_TOKEN" \
+  http://localhost:8000/ingest/queue/status
+
+# Auth helpers
+curl http://localhost:8000/auth/config
+curl -H "Authorization: Bearer $GOOGLE_ID_TOKEN" http://localhost:8000/auth/me
 
 # Health / active models
 curl http://localhost:8000/health
@@ -413,14 +478,52 @@ Response fields from `/ingest/jobs/{id}`: `status`, `dispatch` (`worker` / `back
 
 ---
 
-## RBAC (demo users)
+## Authentication & roles
 
-| User | Documents | Structured DB |
-|------|-----------|---------------|
-| `public_001` | ✅ | ❌ |
-| `regular_001` | ❌ | ✅ |
-| `compliance_001` | ✅ | ✅ |
-| `admin_001` | ✅ | ✅ |
+### How identity is resolved
+
+```mermaid
+flowchart LR
+  subgraph chat [Chat /query]
+    G[Google JWT] --> C[claims + AUTH_EMAIL_ROLE_MAP]
+    C --> JIT[Neo4j User HAS_ROLE]
+    JIT --> RBAC[can_query_knowledge_area]
+    B[Body user_id/role] -.->|only if no JWT and AUTH_ALLOW_BODY_FALLBACK| RBAC
+  end
+  subgraph ingest [Ingest /upload]
+    G2[Google JWT] --> A{role = admin?}
+    A -->|yes| UP[/ingest/* /admin/*]
+    A -->|no| DENY[403]
+  end
+```
+
+| Surface | Auth | Role required |
+|---------|------|----------------|
+| `/chat`, `POST /query`, `POST /query/stream` | JWT recommended; body fallback optional | Any role with data access (`compliance_officer`+ for both graphs) |
+| `/upload`, `POST /ingest/*`, `GET /ingest/*` | **JWT required** (no body fallback) | **`admin`** only |
+| `POST /admin/reset-neo4j` | **JWT required** | **`admin`** (+ `ALLOW_DB_RESET=true`) |
+
+### RBAC by role (Neo4j knowledge areas)
+
+| Role | Documents (`esg`) | Structured (`structured`) | Ingestion |
+|------|-------------------|---------------------------|-----------|
+| `public` | ✅ | ❌ | ❌ |
+| `regular_office` | ❌ | ✅ | ❌ |
+| `compliance_officer` | ✅ | ✅ | ❌ |
+| `admin` | ✅ | ✅ | ✅ |
+
+### Seeded demo users (eval / `AUTH_ALLOW_BODY_FALLBACK`)
+
+| User ID | Role | Documents | Structured |
+|---------|------|-----------|------------|
+| `public_001` | `public` | ✅ | ❌ |
+| `regular_001` | `regular_office` | ❌ | ✅ |
+| `compliance_001` | `compliance_officer` | ✅ | ✅ |
+| `admin_001` | `admin` | ✅ | ✅ |
+
+Google sign-in creates JIT users in Neo4j (`AUTH_JIT_PROVISION=true`). Role is taken from `AUTH_EMAIL_ROLE_MAP` first, else `AUTH_DEFAULT_ROLE`, and re-synced on each login.
+
+**Google OAuth `origin_mismatch`:** the browser origin must exactly match an **Authorized JavaScript origin** (e.g. `http://localhost:8000`, not `127.0.0.1` unless both are registered).
 
 ---
 
@@ -477,7 +580,7 @@ agentic_graph_rag/
 │   ├── graph/                 # Neo4j constants, lifecycle helpers
 │   ├── presentation/          # UI blocks (markdown, tables, charts)
 │   ├── conversation/          # Thread memory + clarification
-│   ├── auth/                  # RBAC (roles, knowledge areas)
+│   ├── auth/                  # RBAC + OIDC (Google JWT, JIT provision, deps)
 │   └── prompts/               # LLM prompts
 ├── eval/
 │   ├── document_rag_suite.json          # 20 Go.Data document questions
@@ -519,7 +622,11 @@ curl http://localhost:8000/ingest/queue/status   # check failed_jobs[]
 
 **Job status lost after restart** — set `REDIS_URL` for durable storage; without it state lives only in the API process.
 
-**Access denied on structured queries** — structured data needs `regular_001`, `compliance_001`, or `admin_001`. PDF questions need `public_001`, `compliance_001`, or `admin_001`.
+**Access denied on structured queries** — with Google sign-in, use `compliance_officer` or `admin` (default: `AUTH_DEFAULT_ROLE=compliance_officer`). In dev sidebar mode: structured needs `regular_001` / `regular_office`; documents need `public_001` / `public`; both graphs need `compliance_001` or `admin_001`.
+
+**Ingestion returns 401/403** — sign in on `/upload` with an email listed in `AUTH_EMAIL_ROLE_MAP=…=admin`. Body `role`/`user_id` fields are **not** accepted on ingest routes.
+
+**Google sign-in: Error 400 `origin_mismatch`** — add `http://localhost:8000` to Authorized JavaScript origins in Google Cloud Console (match the exact URL you open in the browser).
 
 **Rebuild slow** — only rebuild the changed service:
 ```bash
@@ -548,5 +655,11 @@ uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
 ## Security
 
 - Never commit `.env` — it is gitignored
-- `ALLOW_CYPHER_INGEST` and `ALLOW_DB_RESET` are dangerous in production — keep them `false`
+- **Production checklist:**
+  - `AUTH_ENABLED=true`, `AUTH_ALLOW_BODY_FALLBACK=false` (no impersonation via JSON body)
+  - `AUTH_EMAIL_ROLE_MAP=your-admin@company.com=admin` — only listed emails can ingest
+  - `AUTH_DEFAULT_ROLE=compliance_officer` (or tighter) for everyone else
+  - `ALLOW_CYPHER_INGEST=false`, `ALLOW_DB_RESET=false`
+  - Do not publish Neo4j (17474/17687) or Redis (6379) to the public internet
+- Ingest and admin routes require a verified Google JWT + `admin` role — never trust form `role`/`user_id`
 - Rotate your OpenAI key if it was ever exposed
