@@ -111,19 +111,35 @@
       border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
     }
     .ingest-locked { opacity: 0.45; pointer-events: none; }
+    .dev-admin-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; }
+    .dev-admin-row > div { flex: 1; min-width: 140px; }
   </style>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
   <h1>Document Ingestion</h1>
-  <p><a href="/chat">Open Chat</a> &nbsp;|&nbsp; <a href="/docs">API docs</a></p>
+  <p><a href="/chat">Open Chat</a> &nbsp;|&nbsp; <a href="/docs">API docs</a> &nbsp;|&nbsp; <a href="/feedback">Feedback monitor</a></p>
 
   <div id="auth_card" class="auth-card">
-    <strong>Admin sign-in required</strong>
-    <p class="hint" style="margin:0.35rem 0 0.75rem">Ingestion is limited to mapped admin Google accounts. Chat uses a separate page.</p>
-    <div id="google_signin"></div>
-    <div id="auth_user_chip" class="auth-user-chip" style="display:none;"></div>
-    <button type="button" id="auth_signout" class="auth-signout" style="display:none;">Sign out</button>
+    <strong>Admin identity <span style="font-weight:400;color:#64748b">(dev)</span></strong>
+    <p class="hint" style="margin:0.35rem 0 0.75rem">
+      Ingestion requires <code>role=admin</code> and <code>user_id=admin_001</code> (no Google sign-in on <code>master</code>).
+      For Google OIDC + production auth, use the <code>release/v1.0</code> branch.
+    </p>
+    <div class="dev-admin-row">
+      <div>
+        <label>User ID</label>
+        <input type="text" id="dev_user_id" value="admin_001" onchange="refreshAuthState()" oninput="refreshAuthState()" />
+      </div>
+      <div>
+        <label>Role</label>
+        <select id="dev_role" onchange="refreshAuthState()">
+          <option value="admin" selected>admin</option>
+          <option value="compliance_officer">compliance_officer</option>
+          <option value="regular_office">regular_office</option>
+          <option value="public">public</option>
+        </select>
+      </div>
+    </div>
     <div id="auth_denied" class="hint" style="display:none;color:#b91c1c;margin-top:0.5rem"></div>
   </div>
 
@@ -183,7 +199,7 @@
     <!-- Cypher panel -->
     <div id="panel-cypher" class="hidden">
       <h2>Upload Cypher (schema + data)</h2>
-      <p class="hint">Execute a <code>.cypher</code> file directly in Neo4j. Requires admin Google sign-in and <code>ALLOW_CYPHER_INGEST=true</code>.</p>
+      <p class="hint">Execute a <code>.cypher</code> file directly in Neo4j. Requires <code>role=admin</code> and <code>ALLOW_CYPHER_INGEST=true</code>.</p>
       <label>Cypher file</label>
       <input type="file" id="cypher-file" accept=".cypher,.cql,.txt" />
       <div class="row">
@@ -197,7 +213,7 @@
     <!-- Admin panel -->
     <div id="panel-admin" class="hidden">
       <h2>Admin tools</h2>
-      <p class="hint" style="color:#dc2626">Danger: wipes Neo4j completely. Requires admin Google sign-in and <code>ALLOW_DB_RESET=true</code>.</p>
+      <p class="hint" style="color:#dc2626">Danger: wipes Neo4j completely. Requires <code>role=admin</code> and <code>ALLOW_DB_RESET=true</code>.</p>
       <button class="danger" onclick="resetDb()"><div class="spinner"></div><span>Reset Neo4j DB</span></button>
       <div id="admin-status" style="margin-top:0.75rem;font-size:0.88rem"></div>
     </div>
@@ -219,135 +235,52 @@
   </div>
 
   <script>
-    const AUTH_TOKEN_KEY = 'rag_id_token';
-    let authConfig = { enabled: false, google_client_id: '' };
     let currentRole = null;
 
-    function getStoredToken() {
-      try { return sessionStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch (_) { return ''; }
-    }
-    function setStoredToken(token) {
-      try {
-        if (token) sessionStorage.setItem(AUTH_TOKEN_KEY, token);
-        else sessionStorage.removeItem(AUTH_TOKEN_KEY);
-      } catch (_) { /* ignore */ }
-    }
-    function authHeaders(extra) {
-      const h = Object.assign({}, extra || {});
-      const token = getStoredToken();
-      if (token) h['Authorization'] = 'Bearer ' + token;
-      return h;
+    function getDevAdmin() {
+      return {
+        user_id: (document.getElementById('dev_user_id').value || 'admin_001').trim(),
+        role: document.getElementById('dev_role').value || 'public',
+      };
     }
 
-    async function refreshAuthState() {
-      const chip = document.getElementById('auth_user_chip');
-      const signout = document.getElementById('auth_signout');
+    function appendDevAdmin(formData) {
+      const d = getDevAdmin();
+      formData.append('user_id', d.user_id);
+      formData.append('role', d.role);
+    }
+
+    function devAdminQuery() {
+      const d = getDevAdmin();
+      return 'user_id=' + encodeURIComponent(d.user_id) + '&role=' + encodeURIComponent(d.role);
+    }
+
+    function refreshAuthState() {
       const denied = document.getElementById('auth_denied');
       const card = document.getElementById('auth_card');
       const ingest = document.getElementById('ingest_card');
       const jobsCard = document.getElementById('jobs_card');
       const queueBar = document.getElementById('queue-bar');
-      const token = getStoredToken();
+      const d = getDevAdmin();
+      currentRole = d.role;
 
       denied.style.display = 'none';
-      currentRole = null;
-
-      if (!authConfig.enabled) {
-        chip.style.display = 'block';
-        chip.textContent = 'AUTH_ENABLED=false — enable auth for ingestion.';
-        ingest.classList.add('ingest-locked');
-        jobsCard.classList.add('ingest-locked');
-        queueBar.classList.add('ingest-locked');
-        return;
-      }
-
-      if (!token) {
-        chip.style.display = 'none';
-        signout.style.display = 'none';
-        document.getElementById('google_signin').style.display = 'block';
-        ingest.classList.add('ingest-locked');
-        jobsCard.classList.add('ingest-locked');
-        queueBar.classList.add('ingest-locked');
+      if (d.role === 'admin') {
         card.classList.remove('denied');
-        initGoogleSignIn();
-        return;
-      }
-
-      try {
-        const res = await fetch('/auth/me', { headers: authHeaders({}) });
-        if (res.ok) {
-          const me = await res.json();
-          currentRole = me.role;
-          const who = me.email || me.user_id || 'user';
-          chip.style.display = 'block';
-          chip.textContent = 'Signed in: ' + who + ' · role: ' + (me.role || '?');
-          signout.style.display = 'inline-block';
-          document.getElementById('google_signin').style.display = 'none';
-
-          if (me.role === 'admin') {
-            card.classList.remove('denied');
-            ingest.classList.remove('ingest-locked');
-            jobsCard.classList.remove('ingest-locked');
-            queueBar.classList.remove('ingest-locked');
-            refreshQueueStatus();
-            loadJobList();
-          } else {
-            card.classList.add('denied');
-            denied.style.display = 'block';
-            denied.textContent = 'Your account has chat access only (role: ' + me.role + '). Ingestion requires admin.';
-            ingest.classList.add('ingest-locked');
-            jobsCard.classList.add('ingest-locked');
-            queueBar.classList.add('ingest-locked');
-          }
-          return;
-        }
-      } catch (_) { /* fall through */ }
-
-      chip.style.display = 'block';
-      chip.textContent = 'Session expired — sign in again.';
-      setStoredToken('');
-      refreshAuthState();
-    }
-
-    function handleGoogleCredential(response) {
-      if (response && response.credential) {
-        setStoredToken(response.credential);
-        refreshAuthState();
+        ingest.classList.remove('ingest-locked');
+        jobsCard.classList.remove('ingest-locked');
+        queueBar.classList.remove('ingest-locked');
+        refreshQueueStatus();
+        loadJobList();
+      } else {
+        card.classList.add('denied');
+        denied.style.display = 'block';
+        denied.textContent = 'Ingestion requires role=admin (current: ' + d.role + ').';
+        ingest.classList.add('ingest-locked');
+        jobsCard.classList.add('ingest-locked');
+        queueBar.classList.add('ingest-locked');
       }
     }
-
-    function initGoogleSignIn() {
-      if (!authConfig.enabled || !authConfig.google_client_id) return;
-      if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) {
-        setTimeout(initGoogleSignIn, 400);
-        return;
-      }
-      const slot = document.getElementById('google_signin');
-      slot.innerHTML = '';
-      slot.style.display = 'flex';
-      google.accounts.id.initialize({
-        client_id: authConfig.google_client_id,
-        callback: handleGoogleCredential,
-        auto_select: false,
-      });
-      google.accounts.id.renderButton(slot, { theme: 'outline', size: 'large', width: 280, text: 'signin_with' });
-    }
-
-    async function loadAuthConfig() {
-      try {
-        const res = await fetch('/auth/config');
-        if (res.ok) authConfig = await res.json();
-      } catch (_) { /* ignore */ }
-      refreshAuthState();
-    }
-
-    document.getElementById('auth_signout').addEventListener('click', () => {
-      setStoredToken('');
-      if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
-        google.accounts.id.disableAutoSelect();
-      }
-      refreshAuthState();
-    });
 
     // ── File staging ────────────────────────────────────────────────────────
     let stagedFiles = [];
@@ -396,7 +329,7 @@
 
     // ── Submit all staged files concurrently ────────────────────────────────
     async function submitAll() {
-      if (currentRole !== 'admin') { alert('Admin Google sign-in required for ingestion.'); return; }
+      if (currentRole !== 'admin') { alert('Set role=admin for ingestion.'); return; }
       if (!stagedFiles.length) { alert('Select at least one PDF file.'); return; }
       const btn = document.getElementById('submit-btn');
       btn.disabled = true; btn.classList.add('loading');
@@ -411,6 +344,7 @@
         fd.append('file', file);
         if (jobName)   fd.append('job_name', jobName || file.name);
         if (keyPrefix) fd.append('doc_key', stagedFiles.length === 1 ? keyPrefix : `${keyPrefix}-${i+1}`);
+        appendDevAdmin(fd);
         return submitFile(fd, file.name);
       });
 
@@ -430,7 +364,7 @@
       upsertJobCard({ job_id: tempId, _filename: filename, status: 'uploading', dispatch: null, logs: [] });
 
       try {
-        const res = await fetch('/ingest/unstructured', { method: 'POST', headers: authHeaders(), body: formData });
+        const res = await fetch('/ingest/unstructured', { method: 'POST', body: formData });
         if (!res.ok) {
           const t = await res.text();
           let msg = t; try { msg = JSON.parse(t).detail || t; } catch(_) {}
@@ -450,7 +384,7 @@
 
     // ── Cypher submit ───────────────────────────────────────────────────────
     async function submitCypher() {
-      if (currentRole !== 'admin') { alert('Admin Google sign-in required.'); return; }
+      if (currentRole !== 'admin') { alert('Set role=admin for ingestion.'); return; }
       const file = document.getElementById('cypher-file').files[0];
       if (!file) { alert('Select a Cypher file.'); return; }
       const fd = new FormData();
@@ -459,9 +393,10 @@
       const key = document.getElementById('cypher-openai-key').value;
       if (jn) fd.append('job_name', jn);
       if (key) fd.append('openai_key', key);
+      appendDevAdmin(fd);
 
       try {
-        const res = await fetch('/ingest/cypher', { method: 'POST', headers: authHeaders(), body: fd });
+        const res = await fetch('/ingest/cypher', { method: 'POST', body: fd });
         const data = await res.json();
         if (!res.ok) { alert('Error: ' + (data.detail || JSON.stringify(data))); return; }
         upsertJobCard({ ...data, _filename: file.name, logs: [] });
@@ -477,7 +412,7 @@
       if (activePolls.has(jobId)) clearInterval(activePolls.get(jobId));
       const tick = async () => {
         try {
-          const res = await fetch('/ingest/jobs/' + encodeURIComponent(jobId), { headers: authHeaders() });
+          const res = await fetch('/ingest/jobs/' + encodeURIComponent(jobId) + '?' + devAdminQuery());
           if (!res.ok) return;
           const data = await res.json();
           data._filename = filename;
@@ -583,7 +518,7 @@
     // ── Job list (GET /ingest/jobs) ─────────────────────────────────────────
     async function loadJobList() {
       try {
-        const res = await fetch('/ingest/jobs?limit=20', { headers: authHeaders() });
+        const res = await fetch('/ingest/jobs?limit=20&' + devAdminQuery());
         if (!res.ok) return;
         const jobs = await res.json();
         for (const j of jobs) {
@@ -602,7 +537,7 @@
     // ── Queue status bar ────────────────────────────────────────────────────
     async function refreshQueueStatus() {
       try {
-        const res = await fetch('/ingest/queue/status', { headers: authHeaders() });
+        const res = await fetch('/ingest/queue/status?' + devAdminQuery());
         const data = await res.json();
         const dot = document.getElementById('redis-dot');
         const label = document.getElementById('redis-label');
@@ -637,10 +572,10 @@
 
     // ── Admin ───────────────────────────────────────────────────────────────
     async function resetDb() {
-      if (currentRole !== 'admin') { alert('Admin Google sign-in required.'); return; }
+      if (currentRole !== 'admin') { alert('Set role=admin for admin tools.'); return; }
       if (!confirm('WIPE Neo4j completely — are you sure?')) return;
       try {
-        const res = await fetch('/admin/reset-neo4j', { method: 'POST', headers: authHeaders() });
+        const res = await fetch('/admin/reset-neo4j?' + devAdminQuery(), { method: 'POST' });
         const data = await res.json();
         document.getElementById('admin-status').textContent =
           res.ok ? '✅ ' + data.message : '❌ ' + (data.detail || JSON.stringify(data));
@@ -655,7 +590,8 @@
     }
 
     // ── Init ─────────────────────────────────────────────────────────────────
-    loadAuthConfig().then(() => toggleAutoRefresh(true));
+    refreshAuthState();
+    toggleAutoRefresh(true);
   </script>
 </body>
 </html>

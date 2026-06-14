@@ -719,15 +719,10 @@
         </h2>
       </div>
       <div class="content">
-        <div id="auth_panel" class="auth-panel">
-          <label>Sign in</label>
-          <div id="google_signin" class="google-signin-slot"></div>
-          <div id="auth_user_chip" class="auth-user-chip" style="display:none;"></div>
-          <button type="button" id="auth_signout" class="auth-signout" style="display:none;">Sign out</button>
-        </div>
+        <div id="auth_panel" class="auth-panel" style="display:none;"></div>
 
         <div id="dev_identity" class="dev-identity">
-          <label>Role <span class="dev-hint">(dev)</span></label>
+          <label>Role</label>
           <select id="role">
             <option value="public">public</option>
             <option value="regular_office">regular_office</option>
@@ -753,8 +748,9 @@
         </div>
 
         <div class="hint">
-          Use seeded users if you see permission errors:
+          Pick role and user for RBAC. Seeded users:
           <code>public_001</code>, <code>compliance_001</code>, <code>admin_001</code>.
+          For Google OIDC sign-in, use the <code>release/v1.0</code> branch.
         </div>
       </div>
     </div>
@@ -779,7 +775,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script>
     const chatBody = document.getElementById('chat_body');
     const q = document.getElementById('q');
@@ -787,7 +782,6 @@
     const statusBadge = document.getElementById('status');
     const errBox = document.getElementById('err');
 
-    const AUTH_TOKEN_KEY = 'rag_id_token';
     const THREAD_SUFFIX_KEY = 'rag_thread_suffix';
     const THREAD_OWNER_KEY = 'rag_thread_owner';
     let authConfig = { enabled: false, google_client_id: '', allow_body_fallback: true, feedback_enabled: false };
@@ -803,15 +797,7 @@
 
     function getThreadOwnerId() {
       if (cachedAuthUserId) return cachedAuthUserId;
-      const token = getStoredToken();
-      if (token) {
-        const payload = parseJwtPayload(token);
-        if (payload && payload.sub) return payload.sub;
-      }
-      if (!authConfig.enabled || authConfig.allow_body_fallback) {
-        return (document.getElementById('user_id').value || 'public_001').trim();
-      }
-      return 'anonymous';
+      return (document.getElementById('user_id').value || 'public_001').trim();
     }
 
     function resetThreadSuffix() {
@@ -843,132 +829,19 @@
       return owner + ':' + suffix;
     }
 
-    function getStoredToken() {
-      try { return sessionStorage.getItem(AUTH_TOKEN_KEY) || ''; } catch (_) { return ''; }
-    }
-
-    function setStoredToken(token) {
-      try {
-        if (token) sessionStorage.setItem(AUTH_TOKEN_KEY, token);
-        else sessionStorage.removeItem(AUTH_TOKEN_KEY);
-      } catch (_) { /* ignore */ }
-    }
-
     function authHeaders(extra) {
-      const h = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
-      const token = getStoredToken();
-      if (token) h['Authorization'] = 'Bearer ' + token;
-      return h;
-    }
-
-    function parseJwtPayload(token) {
-      try {
-        const part = token.split('.')[1];
-        return JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
-      } catch (_) { return null; }
-    }
-
-    async function refreshAuthChip() {
-      const chip = document.getElementById('auth_user_chip');
-      const token = getStoredToken();
-      if (!token) return;
-      try {
-        const res = await fetch('/auth/me', { headers: authHeaders({}) });
-        if (res.ok) {
-          const me = await res.json();
-          cachedAuthUserId = me.user_id || null;
-          const who = me.email || me.user_id || 'user';
-          chip.textContent = 'Signed in: ' + who + ' · role: ' + (me.role || '?');
-          ensureThreadSuffix();
-          return;
-        }
-      } catch (_) { /* fall through */ }
-      const payload = parseJwtPayload(token);
-      const email = payload && (payload.email || payload.sub);
-      chip.textContent = email ? ('Signed in: ' + email) : 'Signed in';
-    }
-
-    function updateAuthUI() {
-      const panel = document.getElementById('auth_panel');
-      const devBox = document.getElementById('dev_identity');
-      const chip = document.getElementById('auth_user_chip');
-      const signout = document.getElementById('auth_signout');
-      const googleSlot = document.getElementById('google_signin');
-      const token = getStoredToken();
-
-      if (!authConfig.enabled) {
-        panel.style.display = 'none';
-        devBox.style.display = 'block';
-        return;
-      }
-
-      panel.style.display = 'block';
-
-      if (token) {
-        // JWT wins on the API — hide dev role/user pickers so they are not misleading.
-        devBox.style.display = 'none';
-        chip.style.display = 'block';
-        signout.style.display = 'block';
-        googleSlot.style.display = 'none';
-        refreshAuthChip();
-      } else {
-        chip.style.display = 'none';
-        signout.style.display = 'none';
-        googleSlot.style.display = 'flex';
-        devBox.style.display = authConfig.allow_body_fallback ? 'block' : 'none';
-        initGoogleSignIn();
-      }
-    }
-
-    function handleGoogleCredential(response) {
-      if (response && response.credential) {
-        setStoredToken(response.credential);
-        cachedAuthUserId = null;
-        resetThreadSuffix();
-        updateAuthUI();
-        setStatus('Signed in');
-      }
-    }
-
-    function initGoogleSignIn() {
-      if (!authConfig.enabled || !authConfig.google_client_id) return;
-      if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) {
-        setTimeout(initGoogleSignIn, 400);
-        return;
-      }
-      const slot = document.getElementById('google_signin');
-      slot.innerHTML = '';
-      google.accounts.id.initialize({
-        client_id: authConfig.google_client_id,
-        callback: handleGoogleCredential,
-        auto_select: false,
-      });
-      google.accounts.id.renderButton(slot, {
-        theme: 'outline',
-        size: 'large',
-        width: 260,
-        text: 'signin_with',
-      });
+      return Object.assign({ 'Content-Type': 'application/json' }, extra || {});
     }
 
     async function loadAuthConfig() {
       try {
         const res = await fetch('/auth/config');
-        if (res.ok) authConfig = await res.json();
-      } catch (_) { /* dev without auth */ }
-      updateAuthUI();
+        if (res.ok) {
+          const cfg = await res.json();
+          authConfig.feedback_enabled = !!cfg.feedback_enabled;
+        }
+      } catch (_) { /* ignore */ }
     }
-
-    document.getElementById('auth_signout').addEventListener('click', () => {
-      setStoredToken('');
-      cachedAuthUserId = null;
-      resetThreadSuffix();
-      if (typeof google !== 'undefined' && google.accounts && google.accounts.id) {
-        google.accounts.id.disableAutoSelect();
-      }
-      updateAuthUI();
-      setStatus('Signed out');
-    });
 
     loadAuthConfig();
 
@@ -1714,11 +1587,6 @@
       const question = q.value.trim();
       if (!question) return;
       clearError();
-
-      if (authConfig.enabled && !getStoredToken() && !authConfig.allow_body_fallback) {
-        showError('Sign in with Google to continue.');
-        return;
-      }
 
       addMessage('user', question);
       q.value = '';
