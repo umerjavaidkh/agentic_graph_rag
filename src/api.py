@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from .graph.driver import close_neo4j_driver, get_neo4j_driver
@@ -16,7 +16,7 @@ from .bridge import ask
 from .conversation import clear_turn
 from .logging_config import setup_logging
 from .auth.rbac_setup import GraphRBAC
-from .auth.oidc import auth_public_config, require_admin_session, resolve_scoped_thread_id, resolve_user_context
+from .auth.oidc import auth_public_config, resolve_admin_session, resolve_scoped_thread_id, resolve_user_context
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
@@ -471,8 +471,14 @@ async def ingest_unstructured(
         ),
     ),
     authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Form(None),
+    role: Optional[str] = Form(None),
 ):
-    require_admin_session(authorization=authorization)
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+    )
     # No 409 gate: multiple concurrent uploads are fine. The per-doc Redis lock
     # (inside IngestionManager._doc_lock) serialises revision installs for the
     # same logical document while allowing different documents to run in parallel.
@@ -494,18 +500,24 @@ async def ingest_cypher(
     job_name: Optional[str] = Form(None),
     openai_key: Optional[str] = Form(default=None),
     authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Form(None),
+    role: Optional[str] = Form(None),
 ):
     """
     Upload and execute arbitrary Cypher against Neo4j.
 
     Security:
     - Disabled by default (set ALLOW_CYPHER_INGEST=true to enable)
-    - Requires Google/OIDC sign-in and admin role
+    - Admin role required (JWT when AUTH_ENABLED, else body role=admin)
     """
     if not ALLOW_CYPHER_INGEST:
         raise HTTPException(status_code=403, detail="Cypher ingestion is disabled. Set ALLOW_CYPHER_INGEST=true to enable.")
 
-    require_admin_session(authorization=authorization)
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+    )
 
     cypher_params = {}
     effective_openai_key = openai_key or OPENAI_API_KEY
@@ -527,13 +539,19 @@ async def ingest_cypher(
 async def list_ingestion_jobs(
     limit: int = 50,
     authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
 ):
     """
     List recent ingestion jobs (newest first).
 
     Works in both in-process (InMemoryJobStore) and Redis-backed modes.
     """
-    require_admin_session(authorization=authorization)
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+    )
     store = get_job_store()
     ids = store.list_ids(limit=limit)
     summaries = []
@@ -562,8 +580,14 @@ async def list_ingestion_jobs(
 async def get_ingestion_job(
     job_id: str,
     authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
 ):
-    require_admin_session(authorization=authorization)
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+    )
     job = ingestion_manager.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -589,14 +613,22 @@ async def get_ingestion_job(
 
 
 @app.get("/ingest/queue/status")
-async def ingest_queue_status(authorization: Optional[str] = Header(default=None)):
+async def ingest_queue_status(
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+):
     """
     Queue depth and dead-letter (failed) job visibility.
 
     Returns queue depth and recent failed jobs from the RQ FailedJobRegistry.
     When Redis is not configured all counts are None.
     """
-    require_admin_session(authorization=authorization)
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+    )
     depth = queue_depth()
     failed = list_failed_jobs(limit=20)
     return {
@@ -607,12 +639,16 @@ async def ingest_queue_status(authorization: Optional[str] = Header(default=None
 
 
 @app.post("/admin/reset-neo4j")
-async def reset_neo4j(authorization: Optional[str] = Header(default=None)):
+async def reset_neo4j(
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+):
     """
     DANGEROUS: Wipes Neo4j database contents.
 
     - Disabled by default (ALLOW_DB_RESET=true to enable)
-    - Requires Google/OIDC sign-in and admin role
+    - Admin role required (JWT when AUTH_ENABLED, else body role=admin)
     """
     if not ALLOW_DB_RESET:
         raise HTTPException(
@@ -620,7 +656,11 @@ async def reset_neo4j(authorization: Optional[str] = Header(default=None)):
             detail="DB reset is disabled. Set ALLOW_DB_RESET=true to enable.",
         )
 
-    require_admin_session(authorization=authorization)
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+    )
 
     driver = get_neo4j_driver()
     dropped_indexes = 0

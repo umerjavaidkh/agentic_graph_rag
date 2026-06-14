@@ -76,18 +76,63 @@ def require_bearer_session(
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+def resolve_admin_session(
+    *,
+    authorization: Optional[str] = None,
+    body_user_id: Optional[str] = None,
+    body_role: Optional[str] = None,
+) -> AuthSession:
+    """
+    Admin principal for ingestion and /admin/*.
+
+    - AUTH_ENABLED + Bearer JWT: verified token, admin role required.
+    - AUTH_ENABLED=false (default branch): body user_id + role=admin (dev sidebar).
+    """
+    cfg = get_oidc_config()
+    token = extract_bearer_token(authorization)
+
+    if token:
+        try:
+            claims_dict = verify_bearer_token(token, cfg)
+            verified = parse_verified_claims(claims_dict)
+            user = build_user_context(claims_dict, cfg=cfg, rbac=_get_rbac())
+            if not user.has_role(Role.ADMIN):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Admin role required. Ingestion is limited to mapped admin accounts.",
+                )
+            return AuthSession(user=user, auth_mode="jwt", claims=verified)
+        except AuthenticationError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    if cfg.enabled:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required. Sign in and send Authorization: Bearer <token>.",
+        )
+
+    try:
+        role = validate_role(body_role or "public")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if role != Role.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin role required. Set role=admin on the upload page (dev mode).",
+        )
+    user = UserContext(
+        user_id=(body_user_id or "admin_001").strip(),
+        role=role,
+    )
+    return AuthSession(user=user, auth_mode="body_fallback")
+
+
 def require_admin_session(
     *,
     authorization: Optional[str] = None,
 ) -> AuthSession:
-    """JWT required; principal must have admin role (e.g. via AUTH_EMAIL_ROLE_MAP)."""
-    session = require_bearer_session(authorization=authorization)
-    if not session.user.has_role(Role.ADMIN):
-        raise HTTPException(
-            status_code=403,
-            detail="Admin role required. Ingestion is limited to mapped admin accounts.",
-        )
-    return session
+    """JWT-only admin (legacy). Prefer resolve_admin_session for ingest routes."""
+    return resolve_admin_session(authorization=authorization)
 
 
 def resolve_user_context(

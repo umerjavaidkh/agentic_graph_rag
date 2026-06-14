@@ -32,10 +32,20 @@ The core platform is **feature-complete** for a production-oriented v1:
 |------|--------|
 | Dual-graph RAG (structured + documents + hybrid) | ✅ |
 | Scalable ingestion (Redis + RQ workers, versioning) | ✅ |
-| Google OIDC auth, RBAC, per-user thread isolation | ✅ |
+| Google OIDC auth, RBAC, per-user thread isolation | ✅ (`release/v1.0`) |
+| Dev sidebar auth (no Google UI on `master`) | ✅ |
 | Streaming answers (`/query/stream`) with charts | ✅ |
 | Retrieval feedback loop + ops dashboard (`/feedback`) | ✅ |
 | Regression eval suites | ✅ |
+
+### Branch strategy
+
+| Branch | Auth in UI | Use case |
+|--------|------------|----------|
+| **`master`** (default) | Sidebar **User ID** + **Role** — no Google sign-in in `/chat` or `/upload` | Local dev, eval, demos |
+| **`release/v1.0`** | **Sign in with Google** (OIDC JWT) + full production RBAC | Deployments with real identity |
+
+Both branches share the same RAG, ingestion, feedback, and eval features. Only the login UX and default env differ.
 
 ### Roadmap (future)
 
@@ -178,40 +188,31 @@ curl -X POST http://localhost:8000/ingest/unstructured \
   -F "file=@sample_data_to_test/unstructured/rag_document.pdf" \
   -F "doc_key=rag-document"
 
-# Cypher data (requires ALLOW_CYPHER_INGEST=true + admin Google sign-in)
+# Cypher data (requires ALLOW_CYPHER_INGEST=true + admin role)
 curl -X POST http://localhost:8000/ingest/cypher \
-  -H "Authorization: Bearer $GOOGLE_ID_TOKEN" \
-  -F "file=@sample_data_to_test/structured/northwind-data.cypher"
+  -F "file=@sample_data_to_test/structured/northwind-data.cypher" \
+  -F "user_id=admin_001" \
+  -F "role=admin"
 ```
 
 `doc_key` controls versioning: same key + same file → skipped; same key + changed file → new revision.
 
-**Ingestion requires Google sign-in as an admin** — see [Authentication & roles](#authentication--roles). Use `/upload` in the browser (Sign in with Google) or pass the ID token from GIS as `Authorization: Bearer <token>`.
+**Ingestion requires `role=admin`** — on `master`, use the **User ID / Role** picker on `/upload` (`admin_001` + `admin`). On `release/v1.0`, sign in with Google as a mapped admin — see [Authentication & roles](#authentication--roles).
 
 ---
 
 ## Try it in chat
 
-### With Google sign-in (`AUTH_ENABLED=true`)
+### Dev sidebar (`master` default — `AUTH_ENABLED=false`)
 
-1. Set `GOOGLE_CLIENT_ID` in `.env` and register `http://localhost:8000` as an **Authorized JavaScript origin** in Google Cloud Console.
-2. Open `/chat` → **Sign in with Google**.
-3. Default signed-in users get **`compliance_officer`** (documents + structured). Emails listed in `AUTH_EMAIL_ROLE_MAP` with `=admin` can use `/upload` for ingestion.
-
-| Track | Prerequisite | Signed-in role |
-|-------|--------------|----------------|
-| **Structured** | Northwind loaded via `/upload` (admin) | `compliance_officer` or `admin` |
-| **Unstructured** | PDF ingested via `/upload` (admin) | `compliance_officer` or `admin` |
-| **Hybrid** | Both loaded | `compliance_officer` or `admin` |
-| **Ingestion** | Admin email in `AUTH_EMAIL_ROLE_MAP` | `admin` only |
-
-### Dev / eval without Google (`AUTH_ENABLED=false`, or `AUTH_ALLOW_BODY_FALLBACK=true` while unsigned in)
+Open `/chat`, pick **User ID** and **Role** in the sidebar. No Google sign-in.
 
 | Track | Prerequisite | User ID | Role |
 |-------|--------------|---------|------|
 | **Structured** | Northwind loaded | `regular_001` | `regular_office` |
 | **Unstructured** | PDF ingested | `public_001` | `public` |
 | **Hybrid** | Both loaded | `compliance_001` | `compliance_officer` |
+| **Ingestion** | — | `admin_001` | `admin` (use `/upload`) |
 
 **Structured quick checks:**
 ```
@@ -229,6 +230,21 @@ What is the URL for the Go.Data Community of Practice portal?
 ```
 Show compliance incidents and summarize the related policy guidance.
 ```
+
+### Google OIDC (`release/v1.0` — `AUTH_ENABLED=true`)
+
+Check out `release/v1.0` for **Sign in with Google** in `/chat` and `/upload`.
+
+1. Set `GOOGLE_CLIENT_ID` in `.env` and register `http://localhost:8000` as an **Authorized JavaScript origin** in Google Cloud Console.
+2. Open `/chat` → **Sign in with Google**.
+3. Default signed-in users get **`compliance_officer`** (documents + structured). Emails listed in `AUTH_EMAIL_ROLE_MAP` with `=admin` can use `/upload` for ingestion.
+
+| Track | Prerequisite | Signed-in role |
+|-------|--------------|----------------|
+| **Structured** | Northwind loaded via `/upload` (admin) | `compliance_officer` or `admin` |
+| **Unstructured** | PDF ingested via `/upload` (admin) | `compliance_officer` or `admin` |
+| **Hybrid** | Both loaded | `compliance_officer` or `admin` |
+| **Ingestion** | Admin email in `AUTH_EMAIL_ROLE_MAP` | `admin` only |
 
 ### Regression eval (optional)
 
@@ -371,10 +387,14 @@ Active model resolution: `GET /config/models`
 
 ### Authentication & roles
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AUTH_ENABLED` | `false` | `true` → chat/upload require Google (or OIDC) for production paths |
-| `GOOGLE_CLIENT_ID` | *(empty)* | OAuth 2.0 Web client ID (GIS button in `/chat` and `/upload`) |
+**`master` (default):** `AUTH_ENABLED=false` — sidebar `user_id` + `role` for `/query`; `/upload` and `/admin/*` require `role=admin` via form/query params.
+
+**`release/v1.0`:** `AUTH_ENABLED=true` + `GOOGLE_CLIENT_ID` — Sign in with Google in the UI; JWT overrides body identity.
+
+| Variable | Default (`master`) | Description |
+|----------|-------------------|-------------|
+| `AUTH_ENABLED` | `false` | `true` → chat/upload require Google (or OIDC); use on `release/v1.0` |
+| `GOOGLE_CLIENT_ID` | *(empty)* | OAuth 2.0 Web client ID — **GIS button on `release/v1.0` only** |
 | `AUTH_DEFAULT_ROLE` | `compliance_officer` | Role assigned to new Google users (chat: documents + structured) |
 | `AUTH_EMAIL_ROLE_MAP` | *(empty)* | Comma-separated `email=role` overrides, e.g. `you@corp.com=admin` |
 | `AUTH_JIT_PROVISION` | `true` | On each login, sync User + `HAS_ROLE` in Neo4j from config/maps |
@@ -382,14 +402,22 @@ Active model resolution: `GET /config/models`
 | `AUTH_PROVIDER` | `google` | `google` or `oidc` (corporate IdP via `OIDC_ISSUER`, `OIDC_AUDIENCE`) |
 | `AUTH_CLAIM_ROLE_MAP` | *(empty)* | Optional IdP group → role map (JSON or `Group=role` pairs) |
 
-**Admin configuration (ingestion):** map operator Google emails to `admin` in `.env`:
+**Admin configuration (ingestion on `release/v1.0`):** map operator Google emails to `admin` in `.env`:
 
 ```env
+# release/v1.0 production example
 AUTH_ENABLED=true
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 AUTH_DEFAULT_ROLE=compliance_officer
 AUTH_EMAIL_ROLE_MAP=you@company.com=admin
 AUTH_ALLOW_BODY_FALLBACK=false   # production: Google only for /query
+```
+
+**Dev defaults on `master`:**
+
+```env
+AUTH_ENABLED=false
+AUTH_ALLOW_BODY_FALLBACK=true
 ```
 
 - **`admin`** — ingestion (`/upload`, `/ingest/*`), `/admin/reset-neo4j`, full RBAC.
