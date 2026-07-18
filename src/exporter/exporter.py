@@ -28,6 +28,10 @@ from ..config.settings import NEO4J_WRITE_BATCH
 from ..document.versioning import DocumentRevisionPlan
 from ..graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
 from ..models import DKGNode, DKGEdge, NodeType, RelType
+from ..storage.blob.base import BlobStore
+from ..storage.blob.factory import get_blob_store
+from ..storage.vector.base import VectorStore
+from ..storage.vector.factory import get_vector_store
 
 
 OUTPUT_DIR = Path("output")
@@ -35,10 +39,21 @@ OUTPUT_DIR = Path("output")
 
 class Neo4jExporter:
 
-    def __init__(self, output_dir: str | Path = OUTPUT_DIR):
+    def __init__(
+        self,
+        output_dir: str | Path = OUTPUT_DIR,
+        blob_store: BlobStore | None = None,
+        vector_store: VectorStore | None = None,
+    ):
         self.out = Path(output_dir)
         (self.out / "nodes").mkdir(parents=True, exist_ok=True)
         (self.out / "edges").mkdir(parents=True, exist_ok=True)
+        # Dual-write: Neo4j properties stay authoritative (existing reads on
+        # already-ingested data keep working unmodified); text/embeddings are
+        # additionally written here so the blob/vector-store interfaces are
+        # exercised on every new ingest, with no backfill of prior revisions.
+        self.blob_store = blob_store or get_blob_store()
+        self.vector_store = vector_store or get_vector_store()
 
     def _label_to_str(self, label: str | NodeType) -> str:
         if isinstance(label, NodeType):
@@ -174,8 +189,7 @@ class Neo4jExporter:
     ) -> None:
         session.execute_write(self._install_revision_tx, plan, nodes, edges)
 
-    @staticmethod
-    def _install_revision_tx(tx, plan: DocumentRevisionPlan, nodes, edges) -> None:
+    def _install_revision_tx(self, tx, plan: DocumentRevisionPlan, nodes, edges) -> None:
         tx.run(
             f"""
             MERGE (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
@@ -255,6 +269,7 @@ class Neo4jExporter:
         for label, label_nodes in nodes_by_label.items():
             for chunk_start in range(0, len(label_nodes), NEO4J_WRITE_BATCH):
                 chunk = label_nodes[chunk_start : chunk_start + NEO4J_WRITE_BATCH]
+                self._dual_write_chunk(chunk, plan)
                 rows = [Neo4jExporter._node_to_param_dict(n) for n in chunk]
                 tx.run(
                     f"UNWIND $rows AS row "
@@ -305,6 +320,31 @@ class Neo4jExporter:
             root_id=plan.content_root_id,
         )
 
+    def _dual_write_chunk(self, chunk: list[DKGNode], plan: DocumentRevisionPlan) -> None:
+        """
+        Write text/visual_content/embedding to the blob/vector stores in
+        addition to the Neo4j properties set by the caller. Batched per
+        Neo4j UNWIND chunk (not per-node) to match write throughput.
+        """
+        vector_items: list[tuple[str, list[float], dict]] = []
+        for node in chunk:
+            if node.text:
+                node.blob_key_text = f"{plan.logical_id}/{plan.revision_id}/{node.id}/text"
+                self.blob_store.put(node.blob_key_text, node.text)
+            if node.visual_content:
+                node.blob_key_visual = f"{plan.logical_id}/{plan.revision_id}/{node.id}/visual_content"
+                self.blob_store.put(node.blob_key_visual, node.visual_content)
+            if node.embedding:
+                vector_items.append(
+                    (
+                        node.id,
+                        node.embedding,
+                        {"logical_doc_id": plan.logical_id, "revision_id": plan.revision_id},
+                    )
+                )
+        if vector_items:
+            self.vector_store.upsert_batch(vector_items)
+
     @staticmethod
     def _node_to_param_dict(node: DKGNode) -> dict:
         """Serialise a DKGNode to a plain dict for use in UNWIND parameters."""
@@ -332,6 +372,8 @@ class Neo4jExporter:
             "version_number": node.version_number,
             "ingested_at": node.ingested_at,
             "source_filename": node.source_filename,
+            "blob_key_text": node.blob_key_text,
+            "blob_key_visual": node.blob_key_visual,
         }
 
     @staticmethod
@@ -390,6 +432,8 @@ class Neo4jExporter:
 
     def _ensure_indexes(self, session) -> None:
         """Idempotently create full-text + vector indexes on every ingestion."""
+        from ..config.settings import VECTOR_STORE_BACKEND
+
         statements = [
             "CREATE FULLTEXT INDEX node_text_index IF NOT EXISTS "
             "FOR (n:Book|Chapter|Section|Page|Region|Concept) "
@@ -404,12 +448,19 @@ class Neo4jExporter:
             "CREATE INDEX page_order    IF NOT EXISTS FOR (n:Page)    ON (n.order)",
             "CREATE INDEX page_start    IF NOT EXISTS FOR (n:Page)    ON (n.page_start)",
             "CREATE INDEX page_pdf_page IF NOT EXISTS FOR (n:Page) ON (n.pdf_page)",
-            """CREATE VECTOR INDEX section_embedding IF NOT EXISTS
-            FOR (n:Section) ON (n.embedding)
-            OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}""",
             "CREATE INDEX section_logical_rev IF NOT EXISTS "
             "FOR (n:Section) ON (n.logical_doc_id, n.revision_id)",
         ]
+        # The in-process "memory" VectorStore doesn't survive across worker/API
+        # process boundaries, so Neo4j's native vector index stays the real
+        # similarity-search path until a shared external store (Qdrant) is
+        # configured — only then does _vector_seed read from vector_store instead.
+        if VECTOR_STORE_BACKEND != "qdrant":
+            statements.append(
+                """CREATE VECTOR INDEX section_embedding IF NOT EXISTS
+                FOR (n:Section) ON (n.embedding)
+                OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}"""
+            )
         for stmt in statements:
             try:
                 session.run(stmt).consume()

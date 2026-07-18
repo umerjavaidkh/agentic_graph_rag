@@ -49,6 +49,11 @@ CYPHER_INGEST_SKIP_GENAI = os.environ.get("CYPHER_INGEST_SKIP_GENAI", "false").l
 # Disable to keep raw inputs for debugging.
 CLEANUP_TMP_INGEST = os.environ.get("CLEANUP_TMP_INGEST", "true").lower() in ("1", "true", "yes")
 
+# Bulk/corpus ingestion safety rails (directory-scan or manifest ingestion).
+CORPUS_MAX_FILES = int(os.environ.get("CORPUS_MAX_FILES", "100000"))
+CORPUS_MAX_PDF_PAGES = int(os.environ.get("CORPUS_MAX_PDF_PAGES", "2000"))
+CORPUS_SCAN_TIMEOUT = os.environ.get("CORPUS_SCAN_TIMEOUT", "6h")
+
 # SECURITY: Allows wiping the Neo4j database (DROP indexes/constraints + delete all nodes).
 # Keep disabled unless you're in a trusted dev environment.
 ALLOW_DB_RESET = os.environ.get("ALLOW_DB_RESET", "false").lower() in ("1", "true", "yes")
@@ -174,6 +179,22 @@ AXIS2_MAX_LLM_PAIRS = int(os.environ.get("AXIS2_MAX_LLM_PAIRS", "300"))
 
 # Neo4j: UNWIND batch size for node/edge bulk writes.
 NEO4J_WRITE_BATCH = int(os.environ.get("NEO4J_WRITE_BATCH", "2000"))
+
+# ── Blob storage (raw text / visual_content, kept out of Neo4j properties) ──
+BLOB_STORE_BACKEND = os.environ.get("BLOB_STORE_BACKEND", "local").lower()  # local | minio
+LOCAL_BLOB_STORE_DIR = os.environ.get("LOCAL_BLOB_STORE_DIR", str(PROJECT_ROOT / "data" / "blobs"))
+MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
+MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "graphrag-content")
+MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() in ("1", "true", "yes")
+
+# ── Vector storage (embeddings, kept out of Neo4j properties) ──────────────
+VECTOR_STORE_BACKEND = os.environ.get("VECTOR_STORE_BACKEND", "memory").lower()  # memory | qdrant
+VECTOR_DIM = int(os.environ.get("VECTOR_DIM", "1536"))  # matches EMBEDDING_MODEL default
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "sections")
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
 
 # MCP routing: one tool call; args echo the user question verbatim.
 ROUTE_MAX_TOKENS_MIN = llm_max_tokens("ROUTE_MAX_TOKENS_MIN", 64, minimum=32)

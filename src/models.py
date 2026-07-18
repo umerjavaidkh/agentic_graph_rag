@@ -82,6 +82,10 @@ class DKGNode:
     version_number: Optional[int] = None
     ingested_at: Optional[str] = None
     source_filename: Optional[str] = None
+    # Blob-store keys (set by the exporter at write time, not by the parser)
+    # when text/visual_content are dual-written to a BlobStore.
+    blob_key_text: Optional[str] = None
+    blob_key_visual: Optional[str] = None
 
 
 # ─────────────────────────────────────────

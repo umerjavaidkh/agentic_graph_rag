@@ -7,6 +7,7 @@ from typing import Optional
 class IngestionStatus(str, Enum):
     queued = "queued"
     validating = "validating"
+    scanning = "scanning"
     parsing = "parsing"
     building_structure = "building_structure"
     semantic_enrichment = "semantic_enrichment"

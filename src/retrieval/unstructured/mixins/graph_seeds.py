@@ -1,14 +1,21 @@
 """Document RAG retriever — graph seeds."""
 from __future__ import annotations
 
-from ....config.settings import EMBEDDING_MODEL
+from ....config.settings import EMBEDDING_MODEL, VECTOR_STORE_BACKEND
 from ....graph.versioning import lifecycle_active
+from ....storage.vector.factory import get_vector_store
 from ..constants import _GRAPH_REL_TYPES, _TEXT_NODE_LABELS
 from ..model_provider import provider
 
 
 class GraphSeedsMixin:
     def _vector_seed(self, session, embedding: list[float], limit: int) -> list[dict]:
+        # The in-process "memory" VectorStore doesn't survive across worker/API
+        # process boundaries, so only a real shared external store (Qdrant) is
+        # trustworthy as the similarity-search read path; otherwise fall back
+        # to Neo4j's native vector index, which dual-write keeps populated.
+        if VECTOR_STORE_BACKEND == "qdrant":
+            return self._vector_seed_via_vector_store(session, embedding, limit)
         try:
             rows = session.run(
                 f"""
@@ -39,6 +46,46 @@ class GraphSeedsMixin:
                 for r in rows
                 if r["id"]
             ]
+        except Exception:
+            return []
+
+    def _vector_seed_via_vector_store(
+        self, session, embedding: list[float], limit: int
+    ) -> list[dict]:
+        """Similarity search against the external VectorStore, hydrated from Neo4j."""
+        try:
+            hits = get_vector_store().query(embedding, top_k=max(1, limit))
+            if not hits:
+                return []
+            scores = dict(hits)
+            rows = session.run(
+                f"""
+                UNWIND $ids AS nid
+                MATCH (n) WHERE n.id = nid
+                WHERE coalesce(n.text, '') <> ''
+                  AND {lifecycle_active("n")}
+                RETURN
+                  coalesce(n.id, '') AS id,
+                  coalesce(n.title, '') AS title,
+                  coalesce(n.text, '') AS text,
+                  coalesce(labels(n)[0], '') AS node_label
+                """,
+                ids=list(scores.keys()),
+            )
+            by_id = {r["id"]: r for r in rows if r["id"]}
+            results = [
+                {
+                    "id": id,
+                    "title": row["title"] or id,
+                    "text": row["text"],
+                    "node_label": row.get("node_label") or "",
+                    "score": float(scores.get(id, 0.0)),
+                    "related": [],
+                }
+                for id, row in by_id.items()
+            ]
+            results.sort(key=lambda r: r["score"], reverse=True)
+            return results
         except Exception:
             return []
 

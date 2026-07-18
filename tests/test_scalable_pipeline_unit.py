@@ -85,10 +85,16 @@ for _n in ["sklearn", "sklearn.cluster"]:
 sys.modules["sklearn.cluster"].KMeans = MagicMock()
 
 # --- model_providers stubs ---
-for _n in ["src.model_providers", "src.model_providers.factory", "src.model_providers.openai_provider"]:
+for _n in [
+    "src.model_providers",
+    "src.model_providers.base",
+    "src.model_providers.factory",
+    "src.model_providers.openai_provider",
+]:
     if _n not in sys.modules:
         _stub_module(_n)
 _factory_mock = MagicMock()
+sys.modules["src.model_providers.base"].ModelProvider = object
 sys.modules["src.model_providers.factory"].get_model_provider = _factory_mock
 sys.modules["src.model_providers"].get_model_provider = _factory_mock
 
@@ -102,9 +108,17 @@ sys.modules["src.auth.roles"].UserContext = MagicMock()
 sys.modules["src.auth.roles"].validate_role = MagicMock()
 
 # --- document stubs ---
-for _n in ["src.document", "src.document.versioning", "src.document.parser", "src.document.page_vision"]:
+for _n in [
+    "src.document",
+    "src.document.versioning",
+    "src.document.parser",
+    "src.document.parser_base",
+    "src.document.parser_registry",
+    "src.document.page_vision",
+]:
     if _n not in sys.modules:
         _stub_module(_n)
+sys.modules["src.document.parser_base"].DocumentParser = object
 sys.modules["src.document.versioning"].resolve_logical_id = MagicMock(return_value="doc_test")
 sys.modules["src.document.versioning"].build_revision_plan = MagicMock()
 sys.modules["src.document.versioning"].apply_revision_to_graph = MagicMock(return_value=([], []))
@@ -113,13 +127,17 @@ sys.modules["src.document.versioning"].file_content_sha256 = MagicMock(return_va
 sys.modules["src.document.versioning"].DocumentRevisionPlan = MagicMock
 
 sys.modules["src.document.parser"].LightPdfParser = MagicMock()
+_fake_parser_instance = MagicMock()
+sys.modules["src.document.parser_registry"].get_parser = MagicMock(return_value=_fake_parser_instance)
+sys.modules["src.document.parser_registry"].supported_extensions = MagicMock(return_value={".pdf"})
 
-# --- graph.constants stubs ---
-for _n in ["src.graph", "src.graph.constants"]:
+# --- graph.constants / graph.driver stubs ---
+for _n in ["src.graph", "src.graph.constants", "src.graph.driver"]:
     if _n not in sys.modules:
         _stub_module(_n)
 sys.modules["src.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
 sys.modules["src.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
+sys.modules["src.graph.driver"].get_neo4j_driver = MagicMock()
 
 # --- bridge/conversation stubs ---
 for _n in ["src.bridge", "src.conversation", "src.routing", "src.router"]:
@@ -158,6 +176,8 @@ class _IngestionJob:
     content_hash: Optional[str] = None
     version_number: Optional[int] = None
     skipped_duplicate: bool = False
+    owns_input_path: bool = True
+    child_job_ids: List[str] = field(default_factory=list)
 
 # Inject the stub service module BEFORE job_store.py is imported.
 _svc_stub = _stub_module("src.ingestion.service")
@@ -494,3 +514,130 @@ class TestExporterBatch:
         assert "Page" in nodes_by_label
         assert len(nodes_by_label["Section"]) == 3
         assert len(nodes_by_label["Page"]) == 2
+
+
+# ── Test 7: Exporter dual-write to blob/vector stores ───────────────────────
+
+
+class _FakeBlobStore:
+    def __init__(self):
+        self.puts: dict[str, str] = {}
+
+    def put(self, key, content, *, content_type="text/plain"):
+        self.puts[key] = content
+        return key
+
+    def get(self, key):
+        return self.puts.get(key)
+
+    def delete(self, key):
+        self.puts.pop(key, None)
+
+    def exists(self, key):
+        return key in self.puts
+
+    def delete_prefix(self, prefix):
+        return 0
+
+
+class _FakeVectorStore:
+    def __init__(self):
+        self.batches: list[list[tuple]] = []
+
+    def upsert(self, id, embedding, *, metadata=None):
+        self.upsert_batch([(id, embedding, metadata)])
+
+    def upsert_batch(self, items):
+        self.batches.append(list(items))
+
+    def query(self, embedding, top_k=10, *, filters=None):
+        return []
+
+    def delete(self, id):
+        pass
+
+    def delete_by_filter(self, filters):
+        pass
+
+
+class TestExporterDualWrite:
+    def _plan(self):
+        from src.document.versioning import DocumentRevisionPlan
+
+        return DocumentRevisionPlan(
+            logical_id="doc_test",
+            revision_id="doc_test:r1",
+            version_number=1,
+            content_hash="abc123",
+            content_root_id="doc_test:r1::root",
+            title="Test",
+            source_filename="test.pdf",
+        )
+
+    def _make_node(self, node_id="n1", *, text="Hello world", embedding=None, visual=None):
+        from src.models import DKGNode, NodeType
+
+        return DKGNode(
+            id=node_id, type=NodeType.SECTION, title="T", text=text, order=0,
+            embedding=embedding, visual_content=visual,
+        )
+
+    def test_dual_write_chunk_puts_text_and_sets_blob_key(self):
+        from src.exporter.exporter import Neo4jExporter
+
+        blob_store, vector_store = _FakeBlobStore(), _FakeVectorStore()
+        exporter = Neo4jExporter(output_dir="output/_test_dual_write", blob_store=blob_store, vector_store=vector_store)
+        node = self._make_node()
+        plan = self._plan()
+
+        exporter._dual_write_chunk([node], plan)
+
+        assert node.blob_key_text == "doc_test/doc_test:r1/n1/text"
+        assert blob_store.get(node.blob_key_text) == "Hello world"
+
+    def test_dual_write_chunk_batches_embeddings(self):
+        from src.exporter.exporter import Neo4jExporter
+
+        blob_store, vector_store = _FakeBlobStore(), _FakeVectorStore()
+        exporter = Neo4jExporter(output_dir="output/_test_dual_write", blob_store=blob_store, vector_store=vector_store)
+        nodes = [self._make_node(f"n{i}", embedding=[0.1, 0.2]) for i in range(3)]
+        plan = self._plan()
+
+        exporter._dual_write_chunk(nodes, plan)
+
+        assert len(vector_store.batches) == 1  # one batched call, not per-node
+        assert len(vector_store.batches[0]) == 3
+
+    def test_dual_write_chunk_skips_nodes_without_text_or_embedding(self):
+        from src.exporter.exporter import Neo4jExporter
+
+        blob_store, vector_store = _FakeBlobStore(), _FakeVectorStore()
+        exporter = Neo4jExporter(output_dir="output/_test_dual_write", blob_store=blob_store, vector_store=vector_store)
+        node = self._make_node(text="", embedding=None)
+        plan = self._plan()
+
+        exporter._dual_write_chunk([node], plan)
+
+        assert node.blob_key_text is None
+        assert blob_store.puts == {}
+        assert vector_store.batches == []
+
+    def test_node_to_param_dict_includes_blob_keys(self):
+        from src.exporter.exporter import Neo4jExporter
+
+        node = self._make_node()
+        node.blob_key_text = "some/key/text"
+        d = Neo4jExporter._node_to_param_dict(node)
+
+        assert d["blob_key_text"] == "some/key/text"
+        assert d["blob_key_visual"] is None
+
+    def test_exporter_defaults_to_factory_stores_when_not_injected(self):
+        from src.exporter.exporter import Neo4jExporter
+        from src.storage.blob.local_store import LocalFsBlobStore
+        from src.storage.vector.memory_store import InMemoryVectorStore
+
+        exporter = Neo4jExporter(output_dir="output/_test_dual_write")
+
+        assert isinstance(exporter.blob_store, LocalFsBlobStore)
+        assert isinstance(exporter.vector_store, InMemoryVectorStore)

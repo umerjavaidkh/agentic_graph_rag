@@ -65,6 +65,14 @@ services:
       STRUCTURED_FAST_ANSWER: ${STRUCTURED_FAST_ANSWER:-false}
       LOAD_NORTHWIND_DEMO: "true"
       ENABLE_PDF_INGEST: "true"
+      # Blob/vector backends default to local/memory (no extra containers
+      # required for the slim demo). Set BLOB_STORE_BACKEND=minio /
+      # VECTOR_STORE_BACKEND=qdrant in .env and run
+      # `docker compose up minio qdrant app` to opt into the real backends.
+      BLOB_STORE_BACKEND: ${BLOB_STORE_BACKEND:-local}
+      MINIO_ENDPOINT: minio:9000
+      VECTOR_STORE_BACKEND: ${VECTOR_STORE_BACKEND:-memory}
+      QDRANT_URL: http://qdrant:6333
     volumes:
       - app_tmp:/app/tmp_ingest
     depends_on:
@@ -94,6 +102,10 @@ services:
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-password123}
       REDIS_URL: redis://redis:6379/0
       INGEST_QUEUE_NAME: ingest
+      BLOB_STORE_BACKEND: ${BLOB_STORE_BACKEND:-local}
+      MINIO_ENDPOINT: minio:9000
+      VECTOR_STORE_BACKEND: ${VECTOR_STORE_BACKEND:-memory}
+      QDRANT_URL: http://qdrant:6333
     volumes:
       - app_tmp:/app/tmp_ingest
     depends_on:
@@ -103,7 +115,43 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── Blob storage (raw text / visual_content) — opt in via BLOB_STORE_BACKEND=minio
+  minio:
+    image: minio/minio:latest
+    container_name: graphrag-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Vector storage (embeddings) — opt in via VECTOR_STORE_BACKEND=qdrant
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: graphrag-qdrant
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   neo4j_data:
   redis_data:
   app_tmp:
+  minio_data:
+  qdrant_data:

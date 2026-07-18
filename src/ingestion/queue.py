@@ -60,12 +60,13 @@ def get_ingest_queue() -> Optional[Any]:
 
 # ── Enqueue ──────────────────────────────────────────────────────────────────
 
-def enqueue_ingest(job_id: str) -> Optional[Any]:
+def enqueue_ingest(job_id: str, *, job_timeout: str = "30m") -> Optional[Any]:
     """
     Push job_id onto the ingest queue for `run_ingest_job` to pick up.
 
     Retries:  up to 2 retries with 30 s / 2 min back-off.
     Job TTL:  enqueued jobs expire after 24 h if never dequeued.
+    job_timeout: override for jobs expected to run long (e.g. a corpus scan).
 
     Returns the rq.job.Job object on success, None when running in-process mode.
     """
@@ -81,7 +82,7 @@ def enqueue_ingest(job_id: str) -> Optional[Any]:
             run_ingest_job,
             job_id,
             job_id=f"ingest:{job_id}",
-            job_timeout="30m",
+            job_timeout=job_timeout,
             ttl=24 * 3600,
             retry=Retry(max=2, interval=[30, 120]),
         )

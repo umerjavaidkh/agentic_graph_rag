@@ -20,6 +20,7 @@ from .auth.oidc import auth_public_config, resolve_admin_session, resolve_scoped
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
+    CORPUS_SCAN_TIMEOUT,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
@@ -66,12 +67,17 @@ async def _run_ingest_job_local(job_id: str) -> None:
     await loop.run_in_executor(_ingest_executor, ingestion_manager.run_job, job_id)
 
 
-def _dispatch_ingest_job(job_id: str, background_tasks: BackgroundTasks) -> str:
+def _dispatch_ingest_job(
+    job_id: str, background_tasks: BackgroundTasks, *, job_timeout: str = "30m"
+) -> str:
     """
     Dispatch a job to RQ workers when Redis is configured, or run it
     locally via BackgroundTasks when it is not.  Returns the dispatch mode.
+
+    job_timeout only affects the RQ path — the BackgroundTasks/ThreadPoolExecutor
+    fallback has no timeout concept.
     """
-    rq_job = enqueue_ingest(job_id)  # returns None when REDIS_URL not set
+    rq_job = enqueue_ingest(job_id, job_timeout=job_timeout)  # None when REDIS_URL not set
     if rq_job is not None:
         return "worker"
     background_tasks.add_task(_run_ingest_job_local, job_id)
@@ -179,6 +185,24 @@ class IngestionStatusResponse(BaseModel):
     content_hash: Optional[str] = None
     version_number: Optional[int] = None
     skipped_duplicate: bool = False
+    child_job_ids: List[str] = []
+
+
+class CorpusIngestRequest(BaseModel):
+    source: str = Field(
+        ...,
+        description=(
+            "Absolute path to a directory to scan (recursively), or a manifest "
+            "file of absolute paths (one per line; '#' comments allowed)."
+        ),
+    )
+    job_name: Optional[str] = None
+    doc_key_prefix: Optional[str] = Field(
+        default=None,
+        description="Combined with each file's name to form a per-file logical id.",
+    )
+    user_id: Optional[str] = None
+    role: Optional[str] = None
 
 
 class IngestionJobSummary(BaseModel):
@@ -493,6 +517,43 @@ async def ingest_unstructured(
     )
 
 
+@app.post("/ingest/corpus", response_model=IngestionResponse)
+async def ingest_corpus(
+    request: CorpusIngestRequest,
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Scan a server-accessible directory (recursively) or manifest file and
+    fan out one unstructured-ingestion job per accepted file, after a cheap
+    dedup + structural-sanity triage pass (no LLM calls in triage).
+
+    Note: this job ("corpus" type) can reach `completed` once every child
+    job has been created/enqueued — that does not mean every document has
+    finished ingesting. Poll each id in the response's `child_job_ids`
+    (via GET /ingest/jobs/{job_id}) individually for their own status.
+    """
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=request.user_id,
+        body_role=request.role,
+    )
+    try:
+        job = ingestion_manager.submit_corpus(
+            request.source, job_name=request.job_name, doc_key_prefix=request.doc_key_prefix
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    dispatch = _dispatch_ingest_job(job.id, background_tasks, job_timeout=CORPUS_SCAN_TIMEOUT)
+    return IngestionResponse(
+        job_id=job.id,
+        status=job.status.value,
+        message="Corpus ingestion job submitted.",
+        output_dir=str(job.output_dir) if job.output_dir else "",
+        dispatch=dispatch,
+    )
+
+
 @app.post("/ingest/cypher", response_model=IngestionResponse)
 async def ingest_cypher(
     background_tasks: BackgroundTasks,
@@ -609,6 +670,7 @@ async def get_ingestion_job(
         content_hash=job.content_hash,
         version_number=job.version_number,
         skipped_duplicate=job.skipped_duplicate,
+        child_job_ids=job.child_job_ids,
     )
 
 
