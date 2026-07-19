@@ -247,6 +247,8 @@ class QueryResponse(BaseModel):
     follow_up:    Optional[str] = None  # set when last-turn context was used
     telemetry:    Optional[dict] = None  # {_telemetry} from router (tokens/tries)
     request_id:   Optional[str] = None   # correlates with feedback / logs
+    low_confidence:  bool = False        # structured-path answer verification signal
+    confidence_note: Optional[str] = None  # reason when low_confidence is True
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -318,6 +320,8 @@ async def query(
             follow_up    = result.get("_follow_up"),
             telemetry    = telemetry,
             request_id   = request_id,
+            low_confidence  = bool(result.get("low_confidence")),
+            confidence_note = result.get("confidence_note"),
         )
     except ValueError as ve:
         logger.warning(

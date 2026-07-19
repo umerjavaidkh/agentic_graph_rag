@@ -132,6 +132,14 @@ STRUCTURED_TEXT2CYPHER_LONG_MAX_TOKENS = llm_max_tokens("STRUCTURED_TEXT2CYPHER_
 STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS = int(
     os.environ.get("STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS", "180")
 )
+# Answer verification: free rule-based checks always run; this only gates the
+# extra small LLM cross-check (cost-conscious — off by default).
+STRUCTURED_VERIFY_ENABLED = os.environ.get("STRUCTURED_VERIFY_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+STRUCTURED_VERIFY_MAX_TOKENS = llm_max_tokens("STRUCTURED_VERIFY_MAX_TOKENS", 120, minimum=40)
 # Cypher execution / repair budgets (lower = faster; repair runs before LLM regen).
 STRUCTURED_CYPHER_MAX_ATTEMPTS = int(os.environ.get("STRUCTURED_CYPHER_MAX_ATTEMPTS", "2"))
 STRUCTURED_CYPHER_SQL_LLM_RETRIES = int(os.environ.get("STRUCTURED_CYPHER_SQL_LLM_RETRIES", "1"))

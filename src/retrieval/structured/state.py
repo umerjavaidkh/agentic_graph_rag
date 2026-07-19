@@ -14,5 +14,6 @@ class StructuredState(TypedDict, total=False):
     query_type:        str        # text2cypher | vector
     strategy:          str        # which retrieval strategy was used
     low_confidence:    bool
+    confidence_note:   Optional[str]  # human-readable reason when low_confidence is True
     cypher_generated:  Optional[str]  # for debugging/logging
     user_context:      Optional[UserContext]

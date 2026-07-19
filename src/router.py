@@ -23,7 +23,7 @@ def _rbac_check() -> GraphRBAC:
     if _rbac is None:
         _rbac = GraphRBAC(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     return _rbac
-from .conversation import get_turn, save_turn
+from .conversation import get_turn, resolve_follow_up, save_turn
 from .routing import (
     is_structured_data_question,
     make_structured_access_denied_result,
@@ -104,6 +104,8 @@ def query_data(question: str, user_context: Optional[UserContext] = None, thread
         "sources": result.get("sources", []),
         "strategy": result.get("strategy", ""),
         "agent": "structured",
+        "low_confidence": bool(result.get("low_confidence")),
+        "confidence_note": result.get("confidence_note"),
         "presentation": presentation,
         "retrieved_context": result.get("retrieved_context", {}),
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,

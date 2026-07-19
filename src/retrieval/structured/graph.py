@@ -19,6 +19,7 @@ from .query_intent import estimate_structured_synthesis_max_tokens
 from ...model_providers.factory import get_model_provider
 from .query_intent import analytics_result_limit
 from .state import StructuredState
+from .verification import compute_confidence
 
 provider = get_model_provider()
 retriever = StructuredRetriever()
@@ -164,13 +165,19 @@ def _generate_structured_answer(
                 "Try rephrasing the question or narrowing the filter."
             ),
             "low_confidence": True,
+            "confidence_note": err_text[:200],
         }
+
+    low_confidence, confidence_note = compute_confidence(
+        question, chunks, provider=provider, model=LLM_MODEL
+    )
 
     strategy = state.get("strategy") or retrieved_context.get("strategy") or "text2cypher"
     if _should_fast_structured_answer(chunks, strategy):
         return {
             "answer": _build_fast_structured_answer(chunks, strategy, question),
-            "low_confidence": False,
+            "low_confidence": low_confidence,
+            "confidence_note": confidence_note,
         }
 
     context_lines = []
@@ -203,7 +210,11 @@ def _generate_structured_answer(
             long_max=STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS,
         ),
     )
-    return {"answer": response.choices[0].message.content.strip(), "low_confidence": False}
+    return {
+        "answer": response.choices[0].message.content.strip(),
+        "low_confidence": low_confidence,
+        "confidence_note": confidence_note,
+    }
 
 
 def should_continue(state: StructuredState):

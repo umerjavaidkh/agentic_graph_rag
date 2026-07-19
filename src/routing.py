@@ -162,6 +162,7 @@ def document_agent_structured_guard(
         return {
             "answer": (fixed.get("answer") or "").strip(),
             "low_confidence": bool(fixed.get("low_confidence")),
+            "confidence_note": fixed.get("confidence_note"),
             "sources": fixed.get("sources") or [],
             "strategy": fixed.get("strategy"),
             "_autofix_agent": "structured",
@@ -170,6 +171,7 @@ def document_agent_structured_guard(
     return {
         "answer": structured_misroute_message(uid),
         "low_confidence": False,
+        "confidence_note": None,
     }
 
 

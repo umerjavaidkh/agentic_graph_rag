@@ -52,11 +52,19 @@ def graph_seeds_mod():
     need the real graph_seeds.py, so the siblings are pre-stubbed in
     sys.modules; Python's import machinery finds them already cached and
     never touches the real (heavy-dependency) files.
+
+    Only clear src.graph* and src.retrieval.unstructured* — NOT the whole
+    src.retrieval.* tree. src.retrieval.structured.verification is a
+    completely unrelated sibling subpackage that other test files import
+    directly and hold live references into; blanket-deleting it here would
+    force a second, distinct module instance into existence the next time
+    any test does `import src.retrieval.structured.verification`, silently
+    breaking monkeypatch targeting in those files.
     """
     for name in list(sys.modules):
         if name == "src.graph" or name.startswith("src.graph."):
             del sys.modules[name]
-        if name == "src.retrieval" or name.startswith("src.retrieval."):
+        if name == "src.retrieval.unstructured" or name.startswith("src.retrieval.unstructured."):
             del sys.modules[name]
 
     for submod, cls_name in _SIBLING_MIXINS.items():

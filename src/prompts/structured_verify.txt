@@ -1,0 +1,16 @@
+You are checking whether a Cypher query's LOGIC actually answers a user's question — not whether any answer text is well-written or complete.
+
+Question:
+{question}
+
+Cypher query that was executed:
+{cypher}
+
+Sample of the rows it returned (JSON, possibly truncated):
+{rows}
+
+Judge only whether the query's filters, aggregation, and join direction match what the question asks for. Do not judge formatting, prose quality, or completeness of any answer text derived from these rows.
+
+You MUST output ONLY valid JSON (no markdown, no commentary) in exactly one of these two shapes:
+{{"valid": true}}
+{{"valid": false, "reason": "<short one-sentence reason>"}}
