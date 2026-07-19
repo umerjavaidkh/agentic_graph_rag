@@ -180,8 +180,8 @@ def has_document_cue(question: str) -> bool:
     return bool(_DOC_ROUTE.search(question or ""))
 _DOC_ROUTE = re.compile(
     r"\b(?:policy|policies|document|documents|pdf|manual|protocol|section\s+\d|"
-    r"whistleblow|compliance\s+officer|procedure|page\s+\d+|figure|table\s+on|"
-    r"table\s+of\s+contents?|toc|annex|appendix|acknowledgement|preface|chapter|"
+    r"whistleblow|compliance\s+officer|procedure|page\s+\d+|figure|table|"
+    r"toc|annex|appendix|acknowledgement|preface|chapter|"
     r"report|reports|annual\s+report|workshop|translated|translation|languages?|"
     r"institution|hosted|"
     r"photo|photograph|credit|photographer|illustration|attribution|caption|"

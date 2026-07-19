@@ -641,3 +641,87 @@ class TestExporterDualWrite:
 
         assert isinstance(exporter.blob_store, LocalFsBlobStore)
         assert isinstance(exporter.vector_store, InMemoryVectorStore)
+
+
+# ── Test 8: Exporter edge confidence/provenance write-path ──────────────────
+
+
+class TestExporterEdgeConfidence:
+    def _edge(self, **kwargs):
+        from src.models import DKGEdge, RelType
+
+        defaults = dict(source_id="a", target_id="b", rel_type=RelType.CONTAINS)
+        defaults.update(kwargs)
+        return DKGEdge(**defaults)
+
+    def test_edge_to_param_dict_has_required_keys(self):
+        from src.exporter.exporter import Neo4jExporter
+
+        edge = self._edge()
+        d = Neo4jExporter._edge_to_param_dict(edge)
+
+        for key in ("source_id", "target_id", "weight", "properties", "confidence", "confidence_tier"):
+            assert key in d, f"Missing key: {key}"
+
+    def test_edge_to_param_dict_defaults_extracted(self):
+        from src.exporter.exporter import Neo4jExporter
+
+        d = Neo4jExporter._edge_to_param_dict(self._edge())
+
+        assert d["confidence"] == 1.0
+        assert d["confidence_tier"] == "EXTRACTED"
+
+    def test_edge_to_param_dict_no_enum_leaks_into_dict(self):
+        """The dict must contain only JSON-safe values, no RelType/EdgeConfidenceTier objects."""
+        from src.exporter.exporter import Neo4jExporter
+        from src.models import EdgeConfidenceTier, RelType
+
+        edge = self._edge(
+            rel_type=RelType.SEMANTICALLY_SIMILAR,
+            confidence=0.83,
+            confidence_tier=EdgeConfidenceTier.INFERRED,
+        )
+        d = Neo4jExporter._edge_to_param_dict(edge)
+
+        assert d["confidence_tier"] == "INFERRED"
+        assert isinstance(d["confidence_tier"], str)
+        for v in d.values():
+            assert not isinstance(v, (RelType, EdgeConfidenceTier)), f"Found enum value: {v}"
+
+    def test_edge_to_param_dict_handles_plain_string_tier(self):
+        """confidence_tier may already be a plain str (not the enum) — must not crash."""
+        from src.exporter.exporter import Neo4jExporter
+
+        edge = self._edge(confidence_tier="AMBIGUOUS")
+        d = Neo4jExporter._edge_to_param_dict(edge)
+
+        assert d["confidence_tier"] == "AMBIGUOUS"
+
+    def test_write_edge_csvs_includes_confidence_columns(self, tmp_path):
+        from src.exporter.exporter import Neo4jExporter
+        from src.models import EdgeConfidenceTier, RelType
+
+        exporter = Neo4jExporter(output_dir=str(tmp_path))
+        edges = [
+            self._edge(rel_type=RelType.CONTAINS, axis=1),
+            self._edge(
+                rel_type=RelType.SEMANTICALLY_SIMILAR,
+                axis=2,
+                confidence=0.91,
+                confidence_tier=EdgeConfidenceTier.INFERRED,
+            ),
+        ]
+
+        exporter._write_edge_csvs(edges)
+
+        import csv
+
+        with open(tmp_path / "edges" / "axis1_structural.csv", newline="") as f:
+            rows = list(csv.DictReader(f))
+        assert rows[0]["confidence"] == "1.0"
+        assert rows[0]["confidence_tier"] == "EXTRACTED"
+
+        with open(tmp_path / "edges" / "axis2_semantic.csv", newline="") as f:
+            rows = list(csv.DictReader(f))
+        assert rows[0]["confidence"] == "0.91"
+        assert rows[0]["confidence_tier"] == "INFERRED"

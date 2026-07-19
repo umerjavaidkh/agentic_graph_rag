@@ -95,6 +95,8 @@ PDF_LOW_TEXT_CHARS = int(os.environ.get("PDF_LOW_TEXT_CHARS", "120"))
 PDF_PLUMBER_PAGE_TIMEOUT_SEC = int(os.environ.get("PDF_PLUMBER_PAGE_TIMEOUT_SEC", "25"))
 PDF_ENABLE_OCR = os.environ.get("PDF_ENABLE_OCR", "false").lower() in ("1", "true", "yes")
 PDF_OCR_BACKEND = os.environ.get("PDF_OCR_BACKEND", "none").lower()
+PDF_OCR_DPI = int(os.environ.get("PDF_OCR_DPI", "200"))
+PDF_OCR_LANG = os.environ.get("PDF_OCR_LANG", "eng")
 
 # Structured queries: skip LLM synthesis when Cypher rows are self-explanatory (table/chart UI).
 STRUCTURED_FAST_ANSWER = os.environ.get("STRUCTURED_FAST_ANSWER", "false").lower() in ("1", "true", "yes")

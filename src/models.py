@@ -89,13 +89,26 @@ class DKGNode:
 
 
 # ─────────────────────────────────────────
+# EDGE CONFIDENCE / PROVENANCE
+# ─────────────────────────────────────────
+class EdgeConfidenceTier(str, Enum):
+    """How this edge was derived, so a query can distinguish directly-observed
+    facts from derived/uncertain ones (borrowed from Graphify's model)."""
+    EXTRACTED = "EXTRACTED"  # deterministic: directly found in the document/graph structure
+    INFERRED  = "INFERRED"   # derived from a real numeric signal (similarity, LLM judgment)
+    AMBIGUOUS = "AMBIGUOUS"  # weak signal, no strong per-pair confidence available
+
+
+# ─────────────────────────────────────────
 # RELATIONSHIP
 # ─────────────────────────────────────────
 @dataclass
 class DKGEdge:
-    source_id:  str
-    target_id:  str
-    rel_type:   str | RelType
-    weight:     float = 1.0          # similarity score where relevant
-    axis:       int   = 1            # 1 = structural, 2 = semantic
-    properties: dict  = field(default_factory=dict)
+    source_id:        str
+    target_id:        str
+    rel_type:         str | RelType
+    weight:           float = 1.0          # similarity score where relevant
+    axis:             int   = 1            # 1 = structural, 2 = semantic
+    properties:       dict  = field(default_factory=dict)
+    confidence:       float = 1.0
+    confidence_tier:  str | EdgeConfidenceTier = EdgeConfidenceTier.EXTRACTED

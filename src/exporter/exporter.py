@@ -27,7 +27,7 @@ from ..graph.driver import get_neo4j_driver
 from ..config.settings import NEO4J_WRITE_BATCH
 from ..document.versioning import DocumentRevisionPlan
 from ..graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
-from ..models import DKGNode, DKGEdge, NodeType, RelType
+from ..models import DKGNode, DKGEdge, EdgeConfidenceTier, NodeType, RelType
 from ..storage.blob.base import BlobStore
 from ..storage.blob.factory import get_blob_store
 from ..storage.vector.base import VectorStore
@@ -293,20 +293,13 @@ class Neo4jExporter:
         for rel_type, rel_edges in edges_by_rel.items():
             for chunk_start in range(0, len(rel_edges), NEO4J_WRITE_BATCH):
                 chunk = rel_edges[chunk_start : chunk_start + NEO4J_WRITE_BATCH]
-                rows = [
-                    {
-                        "source_id": e.source_id,
-                        "target_id": e.target_id,
-                        "weight": e.weight,
-                        "properties": json.dumps(e.properties),
-                    }
-                    for e in chunk
-                ]
+                rows = [Neo4jExporter._edge_to_param_dict(e) for e in chunk]
                 tx.run(
                     f"UNWIND $rows AS row "
                     "MATCH (a {id: row.source_id}), (b {id: row.target_id}) "
                     f"MERGE (a)-[r:{rel_type}]->(b) "
-                    "SET r.weight = row.weight, r.properties = row.properties",
+                    "SET r.weight = row.weight, r.properties = row.properties, "
+                    "r.confidence = row.confidence, r.confidence_tier = row.confidence_tier",
                     rows=rows,
                 )
 
@@ -377,6 +370,19 @@ class Neo4jExporter:
         }
 
     @staticmethod
+    def _edge_to_param_dict(edge: DKGEdge) -> dict:
+        """Serialise a DKGEdge to a plain dict for use in UNWIND parameters."""
+        tier = edge.confidence_tier
+        return {
+            "source_id": edge.source_id,
+            "target_id": edge.target_id,
+            "weight": edge.weight,
+            "properties": json.dumps(edge.properties),
+            "confidence": edge.confidence,
+            "confidence_tier": tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
+        }
+
+    @staticmethod
     def _create_node_tx(tx, node: DKGNode) -> None:
         label = node.type.value if isinstance(node.type, NodeType) else str(node.type)
         tx.run(
@@ -420,14 +426,18 @@ class Neo4jExporter:
     @staticmethod
     def _merge_edge_tx(tx, edge: DKGEdge) -> None:
         rel_type = edge.rel_type.value if isinstance(edge.rel_type, RelType) else str(edge.rel_type)
+        tier = edge.confidence_tier
         tx.run(
             "MATCH (a {id: $source_id}), (b {id: $target_id}) "
             f"MERGE (a)-[r:{rel_type}]->(b) "
-            "SET r.weight = $weight, r.properties = $properties",
+            "SET r.weight = $weight, r.properties = $properties, "
+            "r.confidence = $confidence, r.confidence_tier = $confidence_tier",
             source_id=edge.source_id,
             target_id=edge.target_id,
             weight=edge.weight,
             properties=json.dumps(edge.properties),
+            confidence=edge.confidence,
+            confidence_tier=tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
         )
 
     def _ensure_indexes(self, session) -> None:
@@ -519,14 +529,18 @@ class Neo4jExporter:
 
     def _merge_edge(self, session, edge: DKGEdge) -> None:
         rel_type = self._rel_type_to_str(edge.rel_type)
+        tier = edge.confidence_tier
         session.run(
             f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
             f"MERGE (a)-[r:{rel_type}]->(b) "
-            "SET r.weight = $weight, r.properties = $properties",
+            "SET r.weight = $weight, r.properties = $properties, "
+            "r.confidence = $confidence, r.confidence_tier = $confidence_tier",
             source_id=edge.source_id,
             target_id=edge.target_id,
             weight=edge.weight,
             properties=json.dumps(edge.properties),
+            confidence=edge.confidence,
+            confidence_tier=tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
         )
 
     # ─────────────────────────────────────────
@@ -611,10 +625,12 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
             with open(self.out / "edges" / fname, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(
                     f, fieldnames=["source_id", "target_id", "rel_type",
-                                   "weight", "axis", "properties"]
+                                   "weight", "axis", "properties",
+                                   "confidence", "confidence_tier"]
                 )
                 writer.writeheader()
                 for e in edge_list:
+                    tier = e.confidence_tier
                     writer.writerow({
                         "source_id":  e.source_id,
                         "target_id":  e.target_id,
@@ -622,6 +638,8 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
                         "weight":     e.weight,
                         "axis":       e.axis,
                         "properties": json.dumps(e.properties),
+                        "confidence": e.confidence,
+                        "confidence_tier": tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
                     })
 
     # ─────────────────────────────────────────
@@ -655,7 +673,11 @@ SET   n.title      = row.title,
         lines.append("""\
 LOAD CSV WITH HEADERS FROM 'file:///edges/axis1_structural.csv' AS row
 MATCH (a {id: row.source_id}), (b {id: row.target_id})
-CALL apoc.merge.relationship(a, row.rel_type, {}, {weight: toFloat(row.weight)}, b)
+CALL apoc.merge.relationship(a, row.rel_type, {}, {
+  weight: toFloat(row.weight),
+  confidence: toFloat(row.confidence),
+  confidence_tier: row.confidence_tier
+}, b)
 YIELD rel RETURN count(rel);
 """)
 
@@ -666,7 +688,9 @@ LOAD CSV WITH HEADERS FROM 'file:///edges/axis2_semantic.csv' AS row
 MATCH (a {id: row.source_id}), (b {id: row.target_id})
 CALL apoc.merge.relationship(a, row.rel_type, {}, {
   weight:     toFloat(row.weight),
-  properties: row.properties
+  properties: row.properties,
+  confidence: toFloat(row.confidence),
+  confidence_tier: row.confidence_tier
 }, b)
 YIELD rel RETURN count(rel);
 """)
@@ -712,9 +736,12 @@ YIELD rel RETURN count(rel);
         axis1_edges = [e for e in edges if e.axis == 1]
         for e in axis1_edges:
             rel_type = self._rel_type_to_str(e.rel_type)
+            tier = e.confidence_tier
+            tier_str = tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier)
             lines.append(
                 f"MATCH (a {{id: '{e.source_id}'}}), (b {{id: '{e.target_id}'}})"
-                f" MERGE (a)-[:{rel_type} {{weight: {e.weight}}}]->(b);"
+                f" MERGE (a)-[:{rel_type} {{weight: {e.weight},"
+                f" confidence: {e.confidence}, confidence_tier: '{tier_str}'}}]->(b);"
             )
 
         lines += ["\n// ── AXIS 2 — SEMANTIC EDGES ─────────────────"]
@@ -722,10 +749,13 @@ YIELD rel RETURN count(rel);
         for e in axis2_edges:
             rel_type = self._rel_type_to_str(e.rel_type)
             props_str = json.dumps(e.properties).replace("'", "\\'")
+            tier = e.confidence_tier
+            tier_str = tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier)
             lines.append(
                 f"MATCH (a {{id: '{e.source_id}'}}), (b {{id: '{e.target_id}'}})"
                 f" MERGE (a)-[:{rel_type} {{weight: {e.weight},"
-                f" props: '{props_str}'}}]->(b);"
+                f" props: '{props_str}', confidence: {e.confidence},"
+                f" confidence_tier: '{tier_str}'}}]->(b);"
             )
 
         (self.out / "full_import.cypher").write_text("\n".join(lines))
