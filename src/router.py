@@ -69,6 +69,8 @@ def search_documents(
         "agent": "unstructured",
         "strategy": result.get("query_type", "semantic"),
         "query_type": result.get("query_type"),
+        "low_confidence": bool(result.get("low_confidence")),
+        "confidence_note": result.get("confidence_note"),
         "presentation": presentation,
         "retrieved_context": result.get("retrieved_context", {}),
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,

@@ -24,6 +24,7 @@ from ..retrieval.unstructured.retriever import (
     is_toc_question,
     is_visual_page_question,
 )
+from ..retrieval.unstructured.verification import compute_confidence
 from ..routing import document_agent_structured_guard
 from .structured import iter_structured_stream
 from .events import stream_event
@@ -120,7 +121,18 @@ def iter_document_stream(
 
     if not chunks:
         answer = "I could not find relevant information in the ingested documents."
-        yield stream_event(type="done", agent="unstructured", answer=answer, sources=[], strategy=query_type)
+        low_confidence, confidence_note = compute_confidence(
+            question, answer, chunks, "", provider=None, model=CHAT_MODEL
+        )
+        yield stream_event(
+            type="done",
+            agent="unstructured",
+            answer=answer,
+            sources=[],
+            strategy=query_type,
+            low_confidence=low_confidence,
+            confidence_note=confidence_note,
+        )
         return
 
     denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
@@ -172,6 +184,9 @@ def iter_document_stream(
         yield stream_event(type="token", agent="unstructured", target="markdown", delta=delta)
 
     answer = _fix_misrouted_structured_answer("".join(parts).strip(), question)
+    low_confidence, confidence_note = compute_confidence(
+        question, answer, chunks, mode, provider=provider, model=CHAT_MODEL
+    )
     presentation = build_presentation(
         question=question,
         answer=answer,
@@ -187,4 +202,6 @@ def iter_document_stream(
         strategy=query_type,
         query_type=query_type,
         presentation=presentation,
+        low_confidence=low_confidence,
+        confidence_note=confidence_note,
     )

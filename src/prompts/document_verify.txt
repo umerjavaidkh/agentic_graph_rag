@@ -1,0 +1,16 @@
+You are checking whether an answer is actually supported by the retrieved document passages — not whether it is well-written or complete.
+
+Question:
+{question}
+
+Answer given:
+{answer}
+
+Retrieved passages (may be truncated):
+{chunks}
+
+Judge only whether the answer's claims are backed by the passages above — not prose quality or completeness. If the answer states something the passages don't support, or invents specifics not present in them, it is invalid.
+
+You MUST output ONLY valid JSON (no markdown, no commentary) in exactly one of these two shapes:
+{{"valid": true}}
+{{"valid": false, "reason": "<short one-sentence reason>"}}

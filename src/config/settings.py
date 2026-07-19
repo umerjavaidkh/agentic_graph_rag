@@ -142,6 +142,13 @@ STRUCTURED_VERIFY_ENABLED = os.environ.get("STRUCTURED_VERIFY_ENABLED", "false")
     "yes",
 )
 STRUCTURED_VERIFY_MAX_TOKENS = llm_max_tokens("STRUCTURED_VERIFY_MAX_TOKENS", 120, minimum=40)
+# Same pattern for the document (unstructured) answer path.
+DOCUMENT_VERIFY_ENABLED = os.environ.get("DOCUMENT_VERIFY_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+DOCUMENT_VERIFY_MAX_TOKENS = llm_max_tokens("DOCUMENT_VERIFY_MAX_TOKENS", 120, minimum=40)
 # Cypher execution / repair budgets (lower = faster; repair runs before LLM regen).
 STRUCTURED_CYPHER_MAX_ATTEMPTS = int(os.environ.get("STRUCTURED_CYPHER_MAX_ATTEMPTS", "2"))
 STRUCTURED_CYPHER_SQL_LLM_RETRIES = int(os.environ.get("STRUCTURED_CYPHER_SQL_LLM_RETRIES", "1"))
