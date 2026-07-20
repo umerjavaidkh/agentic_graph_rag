@@ -37,6 +37,10 @@ TOP-K WITHIN A GROUP (top N per group, top K per entity):
 DERIVED METRICS:
 - "average order value" = total revenue / number of DISTINCT orders for that entity. Do NOT use `avg(lineItemRevenue)` (that averages line items, not orders).
 
+ENTITY NAMES IN THE FINAL STEP (most common multistep mistake):
+- Whichever step's rows are the final ranked/grouped result the user will see MUST include each entity's human-readable name property from the schema (e.g. companyName, productName, categoryName — whatever the schema shows for that label), not just its ID. A row like {{supplierID: "12", totalRevenue: 66007.99}} is wrong even if step1 never carried the name forward — RETURN in that same step must join back to the entity by ID to fetch its name, e.g. `MATCH (s:Supplier {{supplierID: row.supplierID}}) RETURN row.supplierID AS supplierID, s.companyName AS supplierName, row.totalRevenue AS totalRevenue`.
+- This applies per label, using whatever name-like property the schema actually has for it — do not assume a specific property name across entities.
+
 JSON schema you must follow exactly:
 {{
   "needs_multistep": boolean,
