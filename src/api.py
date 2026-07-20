@@ -703,11 +703,13 @@ async def list_audit_events(
     """
     Query the audit trail (who did what, when, to what data).
 
-    Admin-only. Filters are ANDed; omit any to widen the result.
+    Admin-only. Filters are ANDed; omit any to widen the result. `user_id`
+    filters the results — it is not the identity used for the admin check
+    (dev-fallback only gates on role=admin), so filtering by another user's
+    id doesn't affect whether the request is allowed.
     """
     resolve_admin_session(
         authorization=authorization,
-        body_user_id=user_id,
         body_role=role,
     )
     events = get_audit_store().query(
