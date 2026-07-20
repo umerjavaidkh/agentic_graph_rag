@@ -4,11 +4,12 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from ....auth.roles import UserContext
+from ....config.settings import DOCUMENT_KNOWLEDGE_AREA_ID
 
 
 class PoliciesMixin:
     def _access_denied_response(self, query: str, ctx: UserContext) -> Optional[dict[str, Any]]:
-        if self.rbac.can_query_knowledge_area(ctx.user_id, "esg"):
+        if self.rbac.can_query_knowledge_area(ctx.user_id, DOCUMENT_KNOWLEDGE_AREA_ID):
             return None
         return {
             "query": query,

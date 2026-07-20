@@ -275,6 +275,12 @@ MULTI_TENANCY_ENABLED = os.environ.get("MULTI_TENANCY_ENABLED", "false").lower()
 )
 DEFAULT_TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "default")
 
+# KnowledgeArea id that gates document-RAG access in the seeded RBAC schema
+# (src/auth/rbac_schema.cypher). Defaults to "esg" to match this repo's demo
+# seed data — deployments with their own KnowledgeArea taxonomy should set
+# this instead of editing src/retrieval/unstructured/mixins/policies.py.
+DOCUMENT_KNOWLEDGE_AREA_ID = os.environ.get("DOCUMENT_KNOWLEDGE_AREA_ID", "esg")
+
 # ── Audit logging (compliance/security trail — defaults ON) ───────────────
 # Unlike other flags in this file, writing an audit event never changes
 # what the user sees, so this defaults on: real compliance value from the
