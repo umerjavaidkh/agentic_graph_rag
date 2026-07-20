@@ -49,6 +49,14 @@ SQL_CYPHER_ISSUES: list[tuple[str, str]] = [
         "To get top-K within a group, ORDER BY the metric DESC BEFORE collect(...), then slice the collected list: "
         "WITH groupKey, item ORDER BY metric DESC WITH groupKey, collect(item)[0..K] AS topItems.",
     ),
+    (
+        r"\bapoc\.date\.format\s*\(\s*(?:datetime|date|localdatetime)\s*\(",
+        "apoc.date.format() expects an epoch-millis Integer/Long as its first argument, not a "
+        "datetime()/date()/localdatetime() temporal value — passing one directly causes a type "
+        "mismatch error. For month/day bucketing over a date/datetime property, do not use "
+        "apoc.date.format at all: use substring(toString(prop), 0, 7) for a YYYY-MM month key, or "
+        "substring(toString(prop), 0, 10) for a YYYY-MM-DD day key.",
+    ),
 ]
 
 _QUESTION_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")

@@ -26,6 +26,8 @@ RULES:
 - For text search: toLower() and CONTAINS
 - Numeric safety: wrap CSV-backed fields with toFloat() or toInteger() before arithmetic
 - For dates: if orderDate includes time, parse via substring(toString(orderDate), 0, 10) before date()
+- For monthly/day bucketing (grouping by month or day): use substring(toString(prop), 0, 7) for a YYYY-MM key or substring(toString(prop), 0, 10) for YYYY-MM-DD — never apoc.date.format(), which expects epoch-millis and will throw a type error on a date()/datetime() value.
+- When returning rows for display, include BOTH the entity's ID field and its name property if the schema has one (e.g. return customerID AND companyName, or supplierID AND companyName) — never drop the ID in favor of the name alone.
 
 {retry_block}
 
