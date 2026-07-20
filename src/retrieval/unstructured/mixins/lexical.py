@@ -4,13 +4,16 @@ from __future__ import annotations
 import re
 
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
+from ....graph.tenancy import tenant_filter
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import _doc_scope_cypher
 from ..text_utils import _extract_urls
 
 
 class LexicalRetrievalMixin:
-    def _structural_keyword_retrieve(self, session, query: str) -> list[dict]:
+    def _structural_keyword_retrieve(
+        self, session, query: str, tenant_id: str = ""
+    ) -> list[dict]:
         """
         Rank nodes by how many distinct query keywords appear in text (robust to PDF spacing).
         """
@@ -19,11 +22,12 @@ class LexicalRetrievalMixin:
             return []
 
         min_hits = max(2, min(4, len(keywords) // 3))
-        doc_id, _ = self._resolve_document_for_query(session, query)
+        doc_id, _ = self._resolve_document_for_query(session, query, tenant_id)
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND coalesce(n.text, '') <> ''
@@ -46,6 +50,7 @@ class LexicalRetrievalMixin:
             keywords=[k.lower() for k in keywords],
             min_hits=min_hits,
             labels=list(_TEXT_NODE_LABELS),
+            tenant_id=tenant_id,
         )
 
         items: list[dict] = []
@@ -70,7 +75,9 @@ class LexicalRetrievalMixin:
         url_block = "\n".join(f"- {u}" for u in urls)
         return f"{body}\n\n[Extracted URLs]\n{url_block}".strip()
 
-    def _structural_phrase_retrieve(self, session, query: str) -> list[dict]:
+    def _structural_phrase_retrieve(
+        self, session, query: str, tenant_id: str = ""
+    ) -> list[dict]:
         """
         Direct phrase CONTAINS search for fact/URL questions vector search often misses.
         """
@@ -78,11 +85,12 @@ class LexicalRetrievalMixin:
         if not phrases:
             return []
 
-        doc_id, _ = self._resolve_document_for_query(session, query)
+        doc_id, _ = self._resolve_document_for_query(session, query, tenant_id)
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND coalesce(n.text, '') <> ''
@@ -105,6 +113,7 @@ class LexicalRetrievalMixin:
             doc_id=doc_id,
             phrases=[p.lower() for p in phrases],
             labels=list(_TEXT_NODE_LABELS),
+            tenant_id=tenant_id,
         )
 
         items: list[dict] = []

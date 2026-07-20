@@ -27,7 +27,11 @@ from ..graph.driver import get_neo4j_driver
 from ..config.settings import NEO4J_WRITE_BATCH
 from ..document.versioning import DocumentRevisionPlan
 from ..graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
-from ..models import DKGNode, DKGEdge, NodeType, RelType
+from ..models import DKGNode, DKGEdge, EdgeConfidenceTier, NodeType, RelType
+from ..storage.blob.base import BlobStore
+from ..storage.blob.factory import get_blob_store
+from ..storage.vector.base import VectorStore
+from ..storage.vector.factory import get_vector_store
 
 
 OUTPUT_DIR = Path("output")
@@ -35,10 +39,21 @@ OUTPUT_DIR = Path("output")
 
 class Neo4jExporter:
 
-    def __init__(self, output_dir: str | Path = OUTPUT_DIR):
+    def __init__(
+        self,
+        output_dir: str | Path = OUTPUT_DIR,
+        blob_store: BlobStore | None = None,
+        vector_store: VectorStore | None = None,
+    ):
         self.out = Path(output_dir)
         (self.out / "nodes").mkdir(parents=True, exist_ok=True)
         (self.out / "edges").mkdir(parents=True, exist_ok=True)
+        # Dual-write: Neo4j properties stay authoritative (existing reads on
+        # already-ingested data keep working unmodified); text/embeddings are
+        # additionally written here so the blob/vector-store interfaces are
+        # exercised on every new ingest, with no backfill of prior revisions.
+        self.blob_store = blob_store or get_blob_store()
+        self.vector_store = vector_store or get_vector_store()
 
     def _label_to_str(self, label: str | NodeType) -> str:
         if isinstance(label, NodeType):
@@ -174,17 +189,18 @@ class Neo4jExporter:
     ) -> None:
         session.execute_write(self._install_revision_tx, plan, nodes, edges)
 
-    @staticmethod
-    def _install_revision_tx(tx, plan: DocumentRevisionPlan, nodes, edges) -> None:
+    def _install_revision_tx(self, tx, plan: DocumentRevisionPlan, nodes, edges) -> None:
         tx.run(
             f"""
             MERGE (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
-            ON CREATE SET dl.title = $title, dl.created_at = timestamp()
+            ON CREATE SET dl.title = $title, dl.created_at = timestamp(), dl.tenant_id = $tenant_id
             ON MATCH SET dl.title = coalesce(dl.title, $title),
-                         dl.updated_at = timestamp()
+                         dl.updated_at = timestamp(),
+                         dl.tenant_id = coalesce(dl.tenant_id, $tenant_id)
             """,
             logical_id=plan.logical_id,
             title=plan.title,
+            tenant_id=plan.tenant_id,
         )
         row = tx.run(
             f"""
@@ -230,6 +246,7 @@ class Neo4jExporter:
                 title: $title,
                 text: $source_filename,
                 source_filename: $source_filename,
+                tenant_id: $tenant_id,
                 ingested_at: timestamp(),
                 uploaded_at: timestamp()
             }})
@@ -242,6 +259,7 @@ class Neo4jExporter:
             content_hash=plan.content_hash,
             title=plan.title,
             source_filename=plan.source_filename,
+            tenant_id=plan.tenant_id,
         )
 
         # ── Batched node writes grouped by label (UNWIND) ─────────────────
@@ -255,6 +273,7 @@ class Neo4jExporter:
         for label, label_nodes in nodes_by_label.items():
             for chunk_start in range(0, len(label_nodes), NEO4J_WRITE_BATCH):
                 chunk = label_nodes[chunk_start : chunk_start + NEO4J_WRITE_BATCH]
+                self._dual_write_chunk(chunk, plan)
                 rows = [Neo4jExporter._node_to_param_dict(n) for n in chunk]
                 tx.run(
                     f"UNWIND $rows AS row "
@@ -278,20 +297,14 @@ class Neo4jExporter:
         for rel_type, rel_edges in edges_by_rel.items():
             for chunk_start in range(0, len(rel_edges), NEO4J_WRITE_BATCH):
                 chunk = rel_edges[chunk_start : chunk_start + NEO4J_WRITE_BATCH]
-                rows = [
-                    {
-                        "source_id": e.source_id,
-                        "target_id": e.target_id,
-                        "weight": e.weight,
-                        "properties": json.dumps(e.properties),
-                    }
-                    for e in chunk
-                ]
+                rows = [Neo4jExporter._edge_to_param_dict(e) for e in chunk]
                 tx.run(
                     f"UNWIND $rows AS row "
                     "MATCH (a {id: row.source_id}), (b {id: row.target_id}) "
                     f"MERGE (a)-[r:{rel_type}]->(b) "
-                    "SET r.weight = row.weight, r.properties = row.properties",
+                    "SET r.weight = row.weight, r.properties = row.properties, "
+                    "r.confidence = row.confidence, r.confidence_tier = row.confidence_tier, "
+                    "r.tenant_id = row.tenant_id",
                     rows=rows,
                 )
 
@@ -304,6 +317,37 @@ class Neo4jExporter:
             revision_id=plan.revision_id,
             root_id=plan.content_root_id,
         )
+
+    def _dual_write_chunk(self, chunk: list[DKGNode], plan: DocumentRevisionPlan) -> None:
+        """
+        Write text/visual_content/embedding to the blob/vector stores in
+        addition to the Neo4j properties set by the caller. Batched per
+        Neo4j UNWIND chunk (not per-node) to match write throughput.
+        """
+        vector_items: list[tuple[str, list[float], dict]] = []
+        for node in chunk:
+            if node.text:
+                node.blob_key_text = f"{plan.tenant_id}/{plan.logical_id}/{plan.revision_id}/{node.id}/text"
+                self.blob_store.put(node.blob_key_text, node.text)
+            if node.visual_content:
+                node.blob_key_visual = (
+                    f"{plan.tenant_id}/{plan.logical_id}/{plan.revision_id}/{node.id}/visual_content"
+                )
+                self.blob_store.put(node.blob_key_visual, node.visual_content)
+            if node.embedding:
+                vector_items.append(
+                    (
+                        node.id,
+                        node.embedding,
+                        {
+                            "logical_doc_id": plan.logical_id,
+                            "revision_id": plan.revision_id,
+                            "tenant_id": plan.tenant_id,
+                        },
+                    )
+                )
+        if vector_items:
+            self.vector_store.upsert_batch(vector_items)
 
     @staticmethod
     def _node_to_param_dict(node: DKGNode) -> dict:
@@ -332,6 +376,23 @@ class Neo4jExporter:
             "version_number": node.version_number,
             "ingested_at": node.ingested_at,
             "source_filename": node.source_filename,
+            "blob_key_text": node.blob_key_text,
+            "blob_key_visual": node.blob_key_visual,
+            "tenant_id": node.tenant_id,
+        }
+
+    @staticmethod
+    def _edge_to_param_dict(edge: DKGEdge) -> dict:
+        """Serialise a DKGEdge to a plain dict for use in UNWIND parameters."""
+        tier = edge.confidence_tier
+        return {
+            "source_id": edge.source_id,
+            "target_id": edge.target_id,
+            "weight": edge.weight,
+            "properties": json.dumps(edge.properties),
+            "confidence": edge.confidence,
+            "confidence_tier": tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
+            "tenant_id": edge.tenant_id,
         }
 
     @staticmethod
@@ -349,7 +410,7 @@ class Neo4jExporter:
             " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
             " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash,"
             " n.version_number = $version_number, n.ingested_at = $ingested_at,"
-            " n.source_filename = $source_filename",
+            " n.source_filename = $source_filename, n.tenant_id = $tenant_id",
             id=node.id,
             title=node.title,
             text=node.text,
@@ -373,23 +434,32 @@ class Neo4jExporter:
             version_number=node.version_number,
             ingested_at=node.ingested_at,
             source_filename=node.source_filename,
+            tenant_id=node.tenant_id,
         )
 
     @staticmethod
     def _merge_edge_tx(tx, edge: DKGEdge) -> None:
         rel_type = edge.rel_type.value if isinstance(edge.rel_type, RelType) else str(edge.rel_type)
+        tier = edge.confidence_tier
         tx.run(
             "MATCH (a {id: $source_id}), (b {id: $target_id}) "
             f"MERGE (a)-[r:{rel_type}]->(b) "
-            "SET r.weight = $weight, r.properties = $properties",
+            "SET r.weight = $weight, r.properties = $properties, "
+            "r.confidence = $confidence, r.confidence_tier = $confidence_tier, "
+            "r.tenant_id = $tenant_id",
             source_id=edge.source_id,
             target_id=edge.target_id,
             weight=edge.weight,
             properties=json.dumps(edge.properties),
+            confidence=edge.confidence,
+            confidence_tier=tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
+            tenant_id=edge.tenant_id,
         )
 
     def _ensure_indexes(self, session) -> None:
         """Idempotently create full-text + vector indexes on every ingestion."""
+        from ..config.settings import VECTOR_STORE_BACKEND
+
         statements = [
             "CREATE FULLTEXT INDEX node_text_index IF NOT EXISTS "
             "FOR (n:Book|Chapter|Section|Page|Region|Concept) "
@@ -404,12 +474,23 @@ class Neo4jExporter:
             "CREATE INDEX page_order    IF NOT EXISTS FOR (n:Page)    ON (n.order)",
             "CREATE INDEX page_start    IF NOT EXISTS FOR (n:Page)    ON (n.page_start)",
             "CREATE INDEX page_pdf_page IF NOT EXISTS FOR (n:Page) ON (n.pdf_page)",
-            """CREATE VECTOR INDEX section_embedding IF NOT EXISTS
-            FOR (n:Section) ON (n.embedding)
-            OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}""",
             "CREATE INDEX section_logical_rev IF NOT EXISTS "
             "FOR (n:Section) ON (n.logical_doc_id, n.revision_id)",
+            "CREATE INDEX section_tenant_lifecycle IF NOT EXISTS "
+            "FOR (n:Section) ON (n.tenant_id, n.lifecycle_status)",
+            "CREATE INDEX page_tenant_lifecycle IF NOT EXISTS "
+            "FOR (n:Page) ON (n.tenant_id, n.lifecycle_status)",
         ]
+        # The in-process "memory" VectorStore doesn't survive across worker/API
+        # process boundaries, so Neo4j's native vector index stays the real
+        # similarity-search path until a shared external store (Qdrant) is
+        # configured — only then does _vector_seed read from vector_store instead.
+        if VECTOR_STORE_BACKEND != "qdrant":
+            statements.append(
+                """CREATE VECTOR INDEX section_embedding IF NOT EXISTS
+                FOR (n:Section) ON (n.embedding)
+                OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}"""
+            )
         for stmt in statements:
             try:
                 session.run(stmt).consume()
@@ -443,7 +524,8 @@ class Neo4jExporter:
             " n.page_tags = $page_tags,"
             " n.region_kind = $region_kind, n.region_tags = $region_tags,"
             " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
-            " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash",
+            " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash,"
+            " n.tenant_id = $tenant_id",
             id=node.id,
             title=node.title,
             text=node.text,
@@ -464,18 +546,25 @@ class Neo4jExporter:
             revision_id=node.revision_id,
             lifecycle_status=node.lifecycle_status,
             content_hash=node.content_hash,
+            tenant_id=node.tenant_id,
         )
 
     def _merge_edge(self, session, edge: DKGEdge) -> None:
         rel_type = self._rel_type_to_str(edge.rel_type)
+        tier = edge.confidence_tier
         session.run(
             f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
             f"MERGE (a)-[r:{rel_type}]->(b) "
-            "SET r.weight = $weight, r.properties = $properties",
+            "SET r.weight = $weight, r.properties = $properties, "
+            "r.confidence = $confidence, r.confidence_tier = $confidence_tier, "
+            "r.tenant_id = $tenant_id",
             source_id=edge.source_id,
             target_id=edge.target_id,
             weight=edge.weight,
             properties=json.dumps(edge.properties),
+            confidence=edge.confidence,
+            confidence_tier=tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
+            tenant_id=edge.tenant_id,
         )
 
     # ─────────────────────────────────────────
@@ -560,10 +649,12 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
             with open(self.out / "edges" / fname, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(
                     f, fieldnames=["source_id", "target_id", "rel_type",
-                                   "weight", "axis", "properties"]
+                                   "weight", "axis", "properties",
+                                   "confidence", "confidence_tier"]
                 )
                 writer.writeheader()
                 for e in edge_list:
+                    tier = e.confidence_tier
                     writer.writerow({
                         "source_id":  e.source_id,
                         "target_id":  e.target_id,
@@ -571,6 +662,8 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
                         "weight":     e.weight,
                         "axis":       e.axis,
                         "properties": json.dumps(e.properties),
+                        "confidence": e.confidence,
+                        "confidence_tier": tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
                     })
 
     # ─────────────────────────────────────────
@@ -604,7 +697,11 @@ SET   n.title      = row.title,
         lines.append("""\
 LOAD CSV WITH HEADERS FROM 'file:///edges/axis1_structural.csv' AS row
 MATCH (a {id: row.source_id}), (b {id: row.target_id})
-CALL apoc.merge.relationship(a, row.rel_type, {}, {weight: toFloat(row.weight)}, b)
+CALL apoc.merge.relationship(a, row.rel_type, {}, {
+  weight: toFloat(row.weight),
+  confidence: toFloat(row.confidence),
+  confidence_tier: row.confidence_tier
+}, b)
 YIELD rel RETURN count(rel);
 """)
 
@@ -615,7 +712,9 @@ LOAD CSV WITH HEADERS FROM 'file:///edges/axis2_semantic.csv' AS row
 MATCH (a {id: row.source_id}), (b {id: row.target_id})
 CALL apoc.merge.relationship(a, row.rel_type, {}, {
   weight:     toFloat(row.weight),
-  properties: row.properties
+  properties: row.properties,
+  confidence: toFloat(row.confidence),
+  confidence_tier: row.confidence_tier
 }, b)
 YIELD rel RETURN count(rel);
 """)
@@ -661,9 +760,12 @@ YIELD rel RETURN count(rel);
         axis1_edges = [e for e in edges if e.axis == 1]
         for e in axis1_edges:
             rel_type = self._rel_type_to_str(e.rel_type)
+            tier = e.confidence_tier
+            tier_str = tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier)
             lines.append(
                 f"MATCH (a {{id: '{e.source_id}'}}), (b {{id: '{e.target_id}'}})"
-                f" MERGE (a)-[:{rel_type} {{weight: {e.weight}}}]->(b);"
+                f" MERGE (a)-[:{rel_type} {{weight: {e.weight},"
+                f" confidence: {e.confidence}, confidence_tier: '{tier_str}'}}]->(b);"
             )
 
         lines += ["\n// ── AXIS 2 — SEMANTIC EDGES ─────────────────"]
@@ -671,10 +773,13 @@ YIELD rel RETURN count(rel);
         for e in axis2_edges:
             rel_type = self._rel_type_to_str(e.rel_type)
             props_str = json.dumps(e.properties).replace("'", "\\'")
+            tier = e.confidence_tier
+            tier_str = tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier)
             lines.append(
                 f"MATCH (a {{id: '{e.source_id}'}}), (b {{id: '{e.target_id}'}})"
                 f" MERGE (a)-[:{rel_type} {{weight: {e.weight},"
-                f" props: '{props_str}'}}]->(b);"
+                f" props: '{props_str}', confidence: {e.confidence},"
+                f" confidence_tier: '{tier_str}'}}]->(b);"
             )
 
         (self.out / "full_import.cypher").write_text("\n".join(lines))

@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from ..rbac_setup import GraphRBAC
 from ..roles import Role, UserContext
+from ...config.settings import DEFAULT_TENANT_ID
 from .config import OidcAuthConfig
 from .provision import ensure_user_in_graph
 
@@ -131,5 +132,8 @@ def build_user_context(
     return UserContext(
         user_id=verified.user_id,
         role=role,
+        # Fast-follow: resolve from cfg.domain_tenant_map (verified.email domain).
+        # Placeholder single-tenant value until that mapping ships.
+        tenant_id=DEFAULT_TENANT_ID,
         department=verified.department,
     )

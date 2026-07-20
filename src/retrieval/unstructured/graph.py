@@ -26,6 +26,7 @@ from ...config.settings import (
 from ...model_providers.factory import get_model_provider
 from ...telemetry import pipeline_step
 from .state import ESGState
+from .verification import compute_confidence
 
 retriever = DocumentRAGRetriever()
 provider = get_model_provider()
@@ -124,9 +125,14 @@ def _generate_document_answer(
         return guard
 
     if not chunks:
+        answer = "I could not find relevant information in the ingested documents."
+        low_confidence, confidence_note = compute_confidence(
+            question, answer, chunks, "", provider=provider, model=CHAT_MODEL
+        )
         return {
-            "answer": "I could not find relevant information in the ingested documents.",
-            "low_confidence": False,
+            "answer": answer,
+            "low_confidence": low_confidence,
+            "confidence_note": confidence_note,
         }
 
     denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
@@ -181,11 +187,16 @@ def _generate_document_answer(
             else DOCUMENT_SYNTHESIS_MAX_TOKENS
         ),
     )
+    answer = _fix_misrouted_structured_answer(
+        response.choices[0].message.content.strip(), question
+    )
+    low_confidence, confidence_note = compute_confidence(
+        question, answer, chunks, mode, provider=provider, model=CHAT_MODEL
+    )
     return {
-        "answer": _fix_misrouted_structured_answer(
-            response.choices[0].message.content.strip(), question
-        ),
-        "low_confidence": False,
+        "answer": answer,
+        "low_confidence": low_confidence,
+        "confidence_note": confidence_note,
     }
 
 

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import contextlib
+import os
+import re
 import shutil
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from fastapi import UploadFile
 from neo4j.exceptions import ClientError
@@ -14,9 +16,13 @@ from neo4j.exceptions import ClientError
 from ..config.settings import (
     AUTO_LOAD_TO_NEO4J,
     CLEANUP_TMP_INGEST,
+    CORPUS_MAX_FILES,
+    CORPUS_MAX_PDF_PAGES,
     CYPHER_INGEST_SKIP_GENAI,
+    DEFAULT_TENANT_ID,
     DOC_SKIP_DUPLICATE_HASH,
     ENABLE_PAGE_VISION,
+    MODEL_PROVIDER,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
@@ -30,12 +36,21 @@ from ..document.versioning import (
     file_content_sha256,
     resolve_logical_id,
 )
-from ..document.parser import LightPdfParser
+from ..document.parser_base import DocumentParser
+from ..document.parser_registry import get_parser, supported_extensions
+from ..model_providers.base import ModelProvider
+from ..model_providers.factory import get_model_provider
 from ..models import NodeType
 from ..exporter.exporter import Neo4jExporter
 from ..models import DKGEdge, DKGNode
+from ..storage.blob.base import BlobStore
+from ..storage.blob.factory import get_blob_store
+from ..storage.vector.base import VectorStore
+from ..storage.vector.factory import get_vector_store
 from .models import IngestionStatus
 from .job_store import JobStore, get_job_store
+from .queue import enqueue_ingest
+from .triage import check_duplicate, check_structural_sanity
 
 from ..auth.rbac_setup import GraphRBAC
 from ..graph.driver import get_neo4j_driver
@@ -62,12 +77,53 @@ class IngestionJob:
     revision_id: Optional[str] = None
     content_hash: Optional[str] = None
     version_number: Optional[int] = None
+    tenant_id: Optional[str] = None
     skipped_duplicate: bool = False
+    # False for corpus-scanned child jobs, whose input_path points directly
+    # at a file in the user's own source directory (not a tmp_ingest/ copy) —
+    # _cleanup_job_inputs must never unlink() it.
+    owns_input_path: bool = True
+    # Populated on a "corpus" job as it fans out per-file "unstructured" jobs.
+    child_job_ids: List[str] = field(default_factory=list)
+
+
+_TENANT_STAMPING_RE = re.compile(r"\b(?:CREATE|MERGE)\s*\(", re.I)
+_HAS_TENANT_PROP_RE = re.compile(r"tenant_id\s*:", re.I)
+
+
+def warn_missing_tenant_stamps(statements: list[str]) -> list[str]:
+    """
+    Non-blocking heuristic: flag CREATE/MERGE statements that don't mention a
+    tenant_id property, for arbitrary uploaded Cypher (see _process_cypher's
+    docstring — this route can't be mechanically guaranteed tenant-safe).
+    """
+    warnings: list[str] = []
+    for idx, stmt in enumerate(statements, start=1):
+        if _TENANT_STAMPING_RE.search(stmt) and not _HAS_TENANT_PROP_RE.search(stmt):
+            preview = " ".join(stmt.split())[:120]
+            warnings.append(
+                f"Statement {idx} has a CREATE/MERGE with no tenant_id property: {preview}..."
+            )
+    return warnings
 
 
 class IngestionManager:
-    def __init__(self, store: Optional[JobStore] = None):
+    def __init__(
+        self,
+        store: Optional[JobStore] = None,
+        *,
+        parser_factory: Callable[[Path], DocumentParser] = get_parser,
+        model_provider: Optional[ModelProvider] = None,
+        blob_store: Optional[BlobStore] = None,
+        vector_store: Optional[VectorStore] = None,
+        exporter_factory: Callable[..., Neo4jExporter] = Neo4jExporter,
+    ):
         self.store: JobStore = store if store is not None else get_job_store()
+        self.parser_factory = parser_factory
+        self.model_provider = model_provider or get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+        self.blob_store = blob_store or get_blob_store()
+        self.vector_store = vector_store or get_vector_store()
+        self.exporter_factory = exporter_factory
         self.temp_dir = Path("tmp_ingest")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.output_base = Path("output/ingestion")
@@ -79,10 +135,14 @@ class IngestionManager:
     def submit_unstructured(
         self,
         upload: UploadFile,
+        tenant_id: str,
         job_name: Optional[str] = None,
         doc_key: Optional[str] = None,
     ) -> IngestionJob:
+        if not tenant_id or not tenant_id.strip():
+            raise ValueError("tenant_id is required for ingestion.")
         job = self._create_job("unstructured", job_name=job_name)
+        job.tenant_id = tenant_id.strip()
         job.doc_key = doc_key
         job.input_path = self._save_upload(upload, job.id)
         if STORE_INGESTION_ARTIFACTS:
@@ -95,10 +155,14 @@ class IngestionManager:
     def submit_cypher(
         self,
         upload: UploadFile,
+        tenant_id: str,
         job_name: Optional[str] = None,
         cypher_params: Optional[Dict[str, object]] = None,
     ) -> IngestionJob:
+        if not tenant_id or not tenant_id.strip():
+            raise ValueError("tenant_id is required for ingestion.")
         job = self._create_job("cypher", job_name=job_name)
+        job.tenant_id = tenant_id.strip()
         job.cypher_params = cypher_params or None
         job.input_path = self._save_upload(upload, job.id)
         if STORE_INGESTION_ARTIFACTS:
@@ -106,6 +170,34 @@ class IngestionManager:
             job.output_dir.mkdir(parents=True, exist_ok=True)
         self.store.save(job)
         self._log(job, f"Created cypher ingestion job: {job.name or job.id}")
+        return job
+
+    def submit_corpus(
+        self,
+        source: str | Path,
+        tenant_id: str,
+        *,
+        job_name: Optional[str] = None,
+        doc_key_prefix: Optional[str] = None,
+    ) -> IngestionJob:
+        """
+        Create a job that scans a directory (recursively) or a manifest file
+        (newline-delimited absolute paths) and fans out one "unstructured"
+        job per accepted file, after a cheap dedup + structural-sanity pass.
+        """
+        if not tenant_id or not tenant_id.strip():
+            raise ValueError("tenant_id is required for ingestion.")
+        source_path = Path(source)
+        if not source_path.exists():
+            raise FileNotFoundError(f"Corpus source not found: {source_path}")
+
+        job = self._create_job("corpus", job_name=job_name)
+        job.tenant_id = tenant_id.strip()
+        job.doc_key = doc_key_prefix
+        job.input_path = source_path
+        job.owns_input_path = False  # the user's own directory/manifest, never a copy
+        self.store.save(job)
+        self._log(job, f"Created corpus ingestion job for source: {source_path}")
         return job
 
     def get_job(self, job_id: str) -> Optional[IngestionJob]:
@@ -130,6 +222,8 @@ class IngestionManager:
                 self._process_unstructured(job)
             elif job.type == "cypher":
                 self._process_cypher(job)
+            elif job.type == "corpus":
+                self._process_corpus(job)
             else:
                 raise ValueError(f"Unsupported ingestion type: {job.type}")
 
@@ -157,9 +251,11 @@ class IngestionManager:
             rbac.close()
 
     def _cleanup_job_inputs(self, job: IngestionJob) -> None:
+        if not job or not job.owns_input_path:
+            return
         if not CLEANUP_TMP_INGEST:
             return
-        if not job or not job.input_path:
+        if not job.input_path:
             return
         try:
             if job.input_path.exists():
@@ -169,13 +265,15 @@ class IngestionManager:
             self._log(job, f"Temp cleanup failed for {job.input_path}: {exc}")
 
     @contextlib.contextmanager
-    def _doc_lock(self, logical_id: str):
+    def _doc_lock(self, logical_id: str, tenant_id: str = ""):
         """
         Acquire a per-logical-document Redis lock (if Redis is configured).
 
         Prevents two workers from racing to install a new revision for the
         same logical document. Documents with *different* logical IDs are
-        unaffected and process fully in parallel.
+        unaffected and process fully in parallel. The lock key is namespaced
+        by tenant_id so two tenants that coincidentally pick the same
+        logical_id slug don't needlessly serialize on each other's ingest.
         """
         if not logical_id or not REDIS_URL:
             yield
@@ -185,7 +283,7 @@ class IngestionManager:
             import redis as _redis
 
             conn = _redis.from_url(REDIS_URL, decode_responses=False)
-            lock_key = f"ingest:lock:{logical_id}"
+            lock_key = f"ingest:lock:{tenant_id or DEFAULT_TENANT_ID}:{logical_id}"
             lock = conn.lock(lock_key, timeout=1800, blocking_timeout=1800)
             acquired = lock.acquire(blocking=True)
             try:
@@ -203,8 +301,10 @@ class IngestionManager:
         if not job.input_path or not job.input_path.exists():
             raise FileNotFoundError("Uploaded file was not saved correctly.")
 
-        if job.input_path.suffix.lower() != ".pdf":
-            raise ValueError("Only PDF ingestion is supported by the lightweight parser.")
+        if job.input_path.suffix.lower() not in supported_extensions():
+            raise ValueError(
+                f"No parser registered for file type {job.input_path.suffix!r}."
+            )
 
         logical_id = resolve_logical_id(
             job.input_path, doc_key=job.doc_key, job_id=job.id
@@ -214,26 +314,24 @@ class IngestionManager:
 
         # Fast duplicate check (no lock needed — reading is safe).
         if AUTO_LOAD_TO_NEO4J and DOC_SKIP_DUPLICATE_HASH:
-            content_hash = file_content_sha256(job.input_path)
-            job.content_hash = content_hash
-            exporter_probe = Neo4jExporter(
+            job.content_hash = file_content_sha256(job.input_path)
+            exporter_probe = self.exporter_factory(
                 output_dir=str(job.output_dir) if job.output_dir else Path(".")
             )
             driver = get_neo4j_driver()
-            with driver.session() as session:
-                if exporter_probe.active_revision_has_hash(
-                    session, logical_id, content_hash
-                ):
-                    job.skipped_duplicate = True
-                    job.neo4j_load_status = "skipped"
-                    job.neo4j_load_message = (
-                        "Identical content already ACTIVE for this logical document; "
-                        "ingest skipped (no parse)."
-                    )
-                    self._log(job, job.neo4j_load_message)
-                    return
+            if check_duplicate(
+                job.input_path, logical_id=logical_id, exporter=exporter_probe, driver=driver
+            ):
+                job.skipped_duplicate = True
+                job.neo4j_load_status = "skipped"
+                job.neo4j_load_message = (
+                    "Identical content already ACTIVE for this logical document; "
+                    "ingest skipped (no parse)."
+                )
+                self._log(job, job.neo4j_load_message)
+                return
 
-        parser = LightPdfParser()
+        parser = self.parser_factory(job.input_path)
         nodes, edges = parser.parse(str(job.input_path))
         self._log(job, f"Parsed {len(nodes)} nodes and {len(edges)} edges")
 
@@ -251,7 +349,7 @@ class IngestionManager:
             ),
             f"doc_{job.id}",
         )
-        exporter = Neo4jExporter(output_dir=str(job.output_dir) if job.output_dir else Path("."))
+        exporter = self.exporter_factory(output_dir=str(job.output_dir) if job.output_dir else Path("."))
         version_number = 1
         if AUTO_LOAD_TO_NEO4J:
             driver = get_neo4j_driver()
@@ -260,6 +358,7 @@ class IngestionManager:
 
         plan = build_revision_plan(
             job.input_path,
+            tenant_id=job.tenant_id or DEFAULT_TENANT_ID,
             doc_key=job.doc_key,
             job_id=job.id,
             version_number=version_number,
@@ -319,7 +418,7 @@ class IngestionManager:
         # Workers processing different documents are never blocked.
         if AUTO_LOAD_TO_NEO4J:
             self._set_status(job, IngestionStatus.exporting, "Loading graph into Neo4j")
-            with self._doc_lock(plan.logical_id):
+            with self._doc_lock(plan.logical_id, plan.tenant_id):
                 try:
                     load_meta = exporter.load_to_neo4j(
                         nodes,
@@ -353,11 +452,121 @@ class IngestionManager:
             job.neo4j_load_message = "AUTO_LOAD_TO_NEO4J disabled"
             self._log(job, "Neo4j load skipped")
 
+    def _walk_corpus_source(self, source: Path) -> List[Path]:
+        """Directory: recursive walk filtered by supported_extensions(), sorted.
+        File: treated as a newline-delimited manifest of absolute paths."""
+        if source.is_dir():
+            exts = supported_extensions()
+            candidates: List[Path] = []
+            for dirpath, dirnames, filenames in os.walk(source):
+                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                for name in filenames:
+                    if name.startswith("."):
+                        continue
+                    path = Path(dirpath) / name
+                    if path.suffix.lower() in exts:
+                        candidates.append(path)
+            return sorted(candidates)
+
+        if source.is_file():
+            return self._parse_manifest(source)
+
+        raise FileNotFoundError(f"Corpus source not found: {source}")
+
+    def _parse_manifest(self, manifest_path: Path) -> List[Path]:
+        seen: dict[Path, None] = {}
+        for lineno, raw_line in enumerate(
+            manifest_path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            path = Path(line)
+            if not path.is_absolute():
+                raise ValueError(
+                    f"Manifest {manifest_path} line {lineno}: relative path {line!r} "
+                    "is not allowed — only absolute paths are supported."
+                )
+            seen.setdefault(path, None)
+        return list(seen.keys())
+
+    def _process_corpus(self, job: IngestionJob) -> None:
+        self._set_status(job, IngestionStatus.scanning, "Scanning corpus source")
+        if not job.input_path:
+            raise FileNotFoundError("Corpus source path was not set on the job.")
+
+        candidates = self._walk_corpus_source(job.input_path)
+        self._log(job, f"Found {len(candidates)} candidate file(s)")
+        if len(candidates) > CORPUS_MAX_FILES:
+            raise ValueError(
+                f"Corpus source has {len(candidates)} files, exceeding "
+                f"CORPUS_MAX_FILES={CORPUS_MAX_FILES}"
+            )
+
+        exts = supported_extensions()
+        driver = get_neo4j_driver() if AUTO_LOAD_TO_NEO4J else None
+        accepted = 0
+        skipped = 0
+
+        for i, path in enumerate(candidates, start=1):
+            reason = check_structural_sanity(
+                path, supported_extensions=exts, max_pdf_pages=CORPUS_MAX_PDF_PAGES
+            )
+            if reason is None and driver is not None and DOC_SKIP_DUPLICATE_HASH:
+                child_doc_key = f"{job.doc_key}:{path.stem}" if job.doc_key else None
+                logical_id = resolve_logical_id(path, doc_key=child_doc_key, job_id=job.id)
+                try:
+                    exporter_probe = self.exporter_factory(output_dir=Path("."))
+                    reason = check_duplicate(
+                        path, logical_id=logical_id, exporter=exporter_probe, driver=driver
+                    )
+                except Exception as exc:
+                    # Best-effort: the child job's own duplicate check (in
+                    # _process_unstructured) is the authoritative, fail-loud gate.
+                    self._log(job, f"Duplicate check failed for {path.name} (accepting): {exc}")
+                    reason = None
+
+            if reason:
+                skipped += 1
+                self._log(job, f"Skipped {path.name}: {reason}")
+                continue
+
+            child_doc_key = f"{job.doc_key}:{path.stem}" if job.doc_key else None
+            child = self._create_job("unstructured", job_name=path.name)
+            child.tenant_id = job.tenant_id
+            child.doc_key = child_doc_key
+            child.input_path = path
+            child.owns_input_path = False
+            self.store.save(child)
+            job.child_job_ids.append(child.id)
+            accepted += 1
+
+            if enqueue_ingest(child.id) is None:
+                self.run_job(child.id)
+
+            if i % 100 == 0:
+                self._log(job, f"Progress: {i}/{len(candidates)} scanned")
+                self.store.save(job)
+
+        self.store.save(job)
+        self._log(
+            job,
+            f"Corpus scan complete: {len(candidates)} found, {accepted} accepted/queued, "
+            f"{skipped} skipped",
+        )
+
     def _process_cypher(self, job: IngestionJob) -> None:
         """
         Execute a user-provided Cypher file against Neo4j.
 
         Intended for loading arbitrary schemas/datasets (e.g. Northwind).
+
+        NOT covered by the automatic tenant-stamping guarantee that
+        DKGNode/DKGEdge ingestion gets: arbitrary uploaded CREATE/MERGE
+        statements can't be mechanically forced to carry tenant_id. This
+        route already requires an admin session (resolve_admin_session) —
+        treat it as admin-trust-only in a genuinely multi-tenant deployment,
+        and rely on the warning below, not a hard guarantee.
         """
         self._set_status(job, IngestionStatus.parsing, "Executing Cypher script")
         if not job.input_path or not job.input_path.exists():
@@ -369,6 +578,10 @@ class IngestionManager:
             params = {**params, **job.cypher_params}
         if not statements:
             raise ValueError("Cypher file contained no statements.")
+        params.setdefault("tenant_id", job.tenant_id or DEFAULT_TENANT_ID)
+
+        for warning in warn_missing_tenant_stamps(statements):
+            self._log(job, f"WARNING: {warning}")
 
         driver = get_neo4j_driver()
         with driver.session() as session:

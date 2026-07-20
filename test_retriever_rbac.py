@@ -23,7 +23,8 @@ def test_structured_retriever_access():
     print("\n[TEST 1] Admin retrieving structured data")
     admin_ctx = UserContext(
         user_id='admin_001',
-        role=validate_role('admin')
+        role=validate_role('admin'),
+        tenant_id='default'
     )
     result = retriever.retrieve(
         "What products exist?",
@@ -40,7 +41,8 @@ def test_structured_retriever_access():
     print("\n[TEST 2] Regular office retrieving structured data")
     regular_ctx = UserContext(
         user_id='regular_001',
-        role=validate_role('regular_office')
+        role=validate_role('regular_office'),
+        tenant_id='default'
     )
     result = retriever.retrieve(
         "What products exist?",
@@ -69,7 +71,8 @@ def test_esg_retriever_access():
     print("\n[TEST 1] Admin accessing Agentic Graph RAG data")
     admin_ctx = UserContext(
         user_id='admin_001',
-        role=validate_role('admin')
+        role=validate_role('admin'),
+        tenant_id='default'
     )
     result = retriever.semantic_retrieve(
         "compliance policy",
@@ -85,7 +88,8 @@ def test_esg_retriever_access():
     print("\n[TEST 2] Regular office accessing Agentic Graph RAG data (should be DENIED)")
     regular_ctx = UserContext(
         user_id='regular_001',
-        role=validate_role('regular_office')
+        role=validate_role('regular_office'),
+        tenant_id='default'
     )
     result = retriever.semantic_retrieve(
         "compliance policy",
@@ -102,7 +106,8 @@ def test_esg_retriever_access():
     print("\n[TEST 3] Compliance officer accessing Agentic Graph RAG data")
     compliance_ctx = UserContext(
         user_id='compliance_001',
-        role=validate_role('compliance_officer')
+        role=validate_role('compliance_officer'),
+        tenant_id='default'
     )
     result = retriever.semantic_retrieve(
         "compliance policy",

@@ -18,9 +18,12 @@ from ..config.settings import (
     PDF_ENABLE_PDFPLUMBER,
     PDF_LOW_TEXT_CHARS,
     PDF_OCR_BACKEND,
+    PDF_OCR_DPI,
+    PDF_OCR_LANG,
     PDF_PLUMBER_PAGE_TIMEOUT_SEC,
 )
 from ..models import DKGEdge, DKGNode, NodeType, RelType
+from .ocr import get_ocr_backend
 from .page_numbers import enrich_page_nodes
 from .patterns import (
     REFERENCE_PATTERN,
@@ -157,8 +160,18 @@ class LightPdfParser:
                     used_pdfplumber = bool(p_blocks or p_regions)
 
                 low_confidence = confidence < 0.35 or len(text.strip()) < PDF_LOW_TEXT_CHARS
+                ocr_error = None
+                if low_confidence and PDF_ENABLE_OCR:
+                    ocr_block, ocr_error = self._try_ocr(page, idx)
+                    if ocr_block is not None:
+                        blocks.append(ocr_block)
+                        text = self._join_blocks(blocks)
+                        confidence = self._extraction_confidence(page, text, blocks)
+                        low_confidence = confidence < 0.35 or len(text.strip()) < PDF_LOW_TEXT_CHARS
                 if low_confidence:
-                    blocks.append(self._low_confidence_marker(page, idx, bool(text.strip())))
+                    blocks.append(
+                        self._low_confidence_marker(page, idx, bool(text.strip()), ocr_error)
+                    )
 
                 extracts.append(
                     _PageExtract(
@@ -286,11 +299,43 @@ class LightPdfParser:
             image_penalty = 0.0
         return max(0.0, min(1.0, (0.55 * text_score) + (0.25 * printable_ratio) + (0.2 * block_score) - image_penalty))
 
-    def _low_confidence_marker(self, page: fitz.Page, page_no: int, has_text: bool) -> _PdfBlock:
-        if PDF_ENABLE_OCR and PDF_OCR_BACKEND != "none":
+    def _try_ocr(self, page: fitz.Page, page_no: int) -> tuple[_PdfBlock | None, str | None]:
+        """Attempt OCR on a low-confidence page. Returns (block, error) —
+        at most one is non-None. Never raises."""
+        backend = get_ocr_backend()
+        if backend is None:
+            return None, None
+        try:
+            pix = page.get_pixmap(dpi=PDF_OCR_DPI)
+            text = backend.recognize(pix.tobytes("png"), lang=PDF_OCR_LANG)
+        except Exception as exc:
+            print(f"   ⚠ OCR failed on page {page_no}: {exc}")
+            return None, str(exc)
+        if not text or not text.strip():
+            return None, None
+        return (
+            _PdfBlock(
+                text=text,
+                page=page_no,
+                page_size=[float(page.rect.width), float(page.rect.height)],
+                source="ocr",
+            ),
+            None,
+        )
+
+    def _low_confidence_marker(
+        self, page: fitz.Page, page_no: int, has_text: bool, ocr_error: str | None = None
+    ) -> _PdfBlock:
+        if ocr_error:
+            note = (
+                "[Low confidence extract] OCR was attempted for this page but failed: "
+                f"{ocr_error}"
+            )
+        elif PDF_ENABLE_OCR and PDF_OCR_BACKEND != "none" and get_ocr_backend() is None:
             note = (
                 "[Low confidence extract] Text extraction was weak. "
-                f"Configured OCR backend '{PDF_OCR_BACKEND}' is not implemented in this lightweight parser yet."
+                f"Configured OCR backend '{PDF_OCR_BACKEND}' is unavailable in this "
+                "environment (missing package or system binary)."
             )
         elif has_text:
             note = "[Low confidence extract] Text may be incomplete; use the saved full-page image if needed."
@@ -853,6 +898,16 @@ class LightPdfParser:
             title_lookup[n.title.strip().lower()] = n.id
             if n.type in (NodeType.CHAPTER, NodeType.SECTION):
                 title_lookup[f"{n.type.value.lower()} {n.order}"] = n.id
+            elif n.type == NodeType.REGION:
+                # Region titles are the caption's first line (e.g. "Table 3:
+                # Revenue by Segment") — too long to substring-match a short
+                # reference phrase like "see table 3", so alias the bare
+                # "table N"/"figure N" form the same way chapter/section do.
+                title_lower = (n.title or "").lower()
+                for ref in _TABLE_REF.findall(title_lower):
+                    title_lookup[f"table {ref.lower()}"] = n.id
+                for ref in _FIGURE_REF.findall(title_lower):
+                    title_lookup[f"figure {ref.lower()}"] = n.id
 
         for node in nodes:
             # Section bodies can be very large; references appear in titles/intros.

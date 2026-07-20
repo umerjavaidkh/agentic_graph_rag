@@ -5,6 +5,11 @@
 pymupdf>=1.24.0          # lightweight PDF text + page image extraction
 pdfplumber>=0.11.0       # targeted table/text fallback for weak PDF pages
 
+# ── OCR fallback (low-confidence pages; requires the tesseract-ocr system
+# package too — see Dockerfile) ─────────
+pytesseract>=0.3.10
+Pillow>=10.0.0
+
 # ── Embeddings + LLM ────────────────────
 openai>=1.30.0
 fastapi>=0.100.0
@@ -28,6 +33,12 @@ neo4j>=5.20.0
 # in-process BackgroundTasks when REDIS_URL is not set.
 redis>=5.0.0
 rq>=1.16.0
+
+# ── Scalable content storage (BLOB_STORE_BACKEND / VECTOR_STORE_BACKEND) ──
+# Optional at import time: only required when the backend env var selects
+# "minio"/"qdrant" instead of the zero-dependency "local"/"memory" defaults.
+minio>=7.2.0
+qdrant-client>=1.9.0
 
 # ── Optional: local embeddings (no API key) ──
 # sentence-transformers>=3.0.0

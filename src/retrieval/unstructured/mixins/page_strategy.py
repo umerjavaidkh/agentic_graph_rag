@@ -7,6 +7,7 @@ from typing import Optional
 from ....document.page_numbers import parse_page_number_from_query
 from ....document.page_vision import compact_visual_content
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
+from ....graph.tenancy import tenant_filter
 from ..cypher_scope import _doc_scope_cypher
 from ..query_intent import FIG_CAPTION_RE as _FIG_CAPTION_RE
 from ..visual_retrieval import parse_visual_intent
@@ -37,18 +38,21 @@ class PageStrategyMixin:
     def _query_wants_all_page_visuals(self, query: str) -> bool:
         return parse_visual_intent(query).list_all
 
-    def _structural_page_visual_retrieve(self, session, query: str) -> list[dict]:
+    def _structural_page_visual_retrieve(
+        self, session, query: str, tenant_id: str = ""
+    ) -> list[dict]:
         """Page figures/diagrams via stored visual_content text (ingest vision enrichment)."""
         pdf_page, doc_page = self._parse_page_targets(query)
         if pdf_page is None and not doc_page:
             return []
 
         list_all_visuals = self._query_wants_all_page_visuals(query)
-        doc_id, doc_title = self._resolve_document_for_query(session, query)
+        doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
             MATCH (p:Page)
             WHERE p.id STARTS WITH d.id + '_page_'
               AND (
@@ -58,6 +62,7 @@ class PageStrategyMixin:
                   AND toLower(coalesce(p.document_page, '')) = toLower($doc_page)
                 )
               )
+              AND {tenant_filter("p")}
             WITH p, d
             ORDER BY
               CASE WHEN $doc_page IS NOT NULL
@@ -87,6 +92,7 @@ class PageStrategyMixin:
             doc_id=doc_id,
             pdf_page=pdf_page,
             doc_page=doc_page,
+            tenant_id=tenant_id,
         ).single()
 
         if not row or not row.get("page_id"):
@@ -193,7 +199,9 @@ class PageStrategyMixin:
                 doc_page = None
         return pdf_page, doc_page
 
-    def _structural_page_retrieve(self, session, query: str) -> list[dict]:
+    def _structural_page_retrieve(
+        self, session, query: str, tenant_id: str = ""
+    ) -> list[dict]:
         """
         Fetch Page node content by pdf_page / document_page for a resolved document.
         Works for any ingested PDF with Page nodes in the graph.
@@ -202,11 +210,12 @@ class PageStrategyMixin:
         if pdf_page is None and not doc_page:
             return []
 
-        doc_id, doc_title = self._resolve_document_for_query(session, query)
+        doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
             MATCH (p:Page)
             WHERE p.id STARTS WITH d.id + '_page_'
               AND (
@@ -216,6 +225,7 @@ class PageStrategyMixin:
                   AND toLower(coalesce(p.document_page, '')) = toLower($doc_page)
                 )
               )
+              AND {tenant_filter("p")}
             WITH p, d
             ORDER BY
               CASE WHEN $pdf_page IS NOT NULL AND p.pdf_page = $pdf_page THEN 0 ELSE 1 END,
@@ -244,6 +254,7 @@ class PageStrategyMixin:
             doc_id=doc_id,
             pdf_page=pdf_page,
             doc_page=doc_page,
+            tenant_id=tenant_id,
         ).single()
 
         if not row or not row.get("id"):

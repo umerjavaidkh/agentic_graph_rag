@@ -22,7 +22,8 @@ def test_rbac_access():
     print("\n[TEST 1] Admin accessing Agentic Graph RAG knowledge area")
     admin_ctx = UserContext(
         user_id='admin_001',
-        role=validate_role('admin')
+        role=validate_role('admin'),
+        tenant_id='default'
     )
     can_access = rbac.can_query_knowledge_area(admin_ctx.user_id, 'esg')
     print(f"  User: {admin_ctx.user_id} ({admin_ctx.role.value})")
@@ -33,7 +34,8 @@ def test_rbac_access():
     print("\n[TEST 2] Regular office accessing Agentic Graph RAG (should be DENIED)")
     regular_ctx = UserContext(
         user_id='regular_001',
-        role=validate_role('regular_office')
+        role=validate_role('regular_office'),
+        tenant_id='default'
     )
     can_access = rbac.can_query_knowledge_area(regular_ctx.user_id, 'esg')
     print(f"  User: {regular_ctx.user_id} ({regular_ctx.role.value})")
@@ -51,7 +53,8 @@ def test_rbac_access():
     print("\n[TEST 4] Compliance officer accessing Agentic Graph RAG")
     compliance_ctx = UserContext(
         user_id='compliance_001',
-        role=validate_role('compliance_officer')
+        role=validate_role('compliance_officer'),
+        tenant_id='default'
     )
     can_access = rbac.can_query_knowledge_area(compliance_ctx.user_id, 'esg')
     print(f"  User: {compliance_ctx.user_id} ({compliance_ctx.role.value})")
@@ -62,7 +65,8 @@ def test_rbac_access():
     print("\n[TEST 5] Public user accessing Agentic Graph RAG")
     public_ctx = UserContext(
         user_id='public_001',
-        role=validate_role('public')
+        role=validate_role('public'),
+        tenant_id='default'
     )
     can_access = rbac.can_query_knowledge_area(public_ctx.user_id, 'esg')
     print(f"  User: {public_ctx.user_id} ({public_ctx.role.value})")

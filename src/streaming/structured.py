@@ -19,6 +19,7 @@ from ..retrieval.structured.graph import (
     retrieve_node,
 )
 from ..retrieval.structured.query_intent import estimate_structured_synthesis_max_tokens
+from ..retrieval.structured.verification import compute_confidence
 from ..telemetry.pipeline import record_pipeline_step
 from .events import stream_event
 
@@ -86,8 +87,21 @@ def iter_structured_stream(
             f"{err_text}\n\n"
             "Try rephrasing the question or narrowing the filter."
         )
-        yield stream_event(type="done", agent="structured", answer=answer, sources=chunks, strategy=strategy)
+        yield stream_event(
+            type="done",
+            agent="structured",
+            answer=answer,
+            sources=chunks,
+            strategy=strategy,
+            low_confidence=True,
+            confidence_note=err_text[:200],
+        )
         return
+
+    provider = get_model_provider()
+    low_confidence, confidence_note = compute_confidence(
+        question, chunks, provider=provider, model=STRUCTURED_MODEL
+    )
 
     viz = _viz_blocks_only(question, chunks)
     if viz:
@@ -116,6 +130,8 @@ def iter_structured_stream(
             sources=chunks,
             strategy=strategy,
             presentation=presentation,
+            low_confidence=low_confidence,
+            confidence_note=confidence_note,
         )
         return
 
@@ -133,7 +149,6 @@ def iter_structured_stream(
         context_lines.append(f"{meta}\nTitle: {title}\n{text}")
     context_text = "\n\n".join(context_lines)
     system_prompt = load_prompt("structured_synthesis", context=context_text, question=question)
-    provider = get_model_provider()
 
     yield stream_event(type="status", phase="synthesis", agent="structured")
     parts: list[str] = []
@@ -169,4 +184,6 @@ def iter_structured_stream(
         sources=chunks,
         strategy=strategy,
         presentation=presentation,
+        low_confidence=low_confidence,
+        confidence_note=confidence_note,
     )

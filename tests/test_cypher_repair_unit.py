@@ -50,3 +50,21 @@ def test_normalize_generated_cypher_idempotent():
     once = normalize_generated_cypher(cypher, _SCHEMA)
     twice = normalize_generated_cypher(once, _SCHEMA)
     assert once == twice
+
+
+def test_normalize_generated_cypher_no_tenant_filter_when_disabled(monkeypatch):
+    import src.retrieval.structured.cypher.repair as repair_mod
+
+    monkeypatch.setattr(repair_mod, "MULTI_TENANCY_ENABLED", False)
+    cypher = "MATCH (p:Product) RETURN p.name"
+    fixed = normalize_generated_cypher(cypher, _SCHEMA)
+    assert "tenant_id" not in fixed
+
+
+def test_normalize_generated_cypher_injects_tenant_filter_when_enabled(monkeypatch):
+    import src.retrieval.structured.cypher.repair as repair_mod
+
+    monkeypatch.setattr(repair_mod, "MULTI_TENANCY_ENABLED", True)
+    cypher = "MATCH (p:Product) RETURN p.name"
+    fixed = normalize_generated_cypher(cypher, _SCHEMA)
+    assert "p.tenant_id = $tenant_id" in fixed

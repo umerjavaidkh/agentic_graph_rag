@@ -13,3 +13,5 @@ class ESGState(TypedDict, total=False):
     parent_section_id: Optional[str]
     document_id: Optional[str]
     prior_context: Optional[Dict]
+    low_confidence: bool
+    confidence_note: Optional[str]

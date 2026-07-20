@@ -1,8 +1,27 @@
 """Unit tests for OIDC claims → UserContext mapping."""
 from __future__ import annotations
 
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
+
+# Drop any stale fake stub a previously-collected test file may have left in
+# sys.modules (several test files stub src.auth/neo4j/fastapi as a bare
+# types.ModuleType for their own narrow needs and never restore them) — this
+# file needs the real packages, including the src.auth.oidc subpackage and
+# neo4j.Driver. A real module always has __file__ or __path__; a hand-built
+# stub has neither.
+for _mod_name in list(sys.modules):
+    if (
+        _mod_name == "src.auth"
+        or _mod_name.startswith("src.auth.")
+        or _mod_name == "src.graph"
+        or _mod_name.startswith("src.graph.")
+        or _mod_name in ("neo4j", "neo4j.exceptions", "fastapi")
+    ):
+        _mod = sys.modules[_mod_name]
+        if getattr(_mod, "__file__", None) is None and getattr(_mod, "__path__", None) is None:
+            del sys.modules[_mod_name]
 
 from src.auth.oidc.claims import build_user_context, parse_verified_claims
 from src.auth.oidc.config import OidcAuthConfig
@@ -102,17 +121,27 @@ class TestIngestAuth(unittest.TestCase):
             self.assertEqual(ctx.exception.status_code, 401)
 
     def test_require_admin_rejects_compliance_officer(self):
-        session = MagicMock()
-        session.user = UserContext(user_id="u1", role=Role.COMPLIANCE_OFFICER)
-        with patch("src.auth.oidc.deps.require_bearer_session", return_value=session):
+        # require_admin_session delegates to resolve_admin_session, which verifies
+        # the token itself (not via require_bearer_session) then gates on role.
+        with patch("src.auth.oidc.deps.get_oidc_config") as cfg, patch(
+            "src.auth.oidc.deps.verify_bearer_token"
+        ) as verify, patch("src.auth.oidc.deps.build_user_context") as build:
+            cfg.return_value = MagicMock(enabled=True)
+            verify.return_value = {"sub": "u1"}
+            build.return_value = UserContext(
+                user_id="u1", role=Role.COMPLIANCE_OFFICER, tenant_id="default"
+            )
             with self.assertRaises(Exception) as ctx:
                 require_admin_session(authorization="Bearer x")
             self.assertEqual(ctx.exception.status_code, 403)
 
     def test_require_admin_allows_admin(self):
-        session = MagicMock()
-        session.user = UserContext(user_id="u1", role=Role.ADMIN)
-        with patch("src.auth.oidc.deps.require_bearer_session", return_value=session):
+        with patch("src.auth.oidc.deps.get_oidc_config") as cfg, patch(
+            "src.auth.oidc.deps.verify_bearer_token"
+        ) as verify, patch("src.auth.oidc.deps.build_user_context") as build:
+            cfg.return_value = MagicMock(enabled=True)
+            verify.return_value = {"sub": "u1"}
+            build.return_value = UserContext(user_id="u1", role=Role.ADMIN, tenant_id="default")
             out = require_admin_session(authorization="Bearer x")
             self.assertEqual(out.user.role, Role.ADMIN)
 

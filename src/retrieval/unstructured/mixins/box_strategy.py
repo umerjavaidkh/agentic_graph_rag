@@ -5,21 +5,23 @@ import re
 from typing import Optional
 
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
+from ....graph.tenancy import tenant_filter
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import _doc_scope_cypher
 
 
 class BoxStrategyMixin:
-    def _structural_box_headings(self, session, query: str) -> list[dict]:
+    def _structural_box_headings(self, session, query: str, tenant_id: str = "") -> list[dict]:
         """
         Enumerate Box headings (e.g. "Box 10") inside a document.
         Generic: works for any document that contains "Box <number>" in titles or text.
         """
-        doc_id, doc_title = self._resolve_document_for_query(session, query)
+        doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND (
@@ -38,6 +40,7 @@ class BoxStrategyMixin:
             """,
             doc_id=doc_id,
             labels=list(_TEXT_NODE_LABELS),
+            tenant_id=tenant_id,
         )
 
         found: dict[int, dict] = {}
@@ -65,17 +68,20 @@ class BoxStrategyMixin:
 
         return [found[k] for k in sorted(found.keys())]
 
-    def _structural_box_content(self, session, query: str, box_n: int) -> list[dict]:
+    def _structural_box_content(
+        self, session, query: str, box_n: int, tenant_id: str = ""
+    ) -> list[dict]:
         """
         Retrieve content for a specific Box N (e.g. Box 5).
         Looks for nodes whose title/text mention the box, then returns the best matches.
         """
-        doc_id, doc_title = self._resolve_document_for_query(session, query)
+        doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
         box_phrase = f"box {int(box_n)}"
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
               AND (
@@ -95,6 +101,7 @@ class BoxStrategyMixin:
             doc_id=doc_id,
             box_phrase=box_phrase,
             labels=list(_TEXT_NODE_LABELS),
+            tenant_id=tenant_id,
         )
 
         items: list[dict] = []
@@ -125,7 +132,7 @@ class BoxStrategyMixin:
             reverse=True,
         )
         if items and len((items[0].get("text") or "")) < 200:
-            page_items = self._box_content_from_page_text(session, query, box_n, doc_id)
+            page_items = self._box_content_from_page_text(session, query, box_n, doc_id, tenant_id)
             if page_items:
                 return page_items
         return items[:6]
@@ -136,22 +143,26 @@ class BoxStrategyMixin:
         query: str,
         box_n: int,
         doc_id: Optional[str],
+        tenant_id: str = "",
     ) -> list[dict]:
         """Fallback when Box sections in Neo4j only store the label (pre-fix ingest)."""
-        _, doc_title = self._resolve_document_for_query(session, query)
+        _, doc_title = self._resolve_document_for_query(session, query, tenant_id)
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
             MATCH (p:Page)
             WHERE p.id STARTS WITH d.id + '_page_'
               AND toLower(coalesce(p.text, '')) CONTAINS $box_phrase
+              AND {tenant_filter("p")}
             RETURN p.id AS id, p.title AS title, p.text AS text, p.pdf_page AS pdf_page
             ORDER BY size(coalesce(p.text, '')) DESC
             LIMIT 3
             """,
             doc_id=doc_id,
             box_phrase=f"box {int(box_n)}",
+            tenant_id=tenant_id,
         )
         for r in rows:
             page_text = (r.get("text") or "").strip()

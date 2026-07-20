@@ -51,7 +51,7 @@ def test_build_revision_plan_ids(v, tmp_path: Path):
     f = tmp_path / "sample.pdf"
     f.write_bytes(b"%PDF-1.4 minimal")
     plan = v.build_revision_plan(
-        f, doc_key="corp-policy", version_number=3, content_root_id="doc_x"
+        f, tenant_id="default", doc_key="corp-policy", version_number=3, content_root_id="doc_x"
     )
     assert plan.logical_id == "corp-policy"
     assert plan.revision_id == "corp-policy:r3"
@@ -64,7 +64,9 @@ def test_apply_revision_to_graph_remaps_ids(v, tmp_path: Path):
 
     f = tmp_path / "doc.pdf"
     f.write_bytes(b"same bytes")
-    plan = v.build_revision_plan(f, doc_key="k", version_number=1, content_root_id="root")
+    plan = v.build_revision_plan(
+        f, tenant_id="default", doc_key="k", version_number=1, content_root_id="root"
+    )
     root = DKGNode(id="root", type=NodeType.DOCUMENT, title="Doc", text="", order=0)
     sec = DKGNode(id="s1", type=NodeType.SECTION, title="Intro", text="hello", order=1)
     nodes, _ = v.apply_revision_to_graph([root, sec], [], plan)

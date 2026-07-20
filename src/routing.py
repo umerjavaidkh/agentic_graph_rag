@@ -11,75 +11,128 @@ import re
 from typing import Any, Callable, Optional
 
 from .auth.roles import UserContext
+from .audit import AuditEventType, record_audit_event
 from .config.prompts import load_prompt
 from .config.settings import (
+    DEFAULT_TENANT_ID,
     FAST_ROUTE_QUERIES,
     MODEL_PROVIDER,
     OPENAI_API_KEY,
     ROUTING_MODEL,
     estimate_route_max_tokens,
 )
+from .graph.constants import (
+    DOC_REVISION_LABEL,
+    DOCUMENT_LOGICAL_LABEL,
+    INDEXED_NODE_CYPHER,
+)
 from .model_providers.factory import get_model_provider
 from .telemetry import get_telemetry, pipeline_step
 
 logger = logging.getLogger(__name__)
 
-# OpenAI function specs for MCP-style tool routing
-MCP_ROUTE_TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_documents",
-            "description": (
-                "Search ingested PDF/DOCX documents: policies, annual reports, manuals, "
-                "photo credits, appendices, annual reports, manuals, sections, "
-                "tables in documents, and any factual answer that comes from document content—not "
-                "the Northwind product/order database."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string", "description": "The user's question verbatim"},
+# Node labels that belong to the ingested-document tree, not the structured
+# business graph — excluded when summarizing "what's in the structured graph"
+# for router prompts, so that summary doesn't just list Document/Section/Page.
+_DOCUMENT_GRAPH_LABELS = set(INDEXED_NODE_CYPHER.split("|")) | {
+    DOCUMENT_LOGICAL_LABEL,
+    DOC_REVISION_LABEL,
+}
+
+_structured_entities_cache: Optional[str] = None
+
+
+def structured_entity_summary() -> str:
+    """
+    Human-readable list of the live graph's non-document node labels, used to
+    describe the structured-data tool to the router LLM instead of a
+    hardcoded domain name — so routing adapts to whatever schema is loaded
+    rather than staying tied to this repo's Northwind demo data.
+
+    Cached for process lifetime (schema changes are rare relative to query
+    volume, same tradeoff as SchemaProvider's Text-to-Cypher schema cache).
+    """
+    global _structured_entities_cache
+    if _structured_entities_cache is not None:
+        return _structured_entities_cache
+    try:
+        from .graph.driver import get_neo4j_driver
+
+        driver = get_neo4j_driver()
+        with driver.session() as session:
+            rows = session.run("CALL db.labels() YIELD label RETURN label ORDER BY label")
+            labels = [r["label"] for r in rows if r["label"] not in _DOCUMENT_GRAPH_LABELS]
+        _structured_entities_cache = ", ".join(labels) if labels else "structured graph data"
+    except Exception as exc:
+        logger.debug("structured_entity_summary: schema lookup failed: %s", exc)
+        _structured_entities_cache = "structured graph data"
+    return _structured_entities_cache
+
+
+def clear_structured_entity_cache() -> None:
+    """Reset the cached label summary (tests, or after a schema change)."""
+    global _structured_entities_cache
+    _structured_entities_cache = None
+
+
+def _build_mcp_route_tools() -> list[dict[str, Any]]:
+    """OpenAI function specs for MCP-style tool routing, built fresh per call
+    so the query_data description reflects whatever graph is actually live."""
+    entities = structured_entity_summary()
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_documents",
+                "description": (
+                    "Search ingested PDF/DOCX documents: policies, reports, manuals, "
+                    "sections, tables, appendices, and any factual answer that comes "
+                    "from document content — not the structured graph database."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "The user's question verbatim"},
+                    },
+                    "required": ["question"],
                 },
-                "required": ["question"],
             },
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_data",
-            "description": (
-                "Query the Northwind-style business graph ONLY: products, orders, customers, "
-                "suppliers, sales analytics, Cypher/schema. Never use for PDF text, photo credits, "
-                "photographers, or ingested report/PDF content."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string", "description": "The user's question verbatim"},
+        {
+            "type": "function",
+            "function": {
+                "name": "query_data",
+                "description": (
+                    f"Query the structured graph database ONLY — entities: {entities}. "
+                    "Aggregations, rankings, counts, Cypher/schema questions. Never use "
+                    "for narrative text inside ingested PDF/DOCX documents."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "The user's question verbatim"},
+                    },
+                    "required": ["question"],
                 },
-                "required": ["question"],
             },
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_hybrid",
-            "description": (
-                "Query BOTH documents and structured graph data when the user clearly needs both."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string", "description": "The user's question verbatim"},
+        {
+            "type": "function",
+            "function": {
+                "name": "query_hybrid",
+                "description": (
+                    "Query BOTH documents and structured graph data when the user clearly needs both."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "The user's question verbatim"},
+                    },
+                    "required": ["question"],
                 },
-                "required": ["question"],
             },
         },
-    },
-]
+    ]
 
 TOOL_TO_AGENT: dict[str, str] = {
     "search_documents": "unstructured",
@@ -88,8 +141,8 @@ TOOL_TO_AGENT: dict[str, str] = {
 }
 
 _DATA_ROUTE = re.compile(
-    r"\b(?:products?|orders?|customers?|suppliers?|categories?|category|beverages?|sales|"
-    r"revenue|profit|sold|northwind|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|"
+    r"\b(?:products?|orders?|customers?|suppliers?|categories?|category|sales|"
+    r"revenue|profit|sold|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|"
     r"cypher|neo4j|how\s+many\s+(?:orders?|products?|customers?|suppliers?|units?)|"
     r"count\s+of\s+(?:orders?|products?|customers?|suppliers?)|"
     r"belong\s+to\s+(?:the\s+)?\w+\s+categor|aggregate|schema|monthly|timeline|trend|"
@@ -162,14 +215,26 @@ def document_agent_structured_guard(
         return {
             "answer": (fixed.get("answer") or "").strip(),
             "low_confidence": bool(fixed.get("low_confidence")),
+            "confidence_note": fixed.get("confidence_note"),
             "sources": fixed.get("sources") or [],
             "strategy": fixed.get("strategy"),
             "_autofix_agent": "structured",
         }
     uid = user_context.user_id if user_context else "unknown"
+    record_audit_event(
+        event_type=AuditEventType.ACCESS_DENIED,
+        user_id=uid,
+        tenant_id=user_context.tenant_id if user_context else DEFAULT_TENANT_ID,
+        role=user_context.role.value if user_context else "public",
+        resource="structured",
+        action=question,
+        result="denied",
+        reason="misrouted_no_access",
+    )
     return {
         "answer": structured_misroute_message(uid),
         "low_confidence": False,
+        "confidence_note": None,
     }
 
 
@@ -178,11 +243,9 @@ def has_document_cue(question: str) -> bool:
     return bool(_DOC_ROUTE.search(question or ""))
 _DOC_ROUTE = re.compile(
     r"\b(?:policy|policies|document|documents|pdf|manual|protocol|section\s+\d|"
-    r"whistleblow|compliance\s+officer|procedure|page\s+\d+|figure|table\s+on|"
-    r"table\s+of\s+contents?|toc|annex|appendix|acknowledgement|preface|chapter|"
-    r"report|reports|annual\s+report|workshop|translated|translation|languages?|"
-    r"institution|hosted|"
-    r"photo|photograph|credit|photographer|illustration|attribution|caption|"
+    r"procedure|page\s+\d+|figure|table|workshop|"
+    r"toc|annex|appendix|acknowledgement|preface|chapter|"
+    r"report|reports|annual\s+report|"
     r"identify\s+all|list\s+all|enumerate)\b",
     re.I,
 )
@@ -232,7 +295,7 @@ def select_mcp_tool(
     if is_structured_data_question(question) and not _DOC_ROUTE.search(question):
         return "query_data"
 
-    # Document signals without Northwind analytics → documents (before LLM mis-routes).
+    # Document signals without structured-graph analytics → documents (before LLM mis-routes).
     if _DOC_ROUTE.search(question) and not is_structured_data_question(question):
         return "search_documents"
 
@@ -240,7 +303,7 @@ def select_mcp_tool(
         return "search_documents"
 
     provider = get_model_provider(provider_name, api_key)
-    system_prompt = load_prompt("route_query")
+    system_prompt = load_prompt("route_query", structured_entities=structured_entity_summary())
 
     try:
         response = provider.chat_completion(
@@ -249,7 +312,7 @@ def select_mcp_tool(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question},
             ],
-            tools=MCP_ROUTE_TOOLS,
+            tools=_build_mcp_route_tools(),
             tool_choice="required",
             temperature=0,
             max_tokens=estimate_route_max_tokens(question),

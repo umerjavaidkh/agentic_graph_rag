@@ -10,7 +10,7 @@ from fastapi import Header, HTTPException
 from ..rbac_setup import GraphRBAC
 from ..thread_scope import scoped_thread_id
 from ..roles import Role, UserContext, validate_role
-from ...config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from ...config.settings import DEFAULT_TENANT_ID, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 from .claims import VerifiedClaims, build_user_context, parse_verified_claims
 from .config import OidcAuthConfig, load_oidc_config
 from .verifier import AuthenticationError, extract_bearer_token, verify_bearer_token
@@ -81,6 +81,7 @@ def resolve_admin_session(
     authorization: Optional[str] = None,
     body_user_id: Optional[str] = None,
     body_role: Optional[str] = None,
+    body_tenant_id: Optional[str] = None,
 ) -> AuthSession:
     """
     Admin principal for ingestion and /admin/*.
@@ -123,6 +124,7 @@ def resolve_admin_session(
     user = UserContext(
         user_id=(body_user_id or "admin_001").strip(),
         role=role,
+        tenant_id=(body_tenant_id or DEFAULT_TENANT_ID).strip(),
     )
     return AuthSession(user=user, auth_mode="body_fallback")
 
@@ -141,6 +143,7 @@ def resolve_user_context(
     body_user_id: Optional[str] = None,
     body_role: Optional[str] = None,
     body_department: Optional[str] = None,
+    body_tenant_id: Optional[str] = None,
 ) -> AuthSession:
     """
     Build UserContext for /query and related endpoints.
@@ -174,6 +177,7 @@ def resolve_user_context(
         user = UserContext(
             user_id=(body_user_id or "public_001").strip(),
             role=role,
+            tenant_id=(body_tenant_id or DEFAULT_TENANT_ID).strip(),
             department=body_department,
         )
         mode = "body_fallback" if cfg.enabled else "anonymous"

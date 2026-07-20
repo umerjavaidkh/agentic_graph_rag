@@ -5,6 +5,11 @@
 pymupdf>=1.24.0
 pdfplumber>=0.11.0
 
+# ── OCR fallback (low-confidence pages; requires the tesseract-ocr system
+# package too — see Dockerfile) ─────────
+pytesseract>=0.3.10
+Pillow>=10.0.0
+
 # ── Embeddings + LLM ────────────────────
 openai>=1.30.0
 fastapi>=0.100.0

@@ -82,6 +82,23 @@ class DKGNode:
     version_number: Optional[int] = None
     ingested_at: Optional[str] = None
     source_filename: Optional[str] = None
+    # Blob-store keys (set by the exporter at write time, not by the parser)
+    # when text/visual_content are dual-written to a BlobStore.
+    blob_key_text: Optional[str] = None
+    blob_key_visual: Optional[str] = None
+    # Multi-tenancy: stamped by apply_revision_to_graph, not the parser itself.
+    tenant_id: Optional[str] = None
+
+
+# ─────────────────────────────────────────
+# EDGE CONFIDENCE / PROVENANCE
+# ─────────────────────────────────────────
+class EdgeConfidenceTier(str, Enum):
+    """How this edge was derived, so a query can distinguish directly-observed
+    facts from derived/uncertain ones (borrowed from Graphify's model)."""
+    EXTRACTED = "EXTRACTED"  # deterministic: directly found in the document/graph structure
+    INFERRED  = "INFERRED"   # derived from a real numeric signal (similarity, LLM judgment)
+    AMBIGUOUS = "AMBIGUOUS"  # weak signal, no strong per-pair confidence available
 
 
 # ─────────────────────────────────────────
@@ -89,9 +106,13 @@ class DKGNode:
 # ─────────────────────────────────────────
 @dataclass
 class DKGEdge:
-    source_id:  str
-    target_id:  str
-    rel_type:   str | RelType
-    weight:     float = 1.0          # similarity score where relevant
-    axis:       int   = 1            # 1 = structural, 2 = semantic
-    properties: dict  = field(default_factory=dict)
+    source_id:        str
+    target_id:        str
+    rel_type:         str | RelType
+    weight:           float = 1.0          # similarity score where relevant
+    axis:             int   = 1            # 1 = structural, 2 = semantic
+    properties:       dict  = field(default_factory=dict)
+    confidence:       float = 1.0
+    confidence_tier:  str | EdgeConfidenceTier = EdgeConfidenceTier.EXTRACTED
+    # Multi-tenancy: stamped by apply_revision_to_graph, not the parser itself.
+    tenant_id:        Optional[str] = None

@@ -62,6 +62,10 @@
     .outcome-pass { color: var(--ok); }
     .outcome-fail { color: var(--bad); }
     .outcome-null { color: var(--muted); }
+    .result-success { color: var(--ok); }
+    .result-denied { color: var(--bad); }
+    .result-error { color: var(--warn); }
+    select { background: #334155; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.45rem 0.75rem; font-size: 0.85rem; }
     footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 1.5rem; }
   </style>
 </head>
@@ -132,6 +136,36 @@
             <tr>
               <th>Time</th><th>Request</th><th>Agent</th><th>Mode</th><th>Route</th>
               <th>Outcome</th><th>Routing applied</th><th>Preview</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <h2>Audit log</h2>
+      <div class="toolbar">
+        <input id="audit-user" placeholder="filter: user_id" style="max-width:160px;" />
+        <input id="audit-tenant" placeholder="filter: tenant_id" style="max-width:160px;" />
+        <select id="audit-type">
+          <option value="">all event types</option>
+          <option value="query">query</option>
+          <option value="access_denied">access_denied</option>
+          <option value="ingestion_submitted">ingestion_submitted</option>
+          <option value="ingestion_completed">ingestion_completed</option>
+          <option value="ingestion_failed">ingestion_failed</option>
+        </select>
+        <button type="button" id="btn-audit-refresh">Apply</button>
+        <span style="margin-left:auto;color:var(--muted);font-size:0.8rem;">admin role (dev fallback):</span>
+        <input id="audit-admin-role" placeholder="admin role" value="admin" style="max-width:100px;flex:0;" />
+      </div>
+      <div style="overflow-x:auto;">
+        <table id="tbl-audit">
+          <thead>
+            <tr>
+              <th>Time</th><th>User</th><th>Tenant</th><th>Role</th><th>Type</th>
+              <th>Resource</th><th>Action</th><th>Result</th><th>Reason</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -268,6 +302,53 @@
       }
     }
 
+    function resultCell(r) {
+      const cls = r === "success" ? "result-success" : r === "denied" ? "result-denied" : "result-error";
+      return `<span class="${cls}">${r}</span>`;
+    }
+
+    function renderAudit(events) {
+      const tbody = document.querySelector("#tbl-audit tbody");
+      tbody.innerHTML = events.map(e => `
+        <tr>
+          <td class="mono">${(e.ts || "").slice(0, 19)}</td>
+          <td class="mono">${e.user_id || ""}</td>
+          <td class="mono">${e.tenant_id || ""}</td>
+          <td>${e.role || ""}</td>
+          <td class="mono">${e.event_type || ""}</td>
+          <td class="mono">${e.resource || "—"}</td>
+          <td>${e.action || "—"}</td>
+          <td>${resultCell(e.result)}</td>
+          <td>${e.reason || "—"}</td>
+        </tr>
+      `).join("") || '<tr><td colspan="9" style="color:var(--muted)">No audit events yet</td></tr>';
+    }
+
+    async function loadAudit() {
+      const params = new URLSearchParams();
+      params.set("limit", "50");
+      // Dev-fallback admin check only gates on role=admin; user_id below is
+      // purely a result filter, not an identity.
+      params.set("role", document.getElementById("audit-admin-role").value.trim() || "admin");
+      const filterUser = document.getElementById("audit-user").value.trim();
+      const filterTenant = document.getElementById("audit-tenant").value.trim();
+      const filterType = document.getElementById("audit-type").value;
+      if (filterUser) params.set("user_id", filterUser);
+      if (filterTenant) params.set("tenant_id", filterTenant);
+      if (filterType) params.set("event_type", filterType);
+      try {
+        const res = await fetch("/audit/events?" + params.toString());
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || res.statusText);
+        }
+        renderAudit(await res.json());
+      } catch (e) {
+        document.querySelector("#tbl-audit tbody").innerHTML =
+          `<tr><td colspan="9" style="color:var(--bad)">${String(e.message || e)}</td></tr>`;
+      }
+    }
+
     async function probeQuestion() {
       const q = document.getElementById("probe-q").value.trim();
       const agent = document.getElementById("probe-agent").value.trim();
@@ -280,11 +361,12 @@
       out.textContent = JSON.stringify(data, null, 2);
     }
 
-    document.getElementById("btn-refresh").addEventListener("click", loadDashboard);
+    document.getElementById("btn-refresh").addEventListener("click", () => { loadDashboard(); loadAudit(); });
     document.getElementById("btn-probe").addEventListener("click", probeQuestion);
+    document.getElementById("btn-audit-refresh").addEventListener("click", loadAudit);
     document.getElementById("auto-refresh").addEventListener("change", (e) => {
       if (e.target.checked) {
-        timer = setInterval(loadDashboard, 30000);
+        timer = setInterval(() => { loadDashboard(); loadAudit(); }, 30000);
       } else if (timer) {
         clearInterval(timer);
         timer = null;
@@ -292,7 +374,8 @@
     });
 
     loadDashboard();
-    timer = setInterval(loadDashboard, 30000);
+    loadAudit();
+    timer = setInterval(() => { loadDashboard(); loadAudit(); }, 30000);
   </script>
 </body>
 </html>

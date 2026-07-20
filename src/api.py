@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from .graph.driver import close_neo4j_driver, get_neo4j_driver
 from pydantic import BaseModel, Field
 
+from .audit import AuditEventType, get_audit_store, record_audit_event
 from .bridge import ask
 from .conversation import clear_turn
 from .logging_config import setup_logging
@@ -20,6 +21,7 @@ from .auth.oidc import auth_public_config, resolve_admin_session, resolve_scoped
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
+    CORPUS_SCAN_TIMEOUT,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
@@ -66,12 +68,17 @@ async def _run_ingest_job_local(job_id: str) -> None:
     await loop.run_in_executor(_ingest_executor, ingestion_manager.run_job, job_id)
 
 
-def _dispatch_ingest_job(job_id: str, background_tasks: BackgroundTasks) -> str:
+def _dispatch_ingest_job(
+    job_id: str, background_tasks: BackgroundTasks, *, job_timeout: str = "30m"
+) -> str:
     """
     Dispatch a job to RQ workers when Redis is configured, or run it
     locally via BackgroundTasks when it is not.  Returns the dispatch mode.
+
+    job_timeout only affects the RQ path — the BackgroundTasks/ThreadPoolExecutor
+    fallback has no timeout concept.
     """
-    rq_job = enqueue_ingest(job_id)  # returns None when REDIS_URL not set
+    rq_job = enqueue_ingest(job_id, job_timeout=job_timeout)  # None when REDIS_URL not set
     if rq_job is not None:
         return "worker"
     background_tasks.add_task(_run_ingest_job_local, job_id)
@@ -179,6 +186,25 @@ class IngestionStatusResponse(BaseModel):
     content_hash: Optional[str] = None
     version_number: Optional[int] = None
     skipped_duplicate: bool = False
+    child_job_ids: List[str] = []
+
+
+class CorpusIngestRequest(BaseModel):
+    source: str = Field(
+        ...,
+        description=(
+            "Absolute path to a directory to scan (recursively), or a manifest "
+            "file of absolute paths (one per line; '#' comments allowed)."
+        ),
+    )
+    job_name: Optional[str] = None
+    doc_key_prefix: Optional[str] = Field(
+        default=None,
+        description="Combined with each file's name to form a per-file logical id.",
+    )
+    user_id: Optional[str] = None
+    role: Optional[str] = None
+    tenant_id: Optional[str] = None
 
 
 class IngestionJobSummary(BaseModel):
@@ -198,6 +224,7 @@ class QueryRequest(BaseModel):
     question:    str           = Field(..., description="User's question")
     role:        Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
     user_id:     Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
+    tenant_id:   Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
     department:  Optional[str] = Field(default=None, description="User department")
     thread_id:   Optional[str] = Field(default="default")
 
@@ -206,6 +233,7 @@ class ClearThreadRequest(BaseModel):
     thread_id: Optional[str] = Field(default="default")
     user_id: Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
     role: Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
+    tenant_id: Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
 
 
 class QueryResponse(BaseModel):
@@ -223,6 +251,8 @@ class QueryResponse(BaseModel):
     follow_up:    Optional[str] = None  # set when last-turn context was used
     telemetry:    Optional[dict] = None  # {_telemetry} from router (tokens/tries)
     request_id:   Optional[str] = None   # correlates with feedback / logs
+    low_confidence:  bool = False        # structured-path answer verification signal
+    confidence_note: Optional[str] = None  # reason when low_confidence is True
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -236,6 +266,7 @@ async def query(
         body_user_id=request.user_id,
         body_role=request.role,
         body_department=request.department,
+        body_tenant_id=request.tenant_id,
     )
     thread_id = resolve_scoped_thread_id(session, request.thread_id)
     context = session.user
@@ -294,6 +325,8 @@ async def query(
             follow_up    = result.get("_follow_up"),
             telemetry    = telemetry,
             request_id   = request_id,
+            low_confidence  = bool(result.get("low_confidence")),
+            confidence_note = result.get("confidence_note"),
         )
     except ValueError as ve:
         logger.warning(
@@ -333,6 +366,7 @@ async def query_stream(
         body_user_id=request.user_id,
         body_role=request.role,
         body_department=request.department,
+        body_tenant_id=request.tenant_id,
     )
     thread_id = resolve_scoped_thread_id(session, request.thread_id)
     context = session.user
@@ -375,6 +409,7 @@ async def chat_clear(
         authorization=authorization,
         body_user_id=request.user_id,
         body_role=request.role,
+        body_tenant_id=request.tenant_id,
     )
     thread_id = resolve_scoped_thread_id(session, request.thread_id)
     clear_turn(thread_id)
@@ -473,21 +508,84 @@ async def ingest_unstructured(
     authorization: Optional[str] = Header(default=None),
     user_id: Optional[str] = Form(None),
     role: Optional[str] = Form(None),
+    tenant_id: Optional[str] = Form(None),
 ):
-    resolve_admin_session(
+    session = resolve_admin_session(
         authorization=authorization,
         body_user_id=user_id,
         body_role=role,
+        body_tenant_id=tenant_id,
     )
     # No 409 gate: multiple concurrent uploads are fine. The per-doc Redis lock
     # (inside IngestionManager._doc_lock) serialises revision installs for the
     # same logical document while allowing different documents to run in parallel.
-    job = ingestion_manager.submit_unstructured(file, job_name=job_name, doc_key=doc_key)
+    job = ingestion_manager.submit_unstructured(
+        file, session.user.tenant_id, job_name=job_name, doc_key=doc_key
+    )
+    record_audit_event(
+        event_type=AuditEventType.INGESTION_SUBMITTED,
+        user_id=session.user.user_id,
+        tenant_id=session.user.tenant_id,
+        role=session.user.role.value,
+        resource=job.id,
+        action=job_name or file.filename,
+        metadata={"job_type": "unstructured"},
+    )
     dispatch = _dispatch_ingest_job(job.id, background_tasks)
     return IngestionResponse(
         job_id=job.id,
         status=job.status.value,
         message="Unstructured ingestion job submitted.",
+        output_dir=str(job.output_dir) if job.output_dir else "",
+        dispatch=dispatch,
+    )
+
+
+@app.post("/ingest/corpus", response_model=IngestionResponse)
+async def ingest_corpus(
+    request: CorpusIngestRequest,
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Scan a server-accessible directory (recursively) or manifest file and
+    fan out one unstructured-ingestion job per accepted file, after a cheap
+    dedup + structural-sanity triage pass (no LLM calls in triage).
+
+    Note: this job ("corpus" type) can reach `completed` once every child
+    job has been created/enqueued — that does not mean every document has
+    finished ingesting. Poll each id in the response's `child_job_ids`
+    (via GET /ingest/jobs/{job_id}) individually for their own status.
+    """
+    session = resolve_admin_session(
+        authorization=authorization,
+        body_user_id=request.user_id,
+        body_role=request.role,
+        body_tenant_id=request.tenant_id,
+    )
+    try:
+        job = ingestion_manager.submit_corpus(
+            request.source,
+            session.user.tenant_id,
+            job_name=request.job_name,
+            doc_key_prefix=request.doc_key_prefix,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    record_audit_event(
+        event_type=AuditEventType.INGESTION_SUBMITTED,
+        user_id=session.user.user_id,
+        tenant_id=session.user.tenant_id,
+        role=session.user.role.value,
+        resource=job.id,
+        action=request.job_name or request.source,
+        metadata={"job_type": "corpus"},
+    )
+    dispatch = _dispatch_ingest_job(job.id, background_tasks, job_timeout=CORPUS_SCAN_TIMEOUT)
+    return IngestionResponse(
+        job_id=job.id,
+        status=job.status.value,
+        message="Corpus ingestion job submitted.",
         output_dir=str(job.output_dir) if job.output_dir else "",
         dispatch=dispatch,
     )
@@ -502,6 +600,7 @@ async def ingest_cypher(
     authorization: Optional[str] = Header(default=None),
     user_id: Optional[str] = Form(None),
     role: Optional[str] = Form(None),
+    tenant_id: Optional[str] = Form(None),
 ):
     """
     Upload and execute arbitrary Cypher against Neo4j.
@@ -509,14 +608,17 @@ async def ingest_cypher(
     Security:
     - Disabled by default (set ALLOW_CYPHER_INGEST=true to enable)
     - Admin role required (JWT when AUTH_ENABLED, else body role=admin)
+    - Not covered by automatic tenant-stamping (see IngestionManager._process_cypher);
+      restrict to trusted admin uploads in a genuinely multi-tenant deployment.
     """
     if not ALLOW_CYPHER_INGEST:
         raise HTTPException(status_code=403, detail="Cypher ingestion is disabled. Set ALLOW_CYPHER_INGEST=true to enable.")
 
-    resolve_admin_session(
+    session = resolve_admin_session(
         authorization=authorization,
         body_user_id=user_id,
         body_role=role,
+        body_tenant_id=tenant_id,
     )
 
     cypher_params = {}
@@ -524,7 +626,18 @@ async def ingest_cypher(
     if effective_openai_key:
         cypher_params["openAIKey"] = effective_openai_key
 
-    job = ingestion_manager.submit_cypher(file, job_name=job_name, cypher_params=cypher_params or None)
+    job = ingestion_manager.submit_cypher(
+        file, session.user.tenant_id, job_name=job_name, cypher_params=cypher_params or None
+    )
+    record_audit_event(
+        event_type=AuditEventType.INGESTION_SUBMITTED,
+        user_id=session.user.user_id,
+        tenant_id=session.user.tenant_id,
+        role=session.user.role.value,
+        resource=job.id,
+        action=job_name or file.filename,
+        metadata={"job_type": "cypher"},
+    )
     dispatch = _dispatch_ingest_job(job.id, background_tasks)
     return IngestionResponse(
         job_id=job.id,
@@ -576,6 +689,40 @@ async def list_ingestion_jobs(
     return summaries
 
 
+@app.get("/audit/events", response_model=List[dict])
+async def list_audit_events(
+    limit: int = 100,
+    user_id: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    since: Optional[str] = Query(None),
+    until: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(default=None),
+    role: Optional[str] = Query(None),
+):
+    """
+    Query the audit trail (who did what, when, to what data).
+
+    Admin-only. Filters are ANDed; omit any to widen the result. `user_id`
+    filters the results — it is not the identity used for the admin check
+    (dev-fallback only gates on role=admin), so filtering by another user's
+    id doesn't affect whether the request is allowed.
+    """
+    resolve_admin_session(
+        authorization=authorization,
+        body_role=role,
+    )
+    events = get_audit_store().query(
+        user_id=user_id,
+        tenant_id=tenant_id,
+        event_type=event_type,
+        since=since,
+        until=until,
+        limit=min(max(limit, 1), 1000),
+    )
+    return [e.to_dict() for e in events]
+
+
 @app.get("/ingest/jobs/{job_id}", response_model=IngestionStatusResponse)
 async def get_ingestion_job(
     job_id: str,
@@ -609,6 +756,7 @@ async def get_ingestion_job(
         content_hash=job.content_hash,
         version_number=job.version_number,
         skipped_duplicate=job.skipped_duplicate,
+        child_job_ids=job.child_job_ids,
     )
 
 

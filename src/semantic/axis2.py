@@ -35,7 +35,7 @@ from ..config.settings import (
     OPENAI_API_KEY,
 )
 from ..model_providers.factory import get_model_provider
-from ..models import DKGNode, DKGEdge, NodeType, RelType
+from ..models import DKGNode, DKGEdge, EdgeConfidenceTier, NodeType, RelType
 
 
 # ─────────────────────────────────────────
@@ -44,6 +44,9 @@ from ..models import DKGNode, DKGEdge, NodeType, RelType
 SIMILARITY_THRESHOLD   = 0.75   # cosine sim for SEMANTICALLY_SIMILAR
 CONTRADICTION_THRESH   = 0.85   # only run LLM on very similar pairs
 N_CLUSTERS             = None   # None = auto (sqrt of chapter count)
+# SAME_CATEGORY has no per-pair score (cluster co-membership alone doesn't
+# confirm two specific members are strongly related) — AMBIGUOUS, flat score.
+SAME_CATEGORY_CONFIDENCE = 0.5
 # Node types to include in semantic analysis (skip PAGE for perf)
 SEMANTIC_NODE_TYPES    = {NodeType.CHAPTER, NodeType.SECTION}
 CONCEPT_NODE_TYPES     = {NodeType.SECTION, NodeType.PAGE}
@@ -198,6 +201,8 @@ class Axis2Builder:
                     weight     = round(score, 4),
                     axis       = 2,
                     properties = {"score": round(score, 4)},
+                    confidence = round(score, 4),
+                    confidence_tier = EdgeConfidenceTier.INFERRED,
                 ))
 
         return edges
@@ -261,6 +266,8 @@ class Axis2Builder:
                     rel_type   = RelType.SAME_CATEGORY,
                     axis       = 2,
                     properties = {"cluster_id": cluster_id},
+                    confidence = SAME_CATEGORY_CONFIDENCE,
+                    confidence_tier = EdgeConfidenceTier.AMBIGUOUS,
                 ))
 
         return nodes, edges
@@ -347,6 +354,8 @@ Determine the relationship. Return ONLY valid JSON:
                         weight     = data["confidence"],
                         axis       = 2,
                         properties = {"reason": data.get("reason", "")},
+                        confidence = data["confidence"],
+                        confidence_tier = EdgeConfidenceTier.INFERRED,
                     )
             except Exception:
                 pass

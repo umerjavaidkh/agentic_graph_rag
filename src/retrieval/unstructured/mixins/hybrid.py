@@ -65,6 +65,7 @@ class HybridRetrieveMixin:
         Early exit (no semantic): TOC, PDF page, page visual lookups only.
         """
         ctx = user_context or self.user_context
+        tenant_id = ctx.tenant_id
         denied = self._access_denied_response(query, ctx)
         if denied:
             return denied
@@ -74,7 +75,7 @@ class HybridRetrieveMixin:
         # Box headings listing (generic): "List all Box headings" should enumerate Box 1..N.
         if self._exec.is_box_list_request(query):
             with self.driver.session() as session:
-                items = self._structural_box_headings(session, query)
+                items = self._structural_box_headings(session, query, tenant_id)
             if items:
                 response = self._format_response(query, items, user_context=ctx)
                 response["mode"] = "structural_box_list"
@@ -90,7 +91,7 @@ class HybridRetrieveMixin:
         box_n = self._exec.parse_box_number(query)
         if box_n is not None and not self._exec.is_box_list_request(query):
             with self.driver.session() as session:
-                items = self._structural_box_content(session, query, box_n)
+                items = self._structural_box_content(session, query, box_n, tenant_id)
             if items:
                 response = self._format_response(query, items, user_context=ctx)
                 response["mode"] = "structural_box_content"
@@ -106,11 +107,11 @@ class HybridRetrieveMixin:
         # ask them to pick the document rather than guessing.
         if self._exec.is_subsection_request(query) and self._exec.parse_section_number(query):
             with self.driver.session() as session:
-                doc_id, doc_title = self._resolve_document_for_query(session, query)
+                doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
                 # If user didn't mention any doc terms, this resolver can "guess" the biggest doc.
                 # When multiple docs exist, prefer explicit clarification.
                 if not self._document_match_terms(query):
-                    docs = self._list_documents(session, limit=5)
+                    docs = self._list_documents(session, limit=5, tenant_id=tenant_id)
                     if len(docs) > 1:
                         clar = self._exec.build_doc_choice_clarification(
                             original_question=query,
@@ -138,7 +139,7 @@ class HybridRetrieveMixin:
             sec_num = self._exec.parse_section_number(query)
             if sec_num:
                 with self.driver.session() as session:
-                    items, parent = self._structural_subsections(session, query, sec_num)
+                    items, parent = self._structural_subsections(session, query, sec_num, tenant_id)
                 if items:
                     response = self._format_response(query, items, user_context=ctx)
                     response["mode"] = "subsection_tree"
@@ -170,9 +171,9 @@ class HybridRetrieveMixin:
                 # return a clarification rather than silently using the wrong doc.
                 doc_terms = self._doc_name_terms(query)
                 if doc_terms:
-                    doc_id, _ = self._resolve_document_for_query_strict(session, query)
+                    doc_id, _ = self._resolve_document_for_query_strict(session, query, tenant_id)
                     if doc_id is None:
-                        docs = self._list_documents(session, limit=8)
+                        docs = self._list_documents(session, limit=8, tenant_id=tenant_id)
                         if docs:
                             clar = self._exec.build_doc_choice_clarification(
                                 original_question=query,
@@ -194,7 +195,7 @@ class HybridRetrieveMixin:
                                 }],
                                 "total_available": 1,
                             }
-                toc_items = self._structural_toc_retrieve(session, query)
+                toc_items = self._structural_toc_retrieve(session, query, tenant_id)
             if toc_items:
                 response = self._format_response(query, toc_items, user_context=ctx)
                 response["mode"] = "structural_toc"
@@ -206,7 +207,7 @@ class HybridRetrieveMixin:
 
         if is_visual_page_question(query):
             with self.driver.session() as session:
-                visual_items = self._structural_page_visual_retrieve(session, query)
+                visual_items = self._structural_page_visual_retrieve(session, query, tenant_id)
             if visual_items:
                 pdf_page, doc_page = self._parse_page_targets(query)
                 response = self._format_response(query, visual_items, user_context=ctx)
@@ -226,7 +227,7 @@ class HybridRetrieveMixin:
 
         if is_page_question(query):
             with self.driver.session() as session:
-                page_items = self._structural_page_retrieve(session, query)
+                page_items = self._structural_page_retrieve(session, query, tenant_id)
             if page_items:
                 response = self._format_response(query, page_items, user_context=ctx)
                 response["mode"] = "structural_page"
@@ -254,20 +255,34 @@ class HybridRetrieveMixin:
 
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="hybrid_seed") as pool:
             phrase_future = pool.submit(
-                self._neo4j_session_call, self._structural_phrase_retrieve, query
+                self._neo4j_session_call,
+                self._structural_phrase_retrieve,
+                query,
+                tenant_id=tenant_id,
             )
             keyword_future = pool.submit(
-                self._neo4j_session_call, self._structural_keyword_retrieve, query
+                self._neo4j_session_call,
+                self._structural_keyword_retrieve,
+                query,
+                tenant_id=tenant_id,
             )
             if skip_vector:
                 vector_future = None
                 vector_hits: list[dict] = []
             else:
                 vector_future = pool.submit(
-                    self._neo4j_session_call, self._vector_seed, embedding, vector_limit
+                    self._neo4j_session_call,
+                    self._vector_seed,
+                    embedding,
+                    vector_limit,
+                    tenant_id=tenant_id,
                 )
             fulltext_future = pool.submit(
-                self._neo4j_session_call, self._fulltext_seed, query, _FULLTEXT_LIMIT
+                self._neo4j_session_call,
+                self._fulltext_seed,
+                query,
+                _FULLTEXT_LIMIT,
+                tenant_id=tenant_id,
             )
             phrase_hits = phrase_future.result()
             keyword_hits = keyword_future.result()
@@ -288,6 +303,7 @@ class HybridRetrieveMixin:
                     seed_ids,
                     hops=1,
                     limit=graph_1hop,
+                    tenant_id=tenant_id,
                 )
                 hop2_future = pool.submit(
                     self._neo4j_session_call,
@@ -295,6 +311,7 @@ class HybridRetrieveMixin:
                     seed_ids,
                     hops=2,
                     limit=graph_2hop,
+                    tenant_id=tenant_id,
                 )
                 graph_hits = hop1_future.result() + hop2_future.result()
 

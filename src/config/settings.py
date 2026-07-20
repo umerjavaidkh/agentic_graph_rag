@@ -49,6 +49,11 @@ CYPHER_INGEST_SKIP_GENAI = os.environ.get("CYPHER_INGEST_SKIP_GENAI", "false").l
 # Disable to keep raw inputs for debugging.
 CLEANUP_TMP_INGEST = os.environ.get("CLEANUP_TMP_INGEST", "true").lower() in ("1", "true", "yes")
 
+# Bulk/corpus ingestion safety rails (directory-scan or manifest ingestion).
+CORPUS_MAX_FILES = int(os.environ.get("CORPUS_MAX_FILES", "100000"))
+CORPUS_MAX_PDF_PAGES = int(os.environ.get("CORPUS_MAX_PDF_PAGES", "2000"))
+CORPUS_SCAN_TIMEOUT = os.environ.get("CORPUS_SCAN_TIMEOUT", "6h")
+
 # SECURITY: Allows wiping the Neo4j database (DROP indexes/constraints + delete all nodes).
 # Keep disabled unless you're in a trusted dev environment.
 ALLOW_DB_RESET = os.environ.get("ALLOW_DB_RESET", "false").lower() in ("1", "true", "yes")
@@ -90,6 +95,8 @@ PDF_LOW_TEXT_CHARS = int(os.environ.get("PDF_LOW_TEXT_CHARS", "120"))
 PDF_PLUMBER_PAGE_TIMEOUT_SEC = int(os.environ.get("PDF_PLUMBER_PAGE_TIMEOUT_SEC", "25"))
 PDF_ENABLE_OCR = os.environ.get("PDF_ENABLE_OCR", "false").lower() in ("1", "true", "yes")
 PDF_OCR_BACKEND = os.environ.get("PDF_OCR_BACKEND", "none").lower()
+PDF_OCR_DPI = int(os.environ.get("PDF_OCR_DPI", "200"))
+PDF_OCR_LANG = os.environ.get("PDF_OCR_LANG", "eng")
 
 # Structured queries: skip LLM synthesis when Cypher rows are self-explanatory (table/chart UI).
 STRUCTURED_FAST_ANSWER = os.environ.get("STRUCTURED_FAST_ANSWER", "false").lower() in ("1", "true", "yes")
@@ -127,6 +134,21 @@ STRUCTURED_TEXT2CYPHER_LONG_MAX_TOKENS = llm_max_tokens("STRUCTURED_TEXT2CYPHER_
 STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS = int(
     os.environ.get("STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS", "180")
 )
+# Answer verification: free rule-based checks always run; this only gates the
+# extra small LLM cross-check (cost-conscious — off by default).
+STRUCTURED_VERIFY_ENABLED = os.environ.get("STRUCTURED_VERIFY_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+STRUCTURED_VERIFY_MAX_TOKENS = llm_max_tokens("STRUCTURED_VERIFY_MAX_TOKENS", 120, minimum=40)
+# Same pattern for the document (unstructured) answer path.
+DOCUMENT_VERIFY_ENABLED = os.environ.get("DOCUMENT_VERIFY_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+DOCUMENT_VERIFY_MAX_TOKENS = llm_max_tokens("DOCUMENT_VERIFY_MAX_TOKENS", 120, minimum=40)
 # Cypher execution / repair budgets (lower = faster; repair runs before LLM regen).
 STRUCTURED_CYPHER_MAX_ATTEMPTS = int(os.environ.get("STRUCTURED_CYPHER_MAX_ATTEMPTS", "2"))
 STRUCTURED_CYPHER_SQL_LLM_RETRIES = int(os.environ.get("STRUCTURED_CYPHER_SQL_LLM_RETRIES", "1"))
@@ -174,6 +196,22 @@ AXIS2_MAX_LLM_PAIRS = int(os.environ.get("AXIS2_MAX_LLM_PAIRS", "300"))
 
 # Neo4j: UNWIND batch size for node/edge bulk writes.
 NEO4J_WRITE_BATCH = int(os.environ.get("NEO4J_WRITE_BATCH", "2000"))
+
+# ── Blob storage (raw text / visual_content, kept out of Neo4j properties) ──
+BLOB_STORE_BACKEND = os.environ.get("BLOB_STORE_BACKEND", "local").lower()  # local | minio
+LOCAL_BLOB_STORE_DIR = os.environ.get("LOCAL_BLOB_STORE_DIR", str(PROJECT_ROOT / "data" / "blobs"))
+MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
+MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "graphrag-content")
+MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() in ("1", "true", "yes")
+
+# ── Vector storage (embeddings, kept out of Neo4j properties) ──────────────
+VECTOR_STORE_BACKEND = os.environ.get("VECTOR_STORE_BACKEND", "memory").lower()  # memory | qdrant
+VECTOR_DIM = int(os.environ.get("VECTOR_DIM", "1536"))  # matches EMBEDDING_MODEL default
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "sections")
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
 
 # MCP routing: one tool call; args echo the user question verbatim.
 ROUTE_MAX_TOKENS_MIN = llm_max_tokens("ROUTE_MAX_TOKENS_MIN", 64, minimum=32)
@@ -228,6 +266,43 @@ QUERY_STREAM_ENABLED = os.environ.get("QUERY_STREAM_ENABLED", "true").lower() in
     "true",
     "yes",
 )
+
+# Multi-tenancy: property-based tenant_id isolation across Neo4j/Qdrant/MinIO.
+MULTI_TENANCY_ENABLED = os.environ.get("MULTI_TENANCY_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+DEFAULT_TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "default")
+
+# KnowledgeArea id that gates document-RAG access in the seeded RBAC schema
+# (src/auth/rbac_schema.cypher). Defaults to "esg" to match this repo's demo
+# seed data — deployments with their own KnowledgeArea taxonomy should set
+# this instead of editing src/retrieval/unstructured/mixins/policies.py.
+DOCUMENT_KNOWLEDGE_AREA_ID = os.environ.get("DOCUMENT_KNOWLEDGE_AREA_ID", "esg")
+
+# ── Audit logging (compliance/security trail — defaults ON) ───────────────
+# Unlike other flags in this file, writing an audit event never changes
+# what the user sees, so this defaults on: real compliance value from the
+# moment of upgrade, no surprise behavior change.
+AUDIT_LOG_ENABLED = os.environ.get("AUDIT_LOG_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+AUDIT_LOG_STORE_QUESTION = os.environ.get("AUDIT_LOG_STORE_QUESTION", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+AUDIT_LOG_DIR = os.environ.get(
+    "AUDIT_LOG_DIR",
+    str(PROJECT_ROOT / "data" / "audit_log"),
+)
+AUDIT_LOG_JSONL_RETAIN_DAYS = int(os.environ.get("AUDIT_LOG_JSONL_RETAIN_DAYS", "90"))
+AUDIT_LOG_REDIS_STREAM = os.environ.get("AUDIT_LOG_REDIS_STREAM", "rag:audit:stream")
+AUDIT_LOG_STREAM_MAXLEN = int(os.environ.get("AUDIT_LOG_STREAM_MAXLEN", "1000000"))
+AUDIT_LOG_REQ_TTL_SEC = int(os.environ.get("AUDIT_LOG_REQ_TTL_SEC", str(90 * 24 * 3600)))
 
 
 def estimate_route_max_tokens(question: str) -> int:

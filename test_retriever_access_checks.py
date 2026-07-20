@@ -21,14 +21,14 @@ def test_retriever_access_checks():
     
     # Scenario 1: Admin user accessing structured retriever
     print("\n[SCENARIO 1] Admin -> Structured Retriever")
-    admin_ctx = UserContext(user_id='admin_001', role=validate_role('admin'))
+    admin_ctx = UserContext(user_id='admin_001', role=validate_role('admin'), tenant_id='default')
     would_execute = rbac.can_query_knowledge_area(admin_ctx.user_id, 'structured')
     print(f"  User: {admin_ctx.user_id} ({admin_ctx.role.value})")
     print(f"  Retriever would: {'✓ EXECUTE query' if would_execute else '✗ BLOCK access'}")
     
     # Scenario 2: Regular office user accessing document retriever (should be blocked)
     print("\n[SCENARIO 2] Regular Office -> Agentic Graph RAG Retriever")
-    regular_ctx = UserContext(user_id='regular_001', role=validate_role('regular_office'))
+    regular_ctx = UserContext(user_id='regular_001', role=validate_role('regular_office'), tenant_id='default')
     would_execute = rbac.can_query_knowledge_area(regular_ctx.user_id, 'esg')
     print(f"  User: {regular_ctx.user_id} ({regular_ctx.role.value})")
     print(f"  Retriever would: {'✓ EXECUTE query' if would_execute else '✗ BLOCK access (expected)'}")
@@ -41,14 +41,14 @@ def test_retriever_access_checks():
     
     # Scenario 4: Compliance officer accessing document retriever
     print("\n[SCENARIO 4] Compliance Officer -> Agentic Graph RAG Retriever")
-    compliance_ctx = UserContext(user_id='compliance_001', role=validate_role('compliance_officer'))
+    compliance_ctx = UserContext(user_id='compliance_001', role=validate_role('compliance_officer'), tenant_id='default')
     would_execute = rbac.can_query_knowledge_area(compliance_ctx.user_id, 'esg')
     print(f"  User: {compliance_ctx.user_id} ({compliance_ctx.role.value})")
     print(f"  Retriever would: {'✓ EXECUTE query (expected)' if would_execute else '✗ BLOCK access'}")
     
     # Scenario 5: Public user accessing public content
     print("\n[SCENARIO 5] Public User -> Agentic Graph RAG Retriever")
-    public_ctx = UserContext(user_id='public_001', role=validate_role('public'))
+    public_ctx = UserContext(user_id='public_001', role=validate_role('public'), tenant_id='default')
     would_execute = rbac.can_query_knowledge_area(public_ctx.user_id, 'esg')
     print(f"  User: {public_ctx.user_id} ({public_ctx.role.value})")
     print(f"  Retriever would: {'✓ EXECUTE query' if would_execute else '✗ BLOCK access'}")

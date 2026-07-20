@@ -4,6 +4,9 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from ....config.settings import MULTI_TENANCY_ENABLED
+from .tenant_injection import missing_tenant_filter_issue
+
 # Schema-agnostic hints when a query executes but returns no rows.
 EMPTY_RESULT_HINTS = (
     (
@@ -48,6 +51,14 @@ SQL_CYPHER_ISSUES: list[tuple[str, str]] = [
         "Do not use apoc.coll.sortNodes: it only sorts a LIST<NODE> and takes exactly 2 args, so it fails on lists of maps. "
         "To get top-K within a group, ORDER BY the metric DESC BEFORE collect(...), then slice the collected list: "
         "WITH groupKey, item ORDER BY metric DESC WITH groupKey, collect(item)[0..K] AS topItems.",
+    ),
+    (
+        r"\bapoc\.date\.format\s*\(\s*(?:datetime|date|localdatetime)\s*\(",
+        "apoc.date.format() expects an epoch-millis Integer/Long as its first argument, not a "
+        "datetime()/date()/localdatetime() temporal value — passing one directly causes a type "
+        "mismatch error. For month/day bucketing over a date/datetime property, do not use "
+        "apoc.date.format at all: use substring(toString(prop), 0, 7) for a YYYY-MM month key, or "
+        "substring(toString(prop), 0, 10) for a YYYY-MM-DD day key.",
     ),
 ]
 
@@ -96,7 +107,12 @@ def sql_cypher_issue(cypher: str) -> Optional[str]:
     for pattern, msg in SQL_CYPHER_ISSUES:
         if re.search(pattern, cypher, re.I | re.S):
             return msg
-    return _with_missing_alias_issue(cypher)
+    alias_issue = _with_missing_alias_issue(cypher)
+    if alias_issue:
+        return alias_issue
+    if MULTI_TENANCY_ENABLED:
+        return missing_tenant_filter_issue(cypher)
+    return None
 
 
 def dropped_year_filter_issue(cypher: str, query: str) -> Optional[str]:
