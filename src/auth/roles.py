@@ -6,6 +6,8 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
 
+from ..config.settings import DEFAULT_TENANT_ID
+
 
 class Role(str, Enum):
     """Available user roles."""
@@ -19,14 +21,17 @@ class Role(str, Enum):
 class UserContext:
     """
     User context for access control.
-    
+
     Attributes:
         user_id: Unique user identifier
         role: User's role (determines access level)
+        tenant_id: Organization/company boundary — required, never optional.
+            A missing tenant_id is a security bug, not a valid state.
         department: Optional department (for additional filtering)
     """
     user_id: str
     role: Role
+    tenant_id: str
     department: Optional[str] = None
 
     def has_role(self, required_role: Role) -> bool:
@@ -40,7 +45,10 @@ class UserContext:
         return role_hierarchy.get(self.role, 0) >= role_hierarchy.get(required_role, 0)
 
     def __repr__(self):
-        return f"UserContext(user_id={self.user_id}, role={self.role.value}, dept={self.department})"
+        return (
+            f"UserContext(user_id={self.user_id}, role={self.role.value}, "
+            f"tenant_id={self.tenant_id}, dept={self.department})"
+        )
 
 
 def validate_role(role_str: str) -> Role:
@@ -52,10 +60,13 @@ def validate_role(role_str: str) -> Role:
 
 
 # Default user contexts for testing
-DEFAULT_PUBLIC_CONTEXT = UserContext(user_id="public_001", role=Role.PUBLIC)
-DEFAULT_OFFICE_CONTEXT = UserContext(user_id="office_user", role=Role.REGULAR_OFFICE, department="Operations")
+DEFAULT_PUBLIC_CONTEXT = UserContext(user_id="public_001", role=Role.PUBLIC, tenant_id=DEFAULT_TENANT_ID)
+DEFAULT_OFFICE_CONTEXT = UserContext(
+    user_id="office_user", role=Role.REGULAR_OFFICE, tenant_id=DEFAULT_TENANT_ID, department="Operations"
+)
 DEFAULT_COMPLIANCE_CONTEXT = UserContext(
     user_id="compliance_user",
     role=Role.COMPLIANCE_OFFICER,
+    tenant_id=DEFAULT_TENANT_ID,
     department="Compliance"
 )

@@ -4,6 +4,9 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from ....config.settings import MULTI_TENANCY_ENABLED
+from .tenant_injection import missing_tenant_filter_issue
+
 # Schema-agnostic hints when a query executes but returns no rows.
 EMPTY_RESULT_HINTS = (
     (
@@ -104,7 +107,12 @@ def sql_cypher_issue(cypher: str) -> Optional[str]:
     for pattern, msg in SQL_CYPHER_ISSUES:
         if re.search(pattern, cypher, re.I | re.S):
             return msg
-    return _with_missing_alias_issue(cypher)
+    alias_issue = _with_missing_alias_issue(cypher)
+    if alias_issue:
+        return alias_issue
+    if MULTI_TENANCY_ENABLED:
+        return missing_tenant_filter_issue(cypher)
+    return None
 
 
 def dropped_year_filter_issue(cypher: str, query: str) -> Optional[str]:

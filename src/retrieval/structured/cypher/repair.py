@@ -4,6 +4,9 @@ from __future__ import annotations
 import re
 from collections import deque
 
+from ....config.settings import MULTI_TENANCY_ENABLED
+from .tenant_injection import inject_tenant_filters
+
 
 def parse_schema_relationships(schema: str) -> list[tuple[str, str, str]]:
     """Extract (from_label, rel_type, to_label) triples from schema text."""
@@ -257,6 +260,8 @@ def normalize_generated_cypher(cypher: str, schema: str) -> str:
     fixed = fix_order_contains_property_access(fixed)
     fixed = fix_relationship_directions(fixed, schema)
     fixed = repair_schema_paths(fixed, schema)
+    if MULTI_TENANCY_ENABLED:
+        fixed = inject_tenant_filters(fixed)
     return fixed
 
 

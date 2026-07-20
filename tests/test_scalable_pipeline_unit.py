@@ -178,6 +178,7 @@ class _IngestionJob:
     skipped_duplicate: bool = False
     owns_input_path: bool = True
     child_job_ids: List[str] = field(default_factory=list)
+    tenant_id: Optional[str] = None
 
 # Inject the stub service module BEFORE job_store.py is imported.
 _svc_stub = _stub_module("src.ingestion.service")
@@ -572,6 +573,7 @@ class TestExporterDualWrite:
             content_root_id="doc_test:r1::root",
             title="Test",
             source_filename="test.pdf",
+            tenant_id="default",
         )
 
     def _make_node(self, node_id="n1", *, text="Hello world", embedding=None, visual=None):
@@ -592,7 +594,7 @@ class TestExporterDualWrite:
 
         exporter._dual_write_chunk([node], plan)
 
-        assert node.blob_key_text == "doc_test/doc_test:r1/n1/text"
+        assert node.blob_key_text == "default/doc_test/doc_test:r1/n1/text"
         assert blob_store.get(node.blob_key_text) == "Hello world"
 
     def test_dual_write_chunk_batches_embeddings(self):

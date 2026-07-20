@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
+from ....graph.tenancy import tenant_filter
 from ..cypher_scope import _doc_scope_cypher
 
 
@@ -11,21 +12,25 @@ class SubsectionMixin:
         session,
         query: str,
         sec_num: str,
+        tenant_id: str = "",
     ) -> tuple[list[dict], dict]:
         """Return (children items, parent item) for a numbered section like 2.5."""
-        doc_id, _ = self._resolve_document_for_query(session, query)
+        doc_id, _ = self._resolve_document_for_query(session, query, tenant_id)
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
             MATCH (s:Section)
             WHERE (s.id STARTS WITH d.id + '_' OR EXISTS {{ MATCH (d)-[:CONTAINS*1..6]->(s) }})
               AND s.title IS NOT NULL
               AND trim(s.title) <> ''
               AND toLower(s.title) STARTS WITH toLower($sec_num)
+              AND {tenant_filter("s")}
             WITH s
             OPTIONAL MATCH (s)-[:CONTAINS]->(c:Section)
             WHERE c.title IS NOT NULL AND trim(c.title) <> ''
+              AND (c IS NULL OR {tenant_filter("c")})
             RETURN
               s.id AS sid,
               s.title AS stitle,
@@ -35,6 +40,7 @@ class SubsectionMixin:
             """,
             doc_id=doc_id,
             sec_num=sec_num,
+            tenant_id=tenant_id,
         ).single()
         if not row:
             return [], {}

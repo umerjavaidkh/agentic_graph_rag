@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 import uuid
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ from ..config.settings import (
     CORPUS_MAX_FILES,
     CORPUS_MAX_PDF_PAGES,
     CYPHER_INGEST_SKIP_GENAI,
+    DEFAULT_TENANT_ID,
     DOC_SKIP_DUPLICATE_HASH,
     ENABLE_PAGE_VISION,
     MODEL_PROVIDER,
@@ -75,6 +77,7 @@ class IngestionJob:
     revision_id: Optional[str] = None
     content_hash: Optional[str] = None
     version_number: Optional[int] = None
+    tenant_id: Optional[str] = None
     skipped_duplicate: bool = False
     # False for corpus-scanned child jobs, whose input_path points directly
     # at a file in the user's own source directory (not a tmp_ingest/ copy) —
@@ -82,6 +85,26 @@ class IngestionJob:
     owns_input_path: bool = True
     # Populated on a "corpus" job as it fans out per-file "unstructured" jobs.
     child_job_ids: List[str] = field(default_factory=list)
+
+
+_TENANT_STAMPING_RE = re.compile(r"\b(?:CREATE|MERGE)\s*\(", re.I)
+_HAS_TENANT_PROP_RE = re.compile(r"tenant_id\s*:", re.I)
+
+
+def warn_missing_tenant_stamps(statements: list[str]) -> list[str]:
+    """
+    Non-blocking heuristic: flag CREATE/MERGE statements that don't mention a
+    tenant_id property, for arbitrary uploaded Cypher (see _process_cypher's
+    docstring — this route can't be mechanically guaranteed tenant-safe).
+    """
+    warnings: list[str] = []
+    for idx, stmt in enumerate(statements, start=1):
+        if _TENANT_STAMPING_RE.search(stmt) and not _HAS_TENANT_PROP_RE.search(stmt):
+            preview = " ".join(stmt.split())[:120]
+            warnings.append(
+                f"Statement {idx} has a CREATE/MERGE with no tenant_id property: {preview}..."
+            )
+    return warnings
 
 
 class IngestionManager:
@@ -112,10 +135,14 @@ class IngestionManager:
     def submit_unstructured(
         self,
         upload: UploadFile,
+        tenant_id: str,
         job_name: Optional[str] = None,
         doc_key: Optional[str] = None,
     ) -> IngestionJob:
+        if not tenant_id or not tenant_id.strip():
+            raise ValueError("tenant_id is required for ingestion.")
         job = self._create_job("unstructured", job_name=job_name)
+        job.tenant_id = tenant_id.strip()
         job.doc_key = doc_key
         job.input_path = self._save_upload(upload, job.id)
         if STORE_INGESTION_ARTIFACTS:
@@ -128,10 +155,14 @@ class IngestionManager:
     def submit_cypher(
         self,
         upload: UploadFile,
+        tenant_id: str,
         job_name: Optional[str] = None,
         cypher_params: Optional[Dict[str, object]] = None,
     ) -> IngestionJob:
+        if not tenant_id or not tenant_id.strip():
+            raise ValueError("tenant_id is required for ingestion.")
         job = self._create_job("cypher", job_name=job_name)
+        job.tenant_id = tenant_id.strip()
         job.cypher_params = cypher_params or None
         job.input_path = self._save_upload(upload, job.id)
         if STORE_INGESTION_ARTIFACTS:
@@ -144,6 +175,7 @@ class IngestionManager:
     def submit_corpus(
         self,
         source: str | Path,
+        tenant_id: str,
         *,
         job_name: Optional[str] = None,
         doc_key_prefix: Optional[str] = None,
@@ -153,11 +185,14 @@ class IngestionManager:
         (newline-delimited absolute paths) and fans out one "unstructured"
         job per accepted file, after a cheap dedup + structural-sanity pass.
         """
+        if not tenant_id or not tenant_id.strip():
+            raise ValueError("tenant_id is required for ingestion.")
         source_path = Path(source)
         if not source_path.exists():
             raise FileNotFoundError(f"Corpus source not found: {source_path}")
 
         job = self._create_job("corpus", job_name=job_name)
+        job.tenant_id = tenant_id.strip()
         job.doc_key = doc_key_prefix
         job.input_path = source_path
         job.owns_input_path = False  # the user's own directory/manifest, never a copy
@@ -230,13 +265,15 @@ class IngestionManager:
             self._log(job, f"Temp cleanup failed for {job.input_path}: {exc}")
 
     @contextlib.contextmanager
-    def _doc_lock(self, logical_id: str):
+    def _doc_lock(self, logical_id: str, tenant_id: str = ""):
         """
         Acquire a per-logical-document Redis lock (if Redis is configured).
 
         Prevents two workers from racing to install a new revision for the
         same logical document. Documents with *different* logical IDs are
-        unaffected and process fully in parallel.
+        unaffected and process fully in parallel. The lock key is namespaced
+        by tenant_id so two tenants that coincidentally pick the same
+        logical_id slug don't needlessly serialize on each other's ingest.
         """
         if not logical_id or not REDIS_URL:
             yield
@@ -246,7 +283,7 @@ class IngestionManager:
             import redis as _redis
 
             conn = _redis.from_url(REDIS_URL, decode_responses=False)
-            lock_key = f"ingest:lock:{logical_id}"
+            lock_key = f"ingest:lock:{tenant_id or DEFAULT_TENANT_ID}:{logical_id}"
             lock = conn.lock(lock_key, timeout=1800, blocking_timeout=1800)
             acquired = lock.acquire(blocking=True)
             try:
@@ -321,6 +358,7 @@ class IngestionManager:
 
         plan = build_revision_plan(
             job.input_path,
+            tenant_id=job.tenant_id or DEFAULT_TENANT_ID,
             doc_key=job.doc_key,
             job_id=job.id,
             version_number=version_number,
@@ -380,7 +418,7 @@ class IngestionManager:
         # Workers processing different documents are never blocked.
         if AUTO_LOAD_TO_NEO4J:
             self._set_status(job, IngestionStatus.exporting, "Loading graph into Neo4j")
-            with self._doc_lock(plan.logical_id):
+            with self._doc_lock(plan.logical_id, plan.tenant_id):
                 try:
                     load_meta = exporter.load_to_neo4j(
                         nodes,
@@ -495,6 +533,7 @@ class IngestionManager:
 
             child_doc_key = f"{job.doc_key}:{path.stem}" if job.doc_key else None
             child = self._create_job("unstructured", job_name=path.name)
+            child.tenant_id = job.tenant_id
             child.doc_key = child_doc_key
             child.input_path = path
             child.owns_input_path = False
@@ -521,6 +560,13 @@ class IngestionManager:
         Execute a user-provided Cypher file against Neo4j.
 
         Intended for loading arbitrary schemas/datasets (e.g. Northwind).
+
+        NOT covered by the automatic tenant-stamping guarantee that
+        DKGNode/DKGEdge ingestion gets: arbitrary uploaded CREATE/MERGE
+        statements can't be mechanically forced to carry tenant_id. This
+        route already requires an admin session (resolve_admin_session) —
+        treat it as admin-trust-only in a genuinely multi-tenant deployment,
+        and rely on the warning below, not a hard guarantee.
         """
         self._set_status(job, IngestionStatus.parsing, "Executing Cypher script")
         if not job.input_path or not job.input_path.exists():
@@ -532,6 +578,10 @@ class IngestionManager:
             params = {**params, **job.cypher_params}
         if not statements:
             raise ValueError("Cypher file contained no statements.")
+        params.setdefault("tenant_id", job.tenant_id or DEFAULT_TENANT_ID)
+
+        for warning in warn_missing_tenant_stamps(statements):
+            self._log(job, f"WARNING: {warning}")
 
         driver = get_neo4j_driver()
         with driver.session() as session:

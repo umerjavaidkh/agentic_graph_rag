@@ -203,6 +203,7 @@ class CorpusIngestRequest(BaseModel):
     )
     user_id: Optional[str] = None
     role: Optional[str] = None
+    tenant_id: Optional[str] = None
 
 
 class IngestionJobSummary(BaseModel):
@@ -222,6 +223,7 @@ class QueryRequest(BaseModel):
     question:    str           = Field(..., description="User's question")
     role:        Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
     user_id:     Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
+    tenant_id:   Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
     department:  Optional[str] = Field(default=None, description="User department")
     thread_id:   Optional[str] = Field(default="default")
 
@@ -230,6 +232,7 @@ class ClearThreadRequest(BaseModel):
     thread_id: Optional[str] = Field(default="default")
     user_id: Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
     role: Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
+    tenant_id: Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
 
 
 class QueryResponse(BaseModel):
@@ -262,6 +265,7 @@ async def query(
         body_user_id=request.user_id,
         body_role=request.role,
         body_department=request.department,
+        body_tenant_id=request.tenant_id,
     )
     thread_id = resolve_scoped_thread_id(session, request.thread_id)
     context = session.user
@@ -361,6 +365,7 @@ async def query_stream(
         body_user_id=request.user_id,
         body_role=request.role,
         body_department=request.department,
+        body_tenant_id=request.tenant_id,
     )
     thread_id = resolve_scoped_thread_id(session, request.thread_id)
     context = session.user
@@ -403,6 +408,7 @@ async def chat_clear(
         authorization=authorization,
         body_user_id=request.user_id,
         body_role=request.role,
+        body_tenant_id=request.tenant_id,
     )
     thread_id = resolve_scoped_thread_id(session, request.thread_id)
     clear_turn(thread_id)
@@ -501,16 +507,20 @@ async def ingest_unstructured(
     authorization: Optional[str] = Header(default=None),
     user_id: Optional[str] = Form(None),
     role: Optional[str] = Form(None),
+    tenant_id: Optional[str] = Form(None),
 ):
-    resolve_admin_session(
+    session = resolve_admin_session(
         authorization=authorization,
         body_user_id=user_id,
         body_role=role,
+        body_tenant_id=tenant_id,
     )
     # No 409 gate: multiple concurrent uploads are fine. The per-doc Redis lock
     # (inside IngestionManager._doc_lock) serialises revision installs for the
     # same logical document while allowing different documents to run in parallel.
-    job = ingestion_manager.submit_unstructured(file, job_name=job_name, doc_key=doc_key)
+    job = ingestion_manager.submit_unstructured(
+        file, session.user.tenant_id, job_name=job_name, doc_key=doc_key
+    )
     dispatch = _dispatch_ingest_job(job.id, background_tasks)
     return IngestionResponse(
         job_id=job.id,
@@ -537,14 +547,18 @@ async def ingest_corpus(
     finished ingesting. Poll each id in the response's `child_job_ids`
     (via GET /ingest/jobs/{job_id}) individually for their own status.
     """
-    resolve_admin_session(
+    session = resolve_admin_session(
         authorization=authorization,
         body_user_id=request.user_id,
         body_role=request.role,
+        body_tenant_id=request.tenant_id,
     )
     try:
         job = ingestion_manager.submit_corpus(
-            request.source, job_name=request.job_name, doc_key_prefix=request.doc_key_prefix
+            request.source,
+            session.user.tenant_id,
+            job_name=request.job_name,
+            doc_key_prefix=request.doc_key_prefix,
         )
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -567,6 +581,7 @@ async def ingest_cypher(
     authorization: Optional[str] = Header(default=None),
     user_id: Optional[str] = Form(None),
     role: Optional[str] = Form(None),
+    tenant_id: Optional[str] = Form(None),
 ):
     """
     Upload and execute arbitrary Cypher against Neo4j.
@@ -574,14 +589,17 @@ async def ingest_cypher(
     Security:
     - Disabled by default (set ALLOW_CYPHER_INGEST=true to enable)
     - Admin role required (JWT when AUTH_ENABLED, else body role=admin)
+    - Not covered by automatic tenant-stamping (see IngestionManager._process_cypher);
+      restrict to trusted admin uploads in a genuinely multi-tenant deployment.
     """
     if not ALLOW_CYPHER_INGEST:
         raise HTTPException(status_code=403, detail="Cypher ingestion is disabled. Set ALLOW_CYPHER_INGEST=true to enable.")
 
-    resolve_admin_session(
+    session = resolve_admin_session(
         authorization=authorization,
         body_user_id=user_id,
         body_role=role,
+        body_tenant_id=tenant_id,
     )
 
     cypher_params = {}
@@ -589,7 +607,9 @@ async def ingest_cypher(
     if effective_openai_key:
         cypher_params["openAIKey"] = effective_openai_key
 
-    job = ingestion_manager.submit_cypher(file, job_name=job_name, cypher_params=cypher_params or None)
+    job = ingestion_manager.submit_cypher(
+        file, session.user.tenant_id, job_name=job_name, cypher_params=cypher_params or None
+    )
     dispatch = _dispatch_ingest_job(job.id, background_tasks)
     return IngestionResponse(
         job_id=job.id,

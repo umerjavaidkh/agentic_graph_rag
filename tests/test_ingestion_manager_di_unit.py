@@ -285,7 +285,7 @@ def test_process_corpus_walks_directory_and_accepts_valid_files(tmp_path, monkey
 
     calls = []
     manager = _make_corpus_manager(monkeypatch, enqueue_calls=calls)
-    job = manager.submit_corpus(tmp_path)
+    job = manager.submit_corpus(tmp_path, "default")
 
     manager._process_corpus(job)
 
@@ -305,7 +305,7 @@ def test_process_corpus_skips_directories_and_dotfiles(tmp_path, monkeypatch):
     (tmp_path / ".dotfile.pdf").write_bytes(_real_pdf_bytes())
 
     manager = _make_corpus_manager(monkeypatch)
-    job = manager.submit_corpus(tmp_path)
+    job = manager.submit_corpus(tmp_path, "default")
 
     manager._process_corpus(job)
 
@@ -321,7 +321,7 @@ def test_process_corpus_manifest_file(tmp_path, monkeypatch):
     manifest.write_text(f"# a comment\n{good}\n\n{missing}\n")
 
     manager = _make_corpus_manager(monkeypatch)
-    job = manager.submit_corpus(manifest)
+    job = manager.submit_corpus(manifest, "default")
 
     manager._process_corpus(job)
 
@@ -338,7 +338,7 @@ def test_process_corpus_manifest_logs_unsupported_extension(tmp_path, monkeypatc
     manifest.write_text(f"{bad}\n")
 
     manager = _make_corpus_manager(monkeypatch)
-    job = manager.submit_corpus(manifest)
+    job = manager.submit_corpus(manifest, "default")
 
     manager._process_corpus(job)
 
@@ -351,7 +351,7 @@ def test_process_corpus_manifest_rejects_relative_path(tmp_path, monkeypatch):
     manifest.write_text("relative/path.pdf\n")
 
     manager = _make_corpus_manager(monkeypatch)
-    job = manager.submit_corpus(manifest)
+    job = manager.submit_corpus(manifest, "default")
 
     with pytest.raises(ValueError):
         manager._process_corpus(job)
@@ -365,7 +365,7 @@ def test_process_corpus_respects_max_files_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(service_mod, "CORPUS_MAX_FILES", 1)
 
     manager = _make_corpus_manager(monkeypatch)
-    job = manager.submit_corpus(tmp_path)
+    job = manager.submit_corpus(tmp_path, "default")
 
     with pytest.raises(ValueError):
         manager._process_corpus(job)
@@ -391,7 +391,7 @@ def test_process_corpus_falls_back_to_synchronous_run_when_no_queue(tmp_path, mo
 
     monkeypatch.setattr(manager, "run_job", spy_run_job)
 
-    job = manager.submit_corpus(tmp_path)
+    job = manager.submit_corpus(tmp_path, "default")
     manager._process_corpus(job)
 
     assert run_job_calls == job.child_job_ids
@@ -402,4 +402,4 @@ def test_process_corpus_falls_back_to_synchronous_run_when_no_queue(tmp_path, mo
 def test_submit_corpus_raises_for_missing_source(monkeypatch):
     manager = _make_corpus_manager(monkeypatch)
     with pytest.raises(FileNotFoundError):
-        manager.submit_corpus("/definitely/not/a/real/path/xyz")
+        manager.submit_corpus("/definitely/not/a/real/path/xyz", "default")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ....config.settings import EMBEDDING_MODEL, VECTOR_STORE_BACKEND
+from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
 from ....storage.vector.factory import get_vector_store
 from ..constants import _GRAPH_REL_TYPES, _TEXT_NODE_LABELS
@@ -9,13 +10,15 @@ from ..model_provider import provider
 
 
 class GraphSeedsMixin:
-    def _vector_seed(self, session, embedding: list[float], limit: int) -> list[dict]:
+    def _vector_seed(
+        self, session, embedding: list[float], limit: int, tenant_id: str = ""
+    ) -> list[dict]:
         # The in-process "memory" VectorStore doesn't survive across worker/API
         # process boundaries, so only a real shared external store (Qdrant) is
         # trustworthy as the similarity-search read path; otherwise fall back
         # to Neo4j's native vector index, which dual-write keeps populated.
         if VECTOR_STORE_BACKEND == "qdrant":
-            return self._vector_seed_via_vector_store(session, embedding, limit)
+            return self._vector_seed_via_vector_store(session, embedding, limit, tenant_id)
         try:
             rows = session.run(
                 f"""
@@ -23,6 +26,7 @@ class GraphSeedsMixin:
                 YIELD node AS n, score
                 WHERE coalesce(n.text, '') <> ''
                   AND {lifecycle_active("n")}
+                  AND {tenant_filter("n")}
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
@@ -33,6 +37,7 @@ class GraphSeedsMixin:
                 """,
                 limit=max(1, limit),
                 embedding=embedding,
+                tenant_id=tenant_id,
             )
             return [
                 {
@@ -50,11 +55,12 @@ class GraphSeedsMixin:
             return []
 
     def _vector_seed_via_vector_store(
-        self, session, embedding: list[float], limit: int
+        self, session, embedding: list[float], limit: int, tenant_id: str = ""
     ) -> list[dict]:
         """Similarity search against the external VectorStore, hydrated from Neo4j."""
         try:
-            hits = get_vector_store().query(embedding, top_k=max(1, limit))
+            filters = {"tenant_id": tenant_id} if tenant_id else None
+            hits = get_vector_store().query(embedding, top_k=max(1, limit), filters=filters)
             if not hits:
                 return []
             scores = dict(hits)
@@ -64,6 +70,7 @@ class GraphSeedsMixin:
                 MATCH (n) WHERE n.id = nid
                 WHERE coalesce(n.text, '') <> ''
                   AND {lifecycle_active("n")}
+                  AND {tenant_filter("n")}
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
@@ -71,6 +78,7 @@ class GraphSeedsMixin:
                   coalesce(labels(n)[0], '') AS node_label
                 """,
                 ids=list(scores.keys()),
+                tenant_id=tenant_id,
             )
             by_id = {r["id"]: r for r in rows if r["id"]}
             results = [
@@ -89,7 +97,7 @@ class GraphSeedsMixin:
         except Exception:
             return []
 
-    def _fulltext_seed(self, session, query: str, limit: int) -> list[dict]:
+    def _fulltext_seed(self, session, query: str, limit: int, tenant_id: str = "") -> list[dict]:
         lucene_q = self._fulltext_query(query)
         if not lucene_q:
             return []
@@ -100,6 +108,7 @@ class GraphSeedsMixin:
                 YIELD node AS n, score
                 WHERE coalesce(n.text, '') <> ''
                   AND {lifecycle_active("n")}
+                  AND {tenant_filter("n")}
                   AND any(l IN labels(n) WHERE l IN $labels)
                 RETURN
                   coalesce(n.id, '') AS id,
@@ -112,6 +121,7 @@ class GraphSeedsMixin:
                 q=lucene_q,
                 limit=max(1, limit),
                 labels=list(_TEXT_NODE_LABELS),
+                tenant_id=tenant_id,
             )
             return [
                 {
@@ -135,17 +145,20 @@ class GraphSeedsMixin:
         *,
         hops: int,
         limit: int,
+        tenant_id: str = "",
     ) -> list[dict]:
         if hops == 1:
             cypher = f"""
                 UNWIND $seed_ids AS sid
                 MATCH (seed:Section {{id: sid}})
                 WHERE {lifecycle_active("seed")}
+                  AND {tenant_filter("seed")}
                 MATCH (seed)-[r]-(related)
                 WHERE type(r) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
                   AND coalesce(related.text, '') <> ''
                   AND {lifecycle_active("related")}
+                  AND {tenant_filter("related")}
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
                   coalesce(related.title, '') AS title,
@@ -162,12 +175,14 @@ class GraphSeedsMixin:
                 UNWIND $seed_ids AS sid
                 MATCH (seed:Section {{id: sid}})
                 WHERE {lifecycle_active("seed")}
+                  AND {tenant_filter("seed")}
                 MATCH (seed)-[r1]-(mid)-[r2]-(related)
                 WHERE type(r1) IN $rel_types
                   AND type(r2) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
                   AND coalesce(related.text, '') <> ''
                   AND {lifecycle_active("related")}
+                  AND {tenant_filter("related")}
                   AND related.id <> sid
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
@@ -187,6 +202,7 @@ class GraphSeedsMixin:
                 rel_types=list(_GRAPH_REL_TYPES),
                 node_labels=list(_TEXT_NODE_LABELS),
                 limit=max(1, limit),
+                tenant_id=tenant_id,
             )
             return [
                 {

@@ -193,12 +193,14 @@ class Neo4jExporter:
         tx.run(
             f"""
             MERGE (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
-            ON CREATE SET dl.title = $title, dl.created_at = timestamp()
+            ON CREATE SET dl.title = $title, dl.created_at = timestamp(), dl.tenant_id = $tenant_id
             ON MATCH SET dl.title = coalesce(dl.title, $title),
-                         dl.updated_at = timestamp()
+                         dl.updated_at = timestamp(),
+                         dl.tenant_id = coalesce(dl.tenant_id, $tenant_id)
             """,
             logical_id=plan.logical_id,
             title=plan.title,
+            tenant_id=plan.tenant_id,
         )
         row = tx.run(
             f"""
@@ -244,6 +246,7 @@ class Neo4jExporter:
                 title: $title,
                 text: $source_filename,
                 source_filename: $source_filename,
+                tenant_id: $tenant_id,
                 ingested_at: timestamp(),
                 uploaded_at: timestamp()
             }})
@@ -256,6 +259,7 @@ class Neo4jExporter:
             content_hash=plan.content_hash,
             title=plan.title,
             source_filename=plan.source_filename,
+            tenant_id=plan.tenant_id,
         )
 
         # ── Batched node writes grouped by label (UNWIND) ─────────────────
@@ -299,7 +303,8 @@ class Neo4jExporter:
                     "MATCH (a {id: row.source_id}), (b {id: row.target_id}) "
                     f"MERGE (a)-[r:{rel_type}]->(b) "
                     "SET r.weight = row.weight, r.properties = row.properties, "
-                    "r.confidence = row.confidence, r.confidence_tier = row.confidence_tier",
+                    "r.confidence = row.confidence, r.confidence_tier = row.confidence_tier, "
+                    "r.tenant_id = row.tenant_id",
                     rows=rows,
                 )
 
@@ -322,17 +327,23 @@ class Neo4jExporter:
         vector_items: list[tuple[str, list[float], dict]] = []
         for node in chunk:
             if node.text:
-                node.blob_key_text = f"{plan.logical_id}/{plan.revision_id}/{node.id}/text"
+                node.blob_key_text = f"{plan.tenant_id}/{plan.logical_id}/{plan.revision_id}/{node.id}/text"
                 self.blob_store.put(node.blob_key_text, node.text)
             if node.visual_content:
-                node.blob_key_visual = f"{plan.logical_id}/{plan.revision_id}/{node.id}/visual_content"
+                node.blob_key_visual = (
+                    f"{plan.tenant_id}/{plan.logical_id}/{plan.revision_id}/{node.id}/visual_content"
+                )
                 self.blob_store.put(node.blob_key_visual, node.visual_content)
             if node.embedding:
                 vector_items.append(
                     (
                         node.id,
                         node.embedding,
-                        {"logical_doc_id": plan.logical_id, "revision_id": plan.revision_id},
+                        {
+                            "logical_doc_id": plan.logical_id,
+                            "revision_id": plan.revision_id,
+                            "tenant_id": plan.tenant_id,
+                        },
                     )
                 )
         if vector_items:
@@ -367,6 +378,7 @@ class Neo4jExporter:
             "source_filename": node.source_filename,
             "blob_key_text": node.blob_key_text,
             "blob_key_visual": node.blob_key_visual,
+            "tenant_id": node.tenant_id,
         }
 
     @staticmethod
@@ -380,6 +392,7 @@ class Neo4jExporter:
             "properties": json.dumps(edge.properties),
             "confidence": edge.confidence,
             "confidence_tier": tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
+            "tenant_id": edge.tenant_id,
         }
 
     @staticmethod
@@ -397,7 +410,7 @@ class Neo4jExporter:
             " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
             " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash,"
             " n.version_number = $version_number, n.ingested_at = $ingested_at,"
-            " n.source_filename = $source_filename",
+            " n.source_filename = $source_filename, n.tenant_id = $tenant_id",
             id=node.id,
             title=node.title,
             text=node.text,
@@ -421,6 +434,7 @@ class Neo4jExporter:
             version_number=node.version_number,
             ingested_at=node.ingested_at,
             source_filename=node.source_filename,
+            tenant_id=node.tenant_id,
         )
 
     @staticmethod
@@ -431,13 +445,15 @@ class Neo4jExporter:
             "MATCH (a {id: $source_id}), (b {id: $target_id}) "
             f"MERGE (a)-[r:{rel_type}]->(b) "
             "SET r.weight = $weight, r.properties = $properties, "
-            "r.confidence = $confidence, r.confidence_tier = $confidence_tier",
+            "r.confidence = $confidence, r.confidence_tier = $confidence_tier, "
+            "r.tenant_id = $tenant_id",
             source_id=edge.source_id,
             target_id=edge.target_id,
             weight=edge.weight,
             properties=json.dumps(edge.properties),
             confidence=edge.confidence,
             confidence_tier=tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
+            tenant_id=edge.tenant_id,
         )
 
     def _ensure_indexes(self, session) -> None:
@@ -460,6 +476,10 @@ class Neo4jExporter:
             "CREATE INDEX page_pdf_page IF NOT EXISTS FOR (n:Page) ON (n.pdf_page)",
             "CREATE INDEX section_logical_rev IF NOT EXISTS "
             "FOR (n:Section) ON (n.logical_doc_id, n.revision_id)",
+            "CREATE INDEX section_tenant_lifecycle IF NOT EXISTS "
+            "FOR (n:Section) ON (n.tenant_id, n.lifecycle_status)",
+            "CREATE INDEX page_tenant_lifecycle IF NOT EXISTS "
+            "FOR (n:Page) ON (n.tenant_id, n.lifecycle_status)",
         ]
         # The in-process "memory" VectorStore doesn't survive across worker/API
         # process boundaries, so Neo4j's native vector index stays the real
@@ -504,7 +524,8 @@ class Neo4jExporter:
             " n.page_tags = $page_tags,"
             " n.region_kind = $region_kind, n.region_tags = $region_tags,"
             " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
-            " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash",
+            " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash,"
+            " n.tenant_id = $tenant_id",
             id=node.id,
             title=node.title,
             text=node.text,
@@ -525,6 +546,7 @@ class Neo4jExporter:
             revision_id=node.revision_id,
             lifecycle_status=node.lifecycle_status,
             content_hash=node.content_hash,
+            tenant_id=node.tenant_id,
         )
 
     def _merge_edge(self, session, edge: DKGEdge) -> None:
@@ -534,13 +556,15 @@ class Neo4jExporter:
             f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
             f"MERGE (a)-[r:{rel_type}]->(b) "
             "SET r.weight = $weight, r.properties = $properties, "
-            "r.confidence = $confidence, r.confidence_tier = $confidence_tier",
+            "r.confidence = $confidence, r.confidence_tier = $confidence_tier, "
+            "r.tenant_id = $tenant_id",
             source_id=edge.source_id,
             target_id=edge.target_id,
             weight=edge.weight,
             properties=json.dumps(edge.properties),
             confidence=edge.confidence,
             confidence_tier=tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
+            tenant_id=edge.tenant_id,
         )
 
     # ─────────────────────────────────────────

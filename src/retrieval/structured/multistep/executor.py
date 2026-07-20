@@ -53,7 +53,11 @@ class MultiStepExecutor:
                 "related": [],
             }]
 
-        ctx: dict[str, Any] = {"plan_reason": plan.reason, "final_hint": plan.final_answer_hint}
+        ctx: dict[str, Any] = {
+            "plan_reason": plan.reason,
+            "final_hint": plan.final_answer_hint,
+            "_tenant": {"rows": [{"tenant_id": user_context.tenant_id}]},
+        }
         schema = self._schema.fetch()
         repair_fn = lambda c: normalize_generated_cypher(c, schema)  # noqa: E731
         max_step_attempts = max(1, STRUCTURED_MULTISTEP_STEP_ATTEMPTS)

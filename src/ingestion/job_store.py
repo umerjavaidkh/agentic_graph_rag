@@ -66,6 +66,7 @@ def job_to_dict(job: Any) -> Dict[str, Any]:
         "skipped_duplicate": job.skipped_duplicate,
         "owns_input_path": job.owns_input_path,
         "child_job_ids": list(job.child_job_ids),
+        "tenant_id": job.tenant_id,
     }
 
 
@@ -94,6 +95,7 @@ def job_from_dict(data: Dict[str, Any]) -> Any:
         skipped_duplicate=bool(data.get("skipped_duplicate", False)),
         owns_input_path=bool(data.get("owns_input_path", True)),
         child_job_ids=list(data.get("child_job_ids", []) or []),
+        tenant_id=data.get("tenant_id"),
     )
     return job
 

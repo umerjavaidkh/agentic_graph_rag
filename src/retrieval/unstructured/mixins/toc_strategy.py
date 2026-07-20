@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
 from ..cypher_scope import _node_scope_cypher
 from ..toc_retrieval import (
@@ -15,7 +16,7 @@ from ..toc_retrieval import (
 
 
 class TocStrategyMixin:
-    def _structural_toc_retrieve(self, session, query: str) -> list[dict]:
+    def _structural_toc_retrieve(self, session, query: str, tenant_id: str = "") -> list[dict]:
         """
         1) TOC page text (printed/PDF page if named in query, else best-scoring early page).
         2) Section titled Table of Contents / Contents.
@@ -23,15 +24,15 @@ class TocStrategyMixin:
         """
         # Prefer strict resolution when the user named a specific document, so a
         # generic term (e.g. "all") can't rank a bigger unrelated doc above it.
-        doc_id, doc_title = self._resolve_document_for_query_strict(session, query)
+        doc_id, doc_title = self._resolve_document_for_query_strict(session, query, tenant_id)
         if doc_id is None:
-            doc_id, doc_title = self._resolve_document_for_query(session, query)
+            doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
         label = doc_title or doc_id or "ingested document"
 
         pdf_page, doc_page = self._parse_page_targets(query)
         if pdf_page is not None or doc_page:
             page_hit = self._toc_fetch_page(
-                session, doc_id, pdf_page=pdf_page, doc_page=doc_page
+                session, doc_id, pdf_page=pdf_page, doc_page=doc_page, tenant_id=tenant_id
             )
             if page_hit and (page_hit.get("text") or "").strip():
                 return [
@@ -44,7 +45,7 @@ class TocStrategyMixin:
                     )
                 ]
 
-        page_hit = self._toc_find_best_page(session, doc_id)
+        page_hit = self._toc_find_best_page(session, doc_id, tenant_id)
         if page_hit:
             return [
                 format_toc_chunk(
@@ -56,7 +57,7 @@ class TocStrategyMixin:
                 )
             ]
 
-        section_hit = self._toc_find_section(session, doc_id)
+        section_hit = self._toc_find_section(session, doc_id, tenant_id)
         if section_hit and (section_hit.get("text") or "").strip():
             return [
                 format_toc_chunk(
@@ -66,7 +67,7 @@ class TocStrategyMixin:
                 )
             ]
 
-        outline = self._toc_outline_fallback(session, doc_id)
+        outline = self._toc_outline_fallback(session, doc_id, tenant_id)
         if outline:
             return [format_outline_chunk(outline, doc_title=label)]
         return []
@@ -78,12 +79,14 @@ class TocStrategyMixin:
         *,
         pdf_page: Optional[int],
         doc_page: Optional[str],
+        tenant_id: str = "",
     ) -> Optional[dict]:
         row = session.run(
             f"""
             MATCH (p:Page)
             WHERE {_node_scope_cypher("p")}
               AND {lifecycle_active("p")}
+              AND {tenant_filter("p")}
               AND trim(coalesce(p.text, '')) <> ''
               AND (
                 ($pdf_page IS NOT NULL AND p.pdf_page = $pdf_page)
@@ -102,17 +105,19 @@ class TocStrategyMixin:
             doc_id=doc_id,
             pdf_page=pdf_page,
             doc_page=doc_page,
+            tenant_id=tenant_id,
         ).single()
         return dict(row) if row else None
 
     def _toc_find_best_page(
-        self, session, doc_id: Optional[str]
+        self, session, doc_id: Optional[str], tenant_id: str = ""
     ) -> Optional[dict]:
         rows = session.run(
             f"""
             MATCH (p:Page)
             WHERE {_node_scope_cypher("p")}
               AND {lifecycle_active("p")}
+              AND {tenant_filter("p")}
               AND trim(coalesce(p.text, '')) <> ''
             RETURN
               coalesce(p.text, '') AS text,
@@ -123,6 +128,7 @@ class TocStrategyMixin:
             LIMIT 40
             """,
             doc_id=doc_id,
+            tenant_id=tenant_id,
         )
         best: Optional[dict] = None
         best_score = 0.42
@@ -137,13 +143,14 @@ class TocStrategyMixin:
         return best
 
     def _toc_find_section(
-        self, session, doc_id: Optional[str]
+        self, session, doc_id: Optional[str], tenant_id: str = ""
     ) -> Optional[dict]:
         rows = session.run(
             f"""
             MATCH (s:Section)
             WHERE {_node_scope_cypher("s")}
               AND {lifecycle_active("s")}
+              AND {tenant_filter("s")}
               AND trim(coalesce(s.title, '')) <> ''
             RETURN
               trim(s.title) AS title,
@@ -152,6 +159,7 @@ class TocStrategyMixin:
             ORDER BY ord
             """,
             doc_id=doc_id,
+            tenant_id=tenant_id,
         )
         for r in rows:
             if section_title_is_toc(r.get("title") or ""):
@@ -161,7 +169,7 @@ class TocStrategyMixin:
         return None
 
     def _toc_outline_fallback(
-        self, session, doc_id: Optional[str]
+        self, session, doc_id: Optional[str], tenant_id: str = ""
     ) -> list[str]:
         rows = session.run(
             f"""
@@ -169,6 +177,7 @@ class TocStrategyMixin:
             WHERE (n:Chapter OR n:Section)
               AND {_node_scope_cypher("n")}
               AND {lifecycle_active("n")}
+              AND {tenant_filter("n")}
             WITH n,
                  trim(coalesce(n.title, '')) AS title,
                  coalesce(n.order, 0) AS ord,
@@ -179,6 +188,7 @@ class TocStrategyMixin:
             ORDER BY ord, depth, title
             """,
             doc_id=doc_id,
+            tenant_id=tenant_id,
         )
         seen: set[str] = set()
         entries: list[str] = []

@@ -267,6 +267,14 @@ QUERY_STREAM_ENABLED = os.environ.get("QUERY_STREAM_ENABLED", "true").lower() in
     "yes",
 )
 
+# Multi-tenancy: property-based tenant_id isolation across Neo4j/Qdrant/MinIO.
+MULTI_TENANCY_ENABLED = os.environ.get("MULTI_TENANCY_ENABLED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+DEFAULT_TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "default")
+
 
 def estimate_route_max_tokens(question: str) -> int:
     """Budget for MCP tool routing: base + room to echo question in tool arguments."""

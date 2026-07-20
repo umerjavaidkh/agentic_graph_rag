@@ -45,3 +45,32 @@ def test_apoc_date_format_on_integer_millis_not_flagged():
 def test_substring_based_month_bucketing_not_flagged():
     cypher = "WITH substring(toString(o.orderDate), 0, 7) AS month, count(o) AS c RETURN month, c ORDER BY month"
     assert sql_cypher_issue(cypher) is None
+
+
+# ── MULTI_TENANCY_ENABLED gating ─────────────────────────────────────────────
+
+
+def test_tenant_filter_not_checked_when_multi_tenancy_disabled(monkeypatch):
+    import src.retrieval.structured.cypher.validator as v
+
+    monkeypatch.setattr(v, "MULTI_TENANCY_ENABLED", False)
+    cypher = "MATCH (p:Product) RETURN p.name"  # no tenant filter at all
+    assert sql_cypher_issue(cypher) is None
+
+
+def test_tenant_filter_checked_when_multi_tenancy_enabled(monkeypatch):
+    import src.retrieval.structured.cypher.validator as v
+
+    monkeypatch.setattr(v, "MULTI_TENANCY_ENABLED", True)
+    cypher = "MATCH (p:Product) RETURN p.name"  # no tenant filter at all
+    issue = sql_cypher_issue(cypher)
+    assert issue is not None
+    assert "tenant" in issue.lower()
+
+
+def test_tenant_filter_satisfied_when_multi_tenancy_enabled(monkeypatch):
+    import src.retrieval.structured.cypher.validator as v
+
+    monkeypatch.setattr(v, "MULTI_TENANCY_ENABLED", True)
+    cypher = "MATCH (p:Product) WHERE p.tenant_id = $tenant_id RETURN p.name"
+    assert sql_cypher_issue(cypher) is None

@@ -7,12 +7,13 @@ This module provides:
 3. Query builders that enforce role-based filtering at the database level
 """
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 from neo4j import Driver
 
 from ..config.settings import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 from ..graph.driver import get_neo4j_driver
+from ..graph.tenancy import tenant_filter
 
 
 class GraphRBAC:
@@ -79,17 +80,22 @@ class GraphRBAC:
             result = session.run(cypher, user_id=user_id, ka_id=knowledge_area_id)
             return result.single()["has_access"]
 
-    def can_view_document(self, user_id: str, document_id: str) -> bool:
+    def can_view_document(self, user_id: str, document_id: str, tenant_id: str = "") -> bool:
         """
         Check if user can view a document.
         Traverses: User -[:HAS_ROLE]-> Role -[:CAN_VIEW]-> Document
+
+        A tenant match is required in addition to the role check when
+        MULTI_TENANCY_ENABLED — a role that would otherwise allow viewing
+        must never grant access to a different tenant's document.
         """
-        cypher = """
-            MATCH (u:User {user_id: $user_id})-[:HAS_ROLE]->(r:Role)-[:CAN_VIEW]->(d:Document {id: $doc_id})
+        cypher = f"""
+            MATCH (u:User {{user_id: $user_id}})-[:HAS_ROLE]->(r:Role)-[:CAN_VIEW]->(d:Document {{id: $doc_id}})
+            WHERE {tenant_filter("d")}
             RETURN count(r) > 0 AS has_access
         """
         with self.driver.session() as session:
-            result = session.run(cypher, user_id=user_id, doc_id=document_id)
+            result = session.run(cypher, user_id=user_id, doc_id=document_id, tenant_id=tenant_id)
             return result.single()["has_access"]
 
     def can_edit_policy(self, user_id: str, policy_id: str) -> bool:
@@ -141,42 +147,47 @@ class GraphRBAC:
         user_id: str,
         knowledge_area_id: str,
         base_cypher: str
-    ) -> Optional[str]:
+    ) -> Optional[Tuple[str, Dict]]:
         """
         Enhance a base Cypher query with user access control.
-        
+
+        Returns (cypher, params) — params must be passed to session.run(cypher,
+        **params), never string-interpolated. Returns None if user lacks access.
+
         Example:
             base = "MATCH (n:Product) RETURN n LIMIT 10"
-            enhanced = build_cypher_with_access_check('user_123', 'structured', base)
-            # Returns: 
-            # MATCH (u:User {user_id: 'user_123'})-[:HAS_ROLE]->(r:Role)-[:CAN_QUERY]->(ka:KnowledgeArea {id: 'structured'})
-            # WITH r
+            cypher, params = build_cypher_with_access_check('user_123', 'structured', base)
+            # cypher:
+            # MATCH (u:User {user_id: $user_id})-[:HAS_ROLE]->(r:Role)-[:CAN_QUERY]->(ka:KnowledgeArea {id: $ka_id})
+            # WITH r, ka
             # [original query here]
-        
-        Returns None if user lacks access.
         """
         if not self.can_query_knowledge_area(user_id, knowledge_area_id):
             return None
-        
-        # Wrap query with access check
+
         wrapped = f"""
-            MATCH (u:User {{user_id: '{user_id}'}})-[:HAS_ROLE]->(r:Role)-[:CAN_QUERY]->(ka:KnowledgeArea {{id: '{knowledge_area_id}'}})
+            MATCH (u:User {{user_id: $user_id}})-[:HAS_ROLE]->(r:Role)-[:CAN_QUERY]->(ka:KnowledgeArea {{id: $ka_id}})
             WITH r, ka
             {base_cypher}
         """
-        return wrapped.strip()
+        return wrapped.strip(), {"user_id": user_id, "ka_id": knowledge_area_id}
 
-    def build_document_filter_cypher(self, user_id: str) -> str:
+    def build_document_filter_cypher(self, user_id: str) -> Tuple[str, Dict]:
         """
         Build a Cypher WHERE clause that restricts results to documents user can view.
-        
+
+        Returns (where_clause, params) — params must be passed to session.run, not
+        string-interpolated.
+
         Usage:
-            filter_clause = build_document_filter_cypher('user_123')
+            filter_clause, params = build_document_filter_cypher('user_123')
             cypher = f"MATCH (d:Document) {filter_clause} RETURN d"
+            session.run(cypher, **params)
         """
-        return f"""
-            WHERE EXISTS ((User {{user_id: '{user_id}'}})-[:HAS_ROLE]->(r:Role)-[:CAN_VIEW]->(d))
+        clause = """
+            WHERE EXISTS ((User {user_id: $user_id})-[:HAS_ROLE]->(r:Role)-[:CAN_VIEW]->(d))
         """
+        return clause.strip(), {"user_id": user_id}
 
     def validate_and_enforce_access(
         self,

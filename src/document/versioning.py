@@ -64,11 +64,13 @@ class DocumentRevisionPlan:
     content_root_id: str
     title: str
     source_filename: str
+    tenant_id: str
 
 
 def build_revision_plan(
     file_path: Path,
     *,
+    tenant_id: str,
     doc_key: str | None = None,
     job_id: str | None = None,
     version_number: int = 1,
@@ -86,6 +88,7 @@ def build_revision_plan(
         content_root_id=f"{revision_id}::{root}",
         title=clean_stem,
         source_filename=file_path.name,
+        tenant_id=tenant_id,
     )
 
 
@@ -118,6 +121,7 @@ def apply_revision_to_graph(
         node.revision_id = plan.revision_id
         node.lifecycle_status = "ACTIVE"
         node.content_hash = plan.content_hash
+        node.tenant_id = plan.tenant_id
         out_nodes.append(node)
 
     out_edges: list[DKGEdge] = []
@@ -129,6 +133,7 @@ def apply_revision_to_graph(
             "revision_id": plan.revision_id,
             "logical_doc_id": plan.logical_id,
         }
+        edge.tenant_id = plan.tenant_id
         out_edges.append(edge)
 
     return out_nodes, out_edges
@@ -147,6 +152,7 @@ def revision_metadata_nodes(plan: DocumentRevisionPlan) -> tuple[list[DKGNode], 
         revision_id=None,
         lifecycle_status="ACTIVE",
         content_hash=plan.content_hash,
+        tenant_id=plan.tenant_id,
     )
     revision = DKGNode(
         id=plan.revision_id,
@@ -161,6 +167,7 @@ def revision_metadata_nodes(plan: DocumentRevisionPlan) -> tuple[list[DKGNode], 
         version_number=plan.version_number,
         ingested_at=now,
         source_filename=plan.source_filename,
+        tenant_id=plan.tenant_id,
     )
     edges = [
         DKGEdge(plan.logical_id, plan.revision_id, RelType.HAS_REVISION, axis=1),

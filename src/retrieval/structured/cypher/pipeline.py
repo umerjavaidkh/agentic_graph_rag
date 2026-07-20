@@ -84,7 +84,7 @@ class Text2CypherPipeline:
 
         def _execute_once(c: str) -> list[dict]:
             with self._driver.session() as session:
-                result = session.run(c)
+                result = session.run(c, tenant_id=user_context.tenant_id)
                 return [sanitize_row(r.data()) for r in result]
 
         def _regenerate(prev: str, err: str) -> Optional[str]:
@@ -126,7 +126,8 @@ class Text2CypherPipeline:
             corrected = fix_relationship_directions(cypher, schema)
             if corrected.strip() != cypher.strip():
                 rows2, cypher2, err2 = self._execute_cypher_rows(
-                    corrected, query, schema=schema, limit=limit, repair_fn=repair_fn
+                    corrected, query, schema=schema, limit=limit, repair_fn=repair_fn,
+                    user_context=user_context,
                 )
                 if not err2 and rows2:
                     rows = rows2
@@ -147,7 +148,8 @@ class Text2CypherPipeline:
                     continue
                 fixed = repair_fn(fixed)
                 rows2, cypher2, err2 = self._execute_cypher_rows(
-                    fixed, query, schema=schema, limit=limit, repair_fn=repair_fn
+                    fixed, query, schema=schema, limit=limit, repair_fn=repair_fn,
+                    user_context=user_context,
                 )
                 if err2:
                     continue
@@ -165,12 +167,13 @@ class Text2CypherPipeline:
         schema: Optional[str],
         limit: int,
         repair_fn: Callable[[str], str],
+        user_context: UserContext,
     ) -> tuple[list[dict], str, Optional[str]]:
         last_err: Optional[str] = None
         for attempt in range(2):
             try:
                 with self._driver.session() as session:
-                    result = session.run(cypher)
+                    result = session.run(cypher, tenant_id=user_context.tenant_id)
                     return [sanitize_row(r.data()) for r in result], cypher, None
             except Exception as e:
                 last_err = str(e)

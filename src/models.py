@@ -86,6 +86,8 @@ class DKGNode:
     # when text/visual_content are dual-written to a BlobStore.
     blob_key_text: Optional[str] = None
     blob_key_visual: Optional[str] = None
+    # Multi-tenancy: stamped by apply_revision_to_graph, not the parser itself.
+    tenant_id: Optional[str] = None
 
 
 # ─────────────────────────────────────────
@@ -112,3 +114,5 @@ class DKGEdge:
     properties:       dict  = field(default_factory=dict)
     confidence:       float = 1.0
     confidence_tier:  str | EdgeConfidenceTier = EdgeConfidenceTier.EXTRACTED
+    # Multi-tenancy: stamped by apply_revision_to_graph, not the parser itself.
+    tenant_id:        Optional[str] = None

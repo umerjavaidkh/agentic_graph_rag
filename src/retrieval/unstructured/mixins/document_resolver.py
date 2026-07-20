@@ -9,6 +9,7 @@ from ....graph.constants import (
     DOCUMENT_LOGICAL_LABEL,
     DOCUMENT_ROOT_CYPHER,
 )
+from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
 from ..cypher_scope import _clean_doc_title
 from ..query_intent import KEYWORD_STOP as _KEYWORD_STOP
@@ -17,7 +18,7 @@ from ..text_utils import _query_anchor_terms
 
 class DocumentResolverMixin:
     def _resolve_document_for_query_strict(
-        self, session, query: str
+        self, session, query: str, tenant_id: str = ""
     ) -> tuple[Optional[str], Optional[str]]:
         """
         Resolve the document a user named, scoring each logical document by how
@@ -48,10 +49,13 @@ class DocumentResolverMixin:
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]
                   ->(:{DOC_REVISION_LABEL})-[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})
             WHERE {lc}
+              AND {tenant_filter("dl")}
+              AND {tenant_filter("d")}
             WITH dl, d
             UNWIND $terms AS term
             OPTIONAL MATCH (d)-[:CONTAINS*1..6]->(n)
             WHERE {lc_n}
+              AND {tenant_filter("n")}
               AND (toLower(coalesce(n.title, '')) CONTAINS term
                    OR toLower(coalesce(n.text, '')) CONTAINS term)
             WITH dl, term, count(DISTINCT n) AS cnt,
@@ -62,6 +66,7 @@ class DocumentResolverMixin:
                    collect({{term: term, cnt: cnt, title_match: title_match}}) AS term_hits
             """,
             terms=terms,
+            tenant_id=tenant_id,
         )
 
         docs: list[dict] = [dict(r) for r in rows]
@@ -116,7 +121,7 @@ class DocumentResolverMixin:
         return node_id.split(":", 1)[0] or None
 
     def _resolve_document_by_vector(
-        self, session, query: str
+        self, session, query: str, tenant_id: str = ""
     ) -> tuple[Optional[str], Optional[str]]:
         """
         Resolve the target document via semantic similarity (corpus-agnostic):
@@ -130,7 +135,7 @@ class DocumentResolverMixin:
         if not embedding:
             return None, None
 
-        seeds = self._vector_seed(session, embedding, 12)
+        seeds = self._vector_seed(session, embedding, 12, tenant_id)
         if len(seeds) < 3:
             return None, None
 
@@ -151,11 +156,11 @@ class DocumentResolverMixin:
         if top_n < max(3, len(seeds) // 2):
             return None, None
 
-        title = self._document_title_for_logical_id(session, top_id)
+        title = self._document_title_for_logical_id(session, top_id, tenant_id)
         return top_id, title
 
     def _document_title_for_logical_id(
-        self, session, logical_id: str
+        self, session, logical_id: str, tenant_id: str = ""
     ) -> Optional[str]:
         if not logical_id:
             return None
@@ -163,22 +168,26 @@ class DocumentResolverMixin:
             f"""
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
             WHERE dl.logical_id = $lid
+              AND {tenant_filter("dl")}
             RETURN coalesce(dl.title, dl.logical_id) AS title
             LIMIT 1
             """,
             lid=logical_id,
+            tenant_id=tenant_id,
         ).single()
         if row and row.get("title"):
             return _clean_doc_title(str(row["title"]))
         return _clean_doc_title(logical_id)
 
-    def _resolve_document_for_query(self, session, query: str) -> tuple[Optional[str], Optional[str]]:
+    def _resolve_document_for_query(
+        self, session, query: str, tenant_id: str = ""
+    ) -> tuple[Optional[str], Optional[str]]:
         """Return logical document id (preferred) and display title for doc-scoped retrieval."""
-        strict_id, strict_title = self._resolve_document_for_query_strict(session, query)
+        strict_id, strict_title = self._resolve_document_for_query_strict(session, query, tenant_id)
         if strict_id:
             return strict_id, strict_title
 
-        vector_id, vector_title = self._resolve_document_by_vector(session, query)
+        vector_id, vector_title = self._resolve_document_by_vector(session, query, tenant_id)
         if vector_id:
             return vector_id, vector_title
 
@@ -190,7 +199,8 @@ class DocumentResolverMixin:
                 f"""
                 UNWIND $terms AS term
                 MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
-                WHERE toLower(coalesce(dl.title, '')) CONTAINS term
+                WHERE {tenant_filter("dl")}
+                  AND (toLower(coalesce(dl.title, '')) CONTAINS term
                    OR toLower(dl.logical_id) CONTAINS term
                    OR EXISTS {{
                      MATCH (dl)-[:ACTIVE_REVISION]->(:{DOC_REVISION_LABEL})
@@ -200,13 +210,14 @@ class DocumentResolverMixin:
                      WHERE {lc_n}
                        AND (toLower(coalesce(n.title, '')) CONTAINS term
                             OR toLower(coalesce(n.text, '')) CONTAINS term)
-                   }}
+                   }})
                 RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title,
                        count(*) AS hits
                 ORDER BY hits DESC
                 LIMIT 1
                 """,
                 terms=terms,
+                tenant_id=tenant_id,
             ).single()
             if row and row.get("id"):
                 return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
@@ -216,6 +227,7 @@ class DocumentResolverMixin:
                 UNWIND $terms AS term
                 MATCH (d:{DOCUMENT_ROOT_CYPHER})
                 WHERE {lc}
+                  AND {tenant_filter("d")}
                   AND (toLower(coalesce(d.title, '')) CONTAINS term
                    OR EXISTS {{
                      MATCH (d)-[:CONTAINS*1..5]->(n)
@@ -230,6 +242,7 @@ class DocumentResolverMixin:
                 LIMIT 1
                 """,
                 terms=terms,
+                tenant_id=tenant_id,
             ).single()
             if row and row.get("id"):
                 return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
@@ -239,11 +252,13 @@ class DocumentResolverMixin:
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]->(:{DOC_REVISION_LABEL})
                   -[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})-[:CONTAINS*1..4]->(s:Section)
             WHERE {lc} AND {lifecycle_active("s")}
+              AND {tenant_filter("dl")} AND {tenant_filter("s")}
             WITH dl, count(s) AS n
             ORDER BY n DESC
             LIMIT 1
             RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title
-            """
+            """,
+            tenant_id=tenant_id,
         ).single()
         if row and row.get("id"):
             return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
@@ -252,11 +267,13 @@ class DocumentResolverMixin:
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})-[:CONTAINS*1..4]->(s:Section)
             WHERE {lc} AND {lifecycle_active("s")}
+              AND {tenant_filter("d")} AND {tenant_filter("s")}
             WITH d, count(s) AS n
             ORDER BY n DESC
             LIMIT 1
             RETURN coalesce(d.logical_doc_id, d.id) AS id, coalesce(d.title, d.id) AS title
-            """
+            """,
+            tenant_id=tenant_id,
         ).single()
         if row and row.get("id"):
             return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
@@ -313,18 +330,20 @@ class DocumentResolverMixin:
 
         return terms[:6]
 
-    def _resolve_document_id(self, session, name: str) -> Optional[str]:
+    def _resolve_document_id(self, session, name: str, tenant_id: str = "") -> Optional[str]:
         if not name:
             return None
         row = session.run(
             f"""
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
-            WHERE toLower(coalesce(dl.title, '')) CONTAINS toLower($name)
-               OR toLower(dl.logical_id) CONTAINS toLower($name)
+            WHERE {tenant_filter("dl")}
+              AND (toLower(coalesce(dl.title, '')) CONTAINS toLower($name)
+               OR toLower(dl.logical_id) CONTAINS toLower($name))
             RETURN dl.logical_id AS id
             LIMIT 1
             """,
             name=name.strip(),
+            tenant_id=tenant_id,
         ).single()
         if row and row.get("id"):
             return str(row["id"])
@@ -332,24 +351,28 @@ class DocumentResolverMixin:
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {lifecycle_active("d")}
+              AND {tenant_filter("d")}
               AND d.title IS NOT NULL
               AND toLower(d.title) CONTAINS toLower($name)
             RETURN coalesce(d.logical_doc_id, d.id) AS id
             LIMIT 1
             """,
             name=name.strip(),
+            tenant_id=tenant_id,
         ).single()
         return str(row["id"]) if row and row.get("id") else None
 
-    def _list_documents(self, session, limit: int = 5) -> list[dict[str, str]]:
+    def _list_documents(self, session, limit: int = 5, tenant_id: str = "") -> list[dict[str, str]]:
         rows = session.run(
             f"""
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
+            WHERE {tenant_filter("dl")}
             RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title
             ORDER BY title
             LIMIT $limit
             """,
             limit=max(1, int(limit)),
+            tenant_id=tenant_id,
         )
         out: list[dict[str, str]] = []
         for r in rows:
@@ -361,11 +384,13 @@ class DocumentResolverMixin:
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {lifecycle_active("d")}
+              AND {tenant_filter("d")}
             RETURN coalesce(d.logical_doc_id, d.id) AS id, coalesce(d.title, d.id) AS title
             ORDER BY title
             LIMIT $limit
             """,
             limit=max(1, int(limit)),
+            tenant_id=tenant_id,
         )
         out: list[dict[str, str]] = []
         for r in rows:

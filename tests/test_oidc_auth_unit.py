@@ -103,7 +103,7 @@ class TestIngestAuth(unittest.TestCase):
 
     def test_require_admin_rejects_compliance_officer(self):
         session = MagicMock()
-        session.user = UserContext(user_id="u1", role=Role.COMPLIANCE_OFFICER)
+        session.user = UserContext(user_id="u1", role=Role.COMPLIANCE_OFFICER, tenant_id="default")
         with patch("src.auth.oidc.deps.require_bearer_session", return_value=session):
             with self.assertRaises(Exception) as ctx:
                 require_admin_session(authorization="Bearer x")
@@ -111,7 +111,7 @@ class TestIngestAuth(unittest.TestCase):
 
     def test_require_admin_allows_admin(self):
         session = MagicMock()
-        session.user = UserContext(user_id="u1", role=Role.ADMIN)
+        session.user = UserContext(user_id="u1", role=Role.ADMIN, tenant_id="default")
         with patch("src.auth.oidc.deps.require_bearer_session", return_value=session):
             out = require_admin_session(authorization="Bearer x")
             self.assertEqual(out.user.role, Role.ADMIN)
