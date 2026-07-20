@@ -1,5 +1,7 @@
 # Agentic GraphRAG
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **One Neo4j graph. Two knowledge modes. Answers that flat RAG cannot reliably give.**
 
 Agentic GraphRAG keeps **structured business data** and **unstructured documents** in the same graph database, then routes each question to the right retrieval strategy — or combines both. SQL-grade analytics *and* multi-hop reasoning over PDFs/DOCX, without separate vector DBs, ETL pipelines, or ad-hoc orchestration glue.
@@ -135,4 +137,4 @@ Issues and PRs welcome. Run `pytest tests/` before submitting — CI to enforce 
 
 ## License
 
-No license file is published yet — until then, all rights are reserved by default (standard GitHub behavior for unlicensed public repos). An open-source license is planned; watch this space or open an issue if you'd like to use this commercially in the meantime.
+[MIT](LICENSE) — use it, fork it, ship it commercially, just keep the copyright notice.
