@@ -38,11 +38,17 @@ sys.modules["neo4j"].Driver = object
 
 # A previously-collected test file may have stubbed src.auth/src.auth.rbac_setup
 # (MagicMock GraphRBAC) or src.graph (no tenancy submodule) — this file needs
-# the REAL classes/modules, so force a fresh import rather than picking up
-# those stale stubs.
+# the REAL classes/modules. Only clear entries that are actually fake stubs
+# (a hand-built types.ModuleType has neither __file__ nor __path__); if another
+# file already imported the real package, reuse that exact module object
+# instead of reimporting — a second, divergent import would leave other test
+# files' already-bound references (and any unittest.mock.patch targeting
+# sys.modules by name) pointing at two different module objects.
 for _mod_name in list(sys.modules):
     if _mod_name.startswith("src.auth") or _mod_name.startswith("src.graph"):
-        del sys.modules[_mod_name]
+        _mod = sys.modules[_mod_name]
+        if getattr(_mod, "__file__", None) is None and getattr(_mod, "__path__", None) is None:
+            del sys.modules[_mod_name]
 
 from src.auth.rbac_setup import GraphRBAC
 

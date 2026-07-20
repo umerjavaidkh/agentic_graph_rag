@@ -9,6 +9,7 @@ from typing import Optional
 from .retrieval.unstructured.graph import esg_agent
 from .retrieval.structured.graph import structured_agent
 from .auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
+from .audit import AuditEventType, record_audit_event
 from .presentation import build_presentation
 from .auth.rbac_setup import GraphRBAC
 from .config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
@@ -226,14 +227,41 @@ def ask(
                 out["_telemetry"] = tel.summary()
             clear_telemetry()
             save_turn(thread_id, question, out)
+            record_audit_event(
+                event_type=AuditEventType.ACCESS_DENIED,
+                user_id=ctx.user_id,
+                tenant_id=ctx.tenant_id,
+                role=ctx.role.value,
+                request_id=request_id,
+                resource="structured",
+                action=question,
+                result="denied",
+                reason="rbac_denied",
+            )
             return out
 
-        return run_via_mcp_tool(
+        result = run_via_mcp_tool(
             question,
             tool_name,
             MCP_HANDLERS,
             user_context=user_context,
             thread_id=thread_id,
         )
+        record_audit_event(
+            event_type=AuditEventType.QUERY,
+            user_id=ctx.user_id,
+            tenant_id=ctx.tenant_id,
+            role=ctx.role.value,
+            request_id=request_id,
+            action=question,
+            result="success",
+            metadata={
+                "route_tool": result.get("_route_tool"),
+                "agent": result.get("agent"),
+                "strategy": result.get("strategy"),
+                "low_confidence": bool(result.get("low_confidence")),
+            },
+        )
+        return result
     except Exception:
         raise

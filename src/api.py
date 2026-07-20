@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from .graph.driver import close_neo4j_driver, get_neo4j_driver
 from pydantic import BaseModel, Field
 
+from .audit import AuditEventType, get_audit_store, record_audit_event
 from .bridge import ask
 from .conversation import clear_turn
 from .logging_config import setup_logging
@@ -521,6 +522,15 @@ async def ingest_unstructured(
     job = ingestion_manager.submit_unstructured(
         file, session.user.tenant_id, job_name=job_name, doc_key=doc_key
     )
+    record_audit_event(
+        event_type=AuditEventType.INGESTION_SUBMITTED,
+        user_id=session.user.user_id,
+        tenant_id=session.user.tenant_id,
+        role=session.user.role.value,
+        resource=job.id,
+        action=job_name or file.filename,
+        metadata={"job_type": "unstructured"},
+    )
     dispatch = _dispatch_ingest_job(job.id, background_tasks)
     return IngestionResponse(
         job_id=job.id,
@@ -562,6 +572,15 @@ async def ingest_corpus(
         )
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    record_audit_event(
+        event_type=AuditEventType.INGESTION_SUBMITTED,
+        user_id=session.user.user_id,
+        tenant_id=session.user.tenant_id,
+        role=session.user.role.value,
+        resource=job.id,
+        action=request.job_name or request.source,
+        metadata={"job_type": "corpus"},
+    )
     dispatch = _dispatch_ingest_job(job.id, background_tasks, job_timeout=CORPUS_SCAN_TIMEOUT)
     return IngestionResponse(
         job_id=job.id,
@@ -609,6 +628,15 @@ async def ingest_cypher(
 
     job = ingestion_manager.submit_cypher(
         file, session.user.tenant_id, job_name=job_name, cypher_params=cypher_params or None
+    )
+    record_audit_event(
+        event_type=AuditEventType.INGESTION_SUBMITTED,
+        user_id=session.user.user_id,
+        tenant_id=session.user.tenant_id,
+        role=session.user.role.value,
+        resource=job.id,
+        action=job_name or file.filename,
+        metadata={"job_type": "cypher"},
     )
     dispatch = _dispatch_ingest_job(job.id, background_tasks)
     return IngestionResponse(
@@ -659,6 +687,38 @@ async def list_ingestion_jobs(
             )
         )
     return summaries
+
+
+@app.get("/audit/events", response_model=List[dict])
+async def list_audit_events(
+    limit: int = 100,
+    user_id: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    since: Optional[str] = Query(None),
+    until: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(default=None),
+    role: Optional[str] = Query(None),
+):
+    """
+    Query the audit trail (who did what, when, to what data).
+
+    Admin-only. Filters are ANDed; omit any to widen the result.
+    """
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+    )
+    events = get_audit_store().query(
+        user_id=user_id,
+        tenant_id=tenant_id,
+        event_type=event_type,
+        since=since,
+        until=until,
+        limit=min(max(limit, 1), 1000),
+    )
+    return [e.to_dict() for e in events]
 
 
 @app.get("/ingest/jobs/{job_id}", response_model=IngestionStatusResponse)

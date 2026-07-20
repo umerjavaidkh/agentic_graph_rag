@@ -11,8 +11,10 @@ import re
 from typing import Any, Callable, Optional
 
 from .auth.roles import UserContext
+from .audit import AuditEventType, record_audit_event
 from .config.prompts import load_prompt
 from .config.settings import (
+    DEFAULT_TENANT_ID,
     FAST_ROUTE_QUERIES,
     MODEL_PROVIDER,
     OPENAI_API_KEY,
@@ -168,6 +170,16 @@ def document_agent_structured_guard(
             "_autofix_agent": "structured",
         }
     uid = user_context.user_id if user_context else "unknown"
+    record_audit_event(
+        event_type=AuditEventType.ACCESS_DENIED,
+        user_id=uid,
+        tenant_id=user_context.tenant_id if user_context else DEFAULT_TENANT_ID,
+        role=user_context.role.value if user_context else "public",
+        resource="structured",
+        action=question,
+        result="denied",
+        reason="misrouted_no_access",
+    )
     return {
         "answer": structured_misroute_message(uid),
         "low_confidence": False,

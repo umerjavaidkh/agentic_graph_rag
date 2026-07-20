@@ -99,9 +99,12 @@ sys.modules["src.model_providers.factory"].get_model_provider = _factory_mock
 sys.modules["src.model_providers"].get_model_provider = _factory_mock
 
 # --- auth stubs ---
+# Always create fresh fake modules here (never reuse/mutate a real src.auth
+# that an earlier-collected test file may have already imported) — mutating
+# the real module's classes in place would corrupt it for every other test
+# file that runs afterward in the same pytest process.
 for _n in ["src.auth", "src.auth.rbac_setup", "src.auth.roles"]:
-    if _n not in sys.modules:
-        _stub_module(_n)
+    _stub_module(_n)
 sys.modules["src.auth.rbac_setup"].GraphRBAC = MagicMock()
 sys.modules["src.auth.roles"].Role = MagicMock()
 sys.modules["src.auth.roles"].UserContext = MagicMock()

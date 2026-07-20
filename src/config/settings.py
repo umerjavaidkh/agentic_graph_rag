@@ -275,6 +275,29 @@ MULTI_TENANCY_ENABLED = os.environ.get("MULTI_TENANCY_ENABLED", "false").lower()
 )
 DEFAULT_TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "default")
 
+# ── Audit logging (compliance/security trail — defaults ON) ───────────────
+# Unlike other flags in this file, writing an audit event never changes
+# what the user sees, so this defaults on: real compliance value from the
+# moment of upgrade, no surprise behavior change.
+AUDIT_LOG_ENABLED = os.environ.get("AUDIT_LOG_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+AUDIT_LOG_STORE_QUESTION = os.environ.get("AUDIT_LOG_STORE_QUESTION", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+AUDIT_LOG_DIR = os.environ.get(
+    "AUDIT_LOG_DIR",
+    str(PROJECT_ROOT / "data" / "audit_log"),
+)
+AUDIT_LOG_JSONL_RETAIN_DAYS = int(os.environ.get("AUDIT_LOG_JSONL_RETAIN_DAYS", "90"))
+AUDIT_LOG_REDIS_STREAM = os.environ.get("AUDIT_LOG_REDIS_STREAM", "rag:audit:stream")
+AUDIT_LOG_STREAM_MAXLEN = int(os.environ.get("AUDIT_LOG_STREAM_MAXLEN", "1000000"))
+AUDIT_LOG_REQ_TTL_SEC = int(os.environ.get("AUDIT_LOG_REQ_TTL_SEC", str(90 * 24 * 3600)))
+
 
 def estimate_route_max_tokens(question: str) -> int:
     """Budget for MCP tool routing: base + room to echo question in tool arguments."""
