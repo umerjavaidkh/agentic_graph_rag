@@ -21,6 +21,7 @@ from ..services.graph_seeds import GraphSeedService
 from ..services.lexical import LexicalService
 from ..services.ranking import RankingService
 from .box import BoxStrategy
+from .page import PageStrategy
 from .subsection import SubsectionStrategy
 
 ranking = RankingService()
@@ -32,3 +33,4 @@ exec_ = DocumentQueryExecutor()
 
 register_unstructured("subsection_tree", lambda: SubsectionStrategy(document_resolver, formatter, exec_))
 register_unstructured("structural_box_list", lambda: BoxStrategy(document_resolver, formatter, exec_))
+register_unstructured("structural_page", lambda: PageStrategy(document_resolver, formatter))

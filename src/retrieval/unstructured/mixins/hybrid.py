@@ -139,36 +139,16 @@ class HybridRetrieveMixin:
                 response["graph_expanded"] = len(toc_items)
                 return response
 
-        if is_visual_page_question(query):
+        # Page request (figure/visual page or plain page text) — migrated to
+        # a registered strategy; see strategies/page.py.
+        if is_visual_page_question(query) or is_page_question(query):
             with self.driver.session() as session:
-                visual_items = self._structural_page_visual_retrieve(session, query, tenant_id)
-            if visual_items:
-                pdf_page, doc_page = self._parse_page_targets(query)
-                response = self._format_response(query, visual_items, user_context=ctx)
-                if self._query_wants_all_page_visuals(query) and any(
-                    (c.get("visual_content") or "").strip() for c in visual_items
-                ):
-                    response["mode"] = "page_visual_list"
-                else:
-                    response["mode"] = "structural_page_visual"
-                response["pdf_page"] = pdf_page
-                response["document_page"] = doc_page
-                response["strategy"] = "graph_rag"
-                response["vector_seeds"] = 0
-                response["fulltext_hits"] = 0
-                response["graph_expanded"] = len(visual_items)
-                return response
-
-        if is_page_question(query):
-            with self.driver.session() as session:
-                page_items = self._structural_page_retrieve(session, query, tenant_id)
-            if page_items:
-                response = self._format_response(query, page_items, user_context=ctx)
-                response["mode"] = "structural_page"
-                response["strategy"] = "graph_rag"
-                response["vector_seeds"] = 0
-                response["fulltext_hits"] = 0
-                response["graph_expanded"] = len(page_items)
+                response = get_unstructured("structural_page").retrieve(
+                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx
+                )
+            if response:
+                if tel is not None:
+                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
                 return response
 
         synthesis = is_synthesis_question(query)
