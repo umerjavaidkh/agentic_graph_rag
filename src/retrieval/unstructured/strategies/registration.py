@@ -20,6 +20,7 @@ from ..services.formatter import ResponseFormatter
 from ..services.graph_seeds import GraphSeedService
 from ..services.lexical import LexicalService
 from ..services.ranking import RankingService
+from .box import BoxStrategy
 from .subsection import SubsectionStrategy
 
 ranking = RankingService()
@@ -30,3 +31,4 @@ formatter = ResponseFormatter()
 exec_ = DocumentQueryExecutor()
 
 register_unstructured("subsection_tree", lambda: SubsectionStrategy(document_resolver, formatter, exec_))
+register_unstructured("structural_box_list", lambda: BoxStrategy(document_resolver, formatter, exec_))

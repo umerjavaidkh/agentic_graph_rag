@@ -74,35 +74,16 @@ class HybridRetrieveMixin:
 
         tel = get_telemetry()
 
-        # Box headings listing (generic): "List all Box headings" should enumerate Box 1..N.
-        if self._exec.is_box_list_request(query):
+        # Box request (heading list or specific box content) — migrated to a
+        # registered strategy; see strategies/box.py.
+        if self._exec.is_box_list_request(query) or self._exec.parse_box_number(query) is not None:
             with self.driver.session() as session:
-                items = self._structural_box_headings(session, query, tenant_id)
-            if items:
-                response = self._format_response(query, items, user_context=ctx)
-                response["mode"] = "structural_box_list"
-                response["strategy"] = "graph_rag"
-                response["vector_seeds"] = 0
-                response["fulltext_hits"] = 0
-                response["graph_expanded"] = len(items)
+                response = get_unstructured("structural_box_list").retrieve(
+                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx
+                )
+            if response:
                 if tel is not None:
-                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response["mode"]}))
-                return response
-
-        # Box content fetch (generic): "Box 5" / "Box 10" should retrieve that box text.
-        box_n = self._exec.parse_box_number(query)
-        if box_n is not None and not self._exec.is_box_list_request(query):
-            with self.driver.session() as session:
-                items = self._structural_box_content(session, query, box_n, tenant_id)
-            if items:
-                response = self._format_response(query, items, user_context=ctx)
-                response["mode"] = "structural_box_content"
-                response["strategy"] = "graph_rag"
-                response["vector_seeds"] = 0
-                response["fulltext_hits"] = 0
-                response["graph_expanded"] = len(items)
-                if tel is not None:
-                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response["mode"], "box": box_n}))
+                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
                 return response
 
         # Subsection request (section listing, section detail, or doc-choice
