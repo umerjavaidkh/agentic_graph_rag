@@ -1,24 +1,13 @@
-"""Mixin building blocks for DocumentRAGRetriever."""
-from .box_strategy import BoxStrategyMixin
-from .document_resolver import DocumentResolverMixin
-from .graph_seeds import GraphSeedsMixin
-from .hybrid import HybridRetrieveMixin
-from .lexical import LexicalRetrievalMixin
-from .page_strategy import PageStrategyMixin
-from .policies import PoliciesMixin
-from .ranking import RankingMixin
-from .subsection import SubsectionMixin
-from .toc_strategy import TocStrategyMixin
+"""HybridRetrieveMixin — the sole remaining retrieval entry point for DocumentRAGRetriever.
 
-__all__ = [
-    "BoxStrategyMixin",
-    "DocumentResolverMixin",
-    "GraphSeedsMixin",
-    "HybridRetrieveMixin",
-    "LexicalRetrievalMixin",
-    "PageStrategyMixin",
-    "PoliciesMixin",
-    "RankingMixin",
-    "SubsectionMixin",
-    "TocStrategyMixin",
-]
+The other nine mixins that used to live here (box_strategy, document_resolver,
+graph_seeds, lexical, page_strategy, policies, ranking, subsection,
+toc_strategy) have been fully extracted into standalone, registry-based
+strategies and services (see ../strategies/ and ../services/) as part of the
+loosely-coupled retrieval refactor. HybridRetrieveMixin's `hybrid_retrieve()`
+is now pure dispatch: it resolves the applicable strategy from
+strategy_registry and calls it — no retrieval logic of its own.
+"""
+from .hybrid import HybridRetrieveMixin
+
+__all__ = ["HybridRetrieveMixin"]

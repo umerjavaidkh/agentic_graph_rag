@@ -20,6 +20,7 @@ from ..query_intent import (
     is_toc_question,
     is_visual_page_question,
 )
+from ..services.formatter import access_denied_response
 from ..strategies import registration as _strategy_registration  # noqa: F401  (side-effect: registers strategies)
 
 
@@ -49,7 +50,7 @@ class HybridRetrieveMixin:
         """
         ctx = user_context or self.user_context
         tenant_id = ctx.tenant_id
-        denied = self._access_denied_response(query, ctx)
+        denied = access_denied_response(self.rbac, query, ctx)
         if denied:
             return denied
 

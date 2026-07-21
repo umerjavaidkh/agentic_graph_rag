@@ -1,21 +1,23 @@
 """
-tests/test_unstructured_services_unit.py — parity between extracted services and their source mixins.
+tests/test_unstructured_services_unit.py — behavioral tests for the extracted retrieval services.
 
-Part of the loosely-coupled retrieval refactor (Part A). These services were
-extracted verbatim from mixins/{ranking,graph_seeds,document_resolver,
-lexical}.py — this file proves the extraction didn't silently change
-behavior, by calling both the old mixin method and the new service method
-with identical inputs and asserting identical output.
+Part of the loosely-coupled retrieval refactor (Part A). These services
+(RankingService, GraphSeedService, DocumentResolver, LexicalService,
+ResponseFormatter) were extracted from mixins/{ranking,graph_seeds,
+document_resolver,lexical,policies}.py — that extraction was verified via
+parity tests comparing old-mixin-output vs new-service-output while both
+existed side by side (all passed, see git history for
+scripts/run_rag_eval.py 40/40 confirmation and the original parity test
+run). Now that the old mixins are deleted (Part A4), this file tests the
+services directly on their own behavioral properties rather than against
+a no-longer-existing "old" implementation.
 
 Scope: covers the pure-logic methods (no live Neo4j session required —
 query parsing, scoring, merging, keyword/phrase extraction). The Cypher-
 querying methods (vector_seed, graph_expand, resolve_document_for_query,
-structural_*_retrieve) are copied verbatim too, but their real regression
-gate is the live 40-question eval suite (scripts/run_rag_eval.py), run
-against the real docker-compose app once each strategy is wired in — a
-unit-level DB fixture would either need a live Neo4j or a hand-built fake
-graph, neither of which would catch more than the eval suite already does
-for this kind of "same Cypher, moved file" extraction.
+structural_*_retrieve) are covered by the live 40-question eval suite
+(scripts/run_rag_eval.py) run against the real docker-compose app, not by
+a unit-level DB fixture.
 
 Run with:
     python -m pytest tests/test_unstructured_services_unit.py -v
@@ -29,48 +31,11 @@ _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-# Drop any stale fake stub a previously-collected test file may have left in
-# sys.modules (several test files stub src.auth/src.graph/src.retrieval/
-# neo4j/fastapi as a bare types.ModuleType for their own narrow needs and
-# never restore them) — this file needs the real packages. A real module
-# always has __file__ or __path__; a hand-built stub has neither. Imports
-# below are all done at module top (not deferred into test functions) so
-# this one cleanup, run once at collection time, protects every symbol this
-# file needs — a deferred/function-local import would re-resolve via
-# whatever sys.modules state exists when that specific test *runs* (after
-# other test files' own run-phase side effects), not just at collection.
-for _mod_name in list(sys.modules):
-    if (
-        _mod_name == "src.auth"
-        or _mod_name.startswith("src.auth.")
-        or _mod_name == "src.graph"
-        or _mod_name.startswith("src.graph.")
-        or _mod_name == "src.retrieval"
-        or _mod_name.startswith("src.retrieval.")
-        or _mod_name in ("neo4j", "neo4j.exceptions", "fastapi")
-    ):
-        _mod = sys.modules[_mod_name]
-        if getattr(_mod, "__file__", None) is None and getattr(_mod, "__path__", None) is None:
-            del sys.modules[_mod_name]
-
-from src.retrieval.unstructured.mixins.ranking import RankingMixin
-from src.retrieval.unstructured.mixins.document_resolver import DocumentResolverMixin
-from src.retrieval.unstructured.mixins.graph_seeds import GraphSeedsMixin
-from src.retrieval.unstructured.mixins.lexical import LexicalRetrievalMixin
-from src.retrieval.unstructured.services.ranking import RankingService
-from src.retrieval.unstructured.services.graph_seeds import GraphSeedService
 from src.retrieval.unstructured.services.document_resolver import DocumentResolver
-from src.retrieval.unstructured.services.lexical import LexicalService
 from src.retrieval.unstructured.services.formatter import ResponseFormatter, access_denied_response
-
-
-class _OldRanking(RankingMixin):
-    pass
-
-
-class _OldDocumentResolver(DocumentResolverMixin):
-    pass
-
+from src.retrieval.unstructured.services.graph_seeds import GraphSeedService
+from src.retrieval.unstructured.services.lexical import LexicalService
+from src.retrieval.unstructured.services.ranking import RankingService
 
 QUESTIONS = [
     "What is the electronic version ISBN of the Go.Data annual report 2021?",
@@ -81,121 +46,141 @@ QUESTIONS = [
 ]
 
 
-# ── RankingService vs RankingMixin ────────────────────────────────────────
+# ── RankingService ─────────────────────────────────────────────────────
 
 
-def test_query_keywords_parity():
-    old, new = _OldRanking(), RankingService()
-    for q in QUESTIONS:
-        assert old._query_keywords(q) == new._query_keywords(q)
+def test_query_keywords_excludes_short_tokens():
+    ranking = RankingService()
+    kws = ranking._query_keywords("Which network deployed fellows to Greece and Kosovo?")
+    assert "to" not in kws  # below the 3-char minimum
+    assert "greece" in kws
+    assert "kosovo" in kws
+    assert len(kws) <= 18  # capped
 
 
-def test_content_keywords_from_query_parity():
-    old, new = _OldRanking(), RankingService()
-    for q in QUESTIONS:
-        assert old._content_keywords_from_query(q) == new._content_keywords_from_query(q)
+def test_content_keywords_from_query_includes_anchors_and_bigrams():
+    ranking = RankingService()
+    kws = ranking._content_keywords_from_query("Go.Data annual report 2021")
+    assert "go.data" in kws
+    assert "annual report" in kws  # adjacent bigram
+    assert len(kws) <= 18  # capped
 
 
-def test_search_phrases_from_query_parity():
-    old, new = _OldRanking(), RankingService()
-    for q in QUESTIONS:
-        assert old._search_phrases_from_query(q) == new._search_phrases_from_query(q)
+def test_search_phrases_from_query_prefers_longer_phrases_first():
+    ranking = RankingService()
+    phrases = ranking._search_phrases_from_query("Greece Malta Moldova Kosovo network deployed fellows")
+    assert phrases  # non-empty for a real question
+    # Sorted by length descending (longest n-gram phrases before single words).
+    assert len(phrases[0]) >= len(phrases[-1])
+    assert len(phrases) <= 14  # capped
 
 
-def test_relevance_boost_parity():
-    old, new = _OldRanking(), RankingService()
-    cases = [
-        ("Introduction", "Some section text about Go.Data deployment.", ["deployment", "go.data"]),
-        ("Page 12", "", []),
-        ("Findings", "Greece Malta Moldova Kosovo fellows network", ["greece", "network", "fellows"]),
-    ]
-    for title, text, keywords in cases:
-        assert old._relevance_boost(title, text, keywords) == new._relevance_boost(title, text, keywords)
+def test_relevance_boost_rewards_keyword_matches_and_named_sections():
+    ranking = RankingService()
+    base = ranking._relevance_boost("Page 12", "", [])
+    named_with_keywords = ranking._relevance_boost(
+        "Findings", "Greece Malta Moldova Kosovo fellows network", ["greece", "network", "fellows"]
+    )
+    assert named_with_keywords > base
 
 
-def test_merge_and_rank_parity():
-    old, new = _OldRanking(), RankingService()
+def test_merge_and_rank_dedupes_by_id_and_respects_limit():
+    ranking = RankingService()
     vector_hits = [{"id": "s1", "title": "Intro", "text": "hello world", "score": 0.8}]
-    fulltext_hits = [{"id": "s2", "title": "Body", "text": "greece kosovo", "score": 3.2}]
+    fulltext_hits = [{"id": "s1", "title": "Intro", "text": "hello world", "score": 3.2}]  # same id, different source
     graph_hits = [
         {"id": "s3", "title": "Related", "text": "network", "seed_id": "s1", "hops": 1,
          "edge_weight": 0.7, "rel_type": "MENTIONS"}
     ]
     seed_scores = {"s1": 0.8}
-    for q in QUESTIONS:
-        old_out = old._merge_and_rank(q, vector_hits, fulltext_hits, graph_hits, seed_scores, limit=5)
-        new_out = new._merge_and_rank(q, vector_hits, fulltext_hits, graph_hits, seed_scores, limit=5)
-        assert old_out == new_out
+    out = ranking._merge_and_rank(
+        "test query", vector_hits, fulltext_hits, graph_hits, seed_scores, limit=1
+    )
+    assert len(out) == 1  # limit respected
+    ids = {item["id"] for item in ranking._merge_and_rank(
+        "test query", vector_hits, fulltext_hits, graph_hits, seed_scores, limit=5
+    )}
+    assert len(ids) == len({"s1", "s3"})  # s1 merged from two sources into one entry
 
 
-def test_merge_retrieval_chunks_parity():
-    old, new = _OldRanking(), RankingService()
+def test_merge_retrieval_chunks_dedupes_sorts_and_caps_at_8():
+    ranking = RankingService()
     primary = [{"id": "a", "score": 0.9}, {"id": "b", "score": 0.5}]
     extra = [{"id": "b", "score": 0.5}, {"id": "c", "score": 0.7}]
-    assert old._merge_retrieval_chunks(primary, extra) == new._merge_retrieval_chunks(primary, extra)
+    out = ranking._merge_retrieval_chunks(primary, extra)
+    assert [c["id"] for c in out] == ["a", "c", "b"]  # sorted by score desc, "b" deduped not doubled
+
+    many_primary = [{"id": str(i), "score": float(i)} for i in range(10)]
+    out_capped = ranking._merge_retrieval_chunks(many_primary, [])
+    assert len(out_capped) == 8
 
 
-def test_contrast_term_groups_parity():
-    old, new = _OldRanking(), RankingService()
-    for q in QUESTIONS:
-        assert old._contrast_term_groups(q) == new._contrast_term_groups(q)
+def test_contrast_term_groups_only_for_contrast_questions():
+    ranking = RankingService()
+    assert ranking._contrast_term_groups(QUESTIONS[0]) == []  # not a contrast question
+    groups = ranking._contrast_term_groups(QUESTIONS[2])  # "Contrast X vs. Y"
+    assert len(groups) == 2  # one group per side of the comparison
 
 
-# ── GraphSeedService.fulltext_query vs GraphSeedsMixin._fulltext_query ────
+# ── GraphSeedService ────────────────────────────────────────────────────
 
 
-def test_fulltext_query_parity():
-    class _OldGraphSeeds(RankingMixin, GraphSeedsMixin):
-        pass
-
-    old = _OldGraphSeeds()
-    new = GraphSeedService(RankingService())
-    for q in QUESTIONS:
-        assert old._fulltext_query(q) == new.fulltext_query(q)
+def test_fulltext_query_quotes_multiword_phrases():
+    service = GraphSeedService(RankingService())
+    q = service.fulltext_query("Which network deployed fellows to Greece and Kosovo?")
+    assert '"' in q  # multi-word phrases are quoted for Lucene
+    assert " OR " in q
 
 
-# ── DocumentResolver pure methods vs DocumentResolverMixin ────────────────
+def test_fulltext_query_falls_back_to_truncated_question_with_no_keywords():
+    service = GraphSeedService(RankingService())
+    assert service.fulltext_query("") == ""
 
 
-def test_document_match_terms_parity():
-    old, new = _OldDocumentResolver(), DocumentResolver(GraphSeedService(RankingService()))
-    for q in QUESTIONS:
-        assert old._document_match_terms(q) == new.document_match_terms(q)
+# ── DocumentResolver pure methods ───────────────────────────────────────
 
 
-def test_doc_name_terms_parity():
-    old, new = _OldDocumentResolver(), DocumentResolver(GraphSeedService(RankingService()))
-    for q in QUESTIONS:
-        assert old._doc_name_terms(q) == new.doc_name_terms(q)
-
-
-def test_logical_id_from_node_id_parity():
-    old, new = _OldDocumentResolver(), DocumentResolver(GraphSeedService(RankingService()))
-    ids = ["doc_rag_document:r1::section_1_2", "plain_id", "", "a:b:c"]
-    for nid in ids:
-        assert old._logical_id_from_node_id(nid) == new._logical_id_from_node_id(nid)
-
-
-# ── LexicalService.enrich_chunk_text_for_facts vs LexicalRetrievalMixin ───
-
-
-def test_enrich_chunk_text_for_facts_parity():
-    class _OldLexical(LexicalRetrievalMixin):
-        pass
-
-    old = _OldLexical()
+def test_document_match_terms_capped_at_6():
     resolver = DocumentResolver(GraphSeedService(RankingService()))
-    new = LexicalService(RankingService(), resolver)
-    cases = [
-        ("Contacts", "Visit https://example.org/go-data for more info."),
-        ("Plain", "No links here."),
-        ("Multi", "See https://a.example and https://b.example for details."),
-    ]
-    for title, text in cases:
-        assert old._enrich_chunk_text_for_facts(title, text) == new.enrich_chunk_text_for_facts(title, text)
+    for q in QUESTIONS:
+        terms = resolver.document_match_terms(q)
+        assert len(terms) <= 6
+        assert "table" not in terms  # generic structural word filtered out
 
 
-# ── ResponseFormatter / access_denied_response vs PoliciesMixin ──────────
+def test_doc_name_terms_prefers_proper_nouns_and_long_tokens():
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    terms = resolver.doc_name_terms("Which network deployed fellows to Greece and Kosovo?")
+    assert "greece" in terms
+    assert "kosovo" in terms
+    assert len(terms) <= 6
+
+
+def test_logical_id_from_node_id_extracts_prefix():
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    assert resolver._logical_id_from_node_id("doc_rag_document:r1::section_1_2") == "doc_rag_document"
+    assert resolver._logical_id_from_node_id("plain_id") == "plain_id"
+    assert resolver._logical_id_from_node_id("") is None
+
+
+# ── LexicalService ──────────────────────────────────────────────────────
+
+
+def test_enrich_chunk_text_for_facts_appends_extracted_urls():
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    lexical = LexicalService(RankingService(), resolver)
+
+    plain = lexical.enrich_chunk_text_for_facts("Plain", "No links here.")
+    assert plain == "No links here."
+
+    with_url = lexical.enrich_chunk_text_for_facts(
+        "Contacts", "Visit https://example.org/go-data for more info."
+    )
+    assert "[Extracted URLs]" in with_url
+    assert "https://example.org/go-data" in with_url
+
+
+# ── ResponseFormatter / access_denied_response ──────────────────────────
 
 
 def test_format_response_matches_shape():
