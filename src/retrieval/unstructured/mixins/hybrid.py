@@ -23,6 +23,7 @@ from ..constants import (
     _GRAPH_2HOP_LIMIT,
     _VECTOR_SEED_LIMIT,
 )
+from ...strategy_registry import get_unstructured
 from ..executor import DocumentQueryExecutor
 from ..query_intent import (
     is_enumeration_question,
@@ -31,6 +32,7 @@ from ..query_intent import (
     is_toc_question,
     is_visual_page_question,
 )
+from ..strategies import registration as _strategy_registration  # noqa: F401  (side-effect: registers strategies)
 
 _T = TypeVar("_T")
 
@@ -103,67 +105,18 @@ class HybridRetrieveMixin:
                     tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response["mode"], "box": box_n}))
                 return response
 
-        # If the user asks about a specific section/subsections and multiple documents exist,
-        # ask them to pick the document rather than guessing.
+        # Subsection request (section listing, section detail, or doc-choice
+        # clarification when multiple documents exist and none was named) —
+        # migrated to a registered strategy; see strategies/subsection.py.
         if self._exec.is_subsection_request(query) and self._exec.parse_section_number(query):
             with self.driver.session() as session:
-                doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
-                # If user didn't mention any doc terms, this resolver can "guess" the biggest doc.
-                # When multiple docs exist, prefer explicit clarification.
-                if not self._document_match_terms(query):
-                    docs = self._list_documents(session, limit=5, tenant_id=tenant_id)
-                    if len(docs) > 1:
-                        clar = self._exec.build_doc_choice_clarification(
-                            original_question=query,
-                            documents=docs,
-                        )
-                        return {
-                            "query": query,
-                            "strategy": "graph_rag",
-                            "mode": "needs_clarification",
-                            "original_question": query,
-                            "clarification_kind": clar.kind,
-                            "clarification_options": clar.options,
-                            "chunks": [{
-                                "id": "clarification",
-                                "title": "Clarification",
-                                "text": clar.prompt,
-                                "score": 1.0,
-                                "related": [],
-                            }],
-                            "total_available": 1,
-                        }
-
-        # Subsection listing: if a section number is requested, return child headings if present.
-        if self._exec.is_subsection_request(query):
-            sec_num = self._exec.parse_section_number(query)
-            if sec_num:
-                with self.driver.session() as session:
-                    items, parent = self._structural_subsections(session, query, sec_num, tenant_id)
-                if items:
-                    response = self._format_response(query, items, user_context=ctx)
-                    response["mode"] = "subsection_tree"
-                    response["strategy"] = "graph_rag"
-                    response["parent_id"] = parent.get("id")
-                    response["parent_title"] = parent.get("title")
-                    response["vector_seeds"] = 0
-                    response["fulltext_hits"] = 0
-                    response["graph_expanded"] = len(items)
-                    if tel is not None:
-                        tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response["mode"]}))
-                    return response
-                if parent and parent.get("text"):
-                    response = self._format_response(query, [parent], user_context=ctx)
-                    response["mode"] = "section_detail"
-                    response["strategy"] = "graph_rag"
-                    response["parent_id"] = parent.get("id")
-                    response["parent_title"] = parent.get("title")
-                    response["vector_seeds"] = 0
-                    response["fulltext_hits"] = 0
-                    response["graph_expanded"] = 1
-                    if tel is not None:
-                        tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response["mode"]}))
-                    return response
+                response = get_unstructured("subsection_tree").retrieve(
+                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx
+                )
+            if response:
+                if tel is not None:
+                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
+                return response
 
         if is_toc_question(query):
             with self.driver.session() as session:
