@@ -99,44 +99,17 @@ class HybridRetrieveMixin:
                     tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
                 return response
 
+        # TOC request (table of contents, or doc-choice clarification when the
+        # named document can't be resolved) — migrated to a registered
+        # strategy; see strategies/toc.py.
         if is_toc_question(query):
             with self.driver.session() as session:
-                # If the user named a specific document but we cannot find it,
-                # return a clarification rather than silently using the wrong doc.
-                doc_terms = self._doc_name_terms(query)
-                if doc_terms:
-                    doc_id, _ = self._resolve_document_for_query_strict(session, query, tenant_id)
-                    if doc_id is None:
-                        docs = self._list_documents(session, limit=8, tenant_id=tenant_id)
-                        if docs:
-                            clar = self._exec.build_doc_choice_clarification(
-                                original_question=query,
-                                documents=docs,
-                            )
-                            return {
-                                "query": query,
-                                "strategy": "graph_rag",
-                                "mode": "needs_clarification",
-                                "original_question": query,
-                                "clarification_kind": clar.kind,
-                                "clarification_options": clar.options,
-                                "chunks": [{
-                                    "id": "clarification",
-                                    "title": "Clarification",
-                                    "text": clar.prompt,
-                                    "score": 1.0,
-                                    "related": [],
-                                }],
-                                "total_available": 1,
-                            }
-                toc_items = self._structural_toc_retrieve(session, query, tenant_id)
-            if toc_items:
-                response = self._format_response(query, toc_items, user_context=ctx)
-                response["mode"] = "structural_toc"
-                response["strategy"] = "graph_rag"
-                response["vector_seeds"] = 0
-                response["fulltext_hits"] = 0
-                response["graph_expanded"] = len(toc_items)
+                response = get_unstructured("structural_toc").retrieve(
+                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx
+                )
+            if response:
+                if tel is not None:
+                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
                 return response
 
         # Page request (figure/visual page or plain page text) — migrated to

@@ -23,6 +23,7 @@ from ..services.ranking import RankingService
 from .box import BoxStrategy
 from .page import PageStrategy
 from .subsection import SubsectionStrategy
+from .toc import TocStrategy
 
 ranking = RankingService()
 graph_seeds = GraphSeedService(ranking)
@@ -34,3 +35,4 @@ exec_ = DocumentQueryExecutor()
 register_unstructured("subsection_tree", lambda: SubsectionStrategy(document_resolver, formatter, exec_))
 register_unstructured("structural_box_list", lambda: BoxStrategy(document_resolver, formatter, exec_))
 register_unstructured("structural_page", lambda: PageStrategy(document_resolver, formatter))
+register_unstructured("structural_toc", lambda: TocStrategy(document_resolver, formatter, exec_))

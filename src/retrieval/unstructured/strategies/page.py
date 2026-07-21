@@ -27,6 +27,25 @@ from ..services.formatter import ResponseFormatter
 from ..visual_retrieval import parse_visual_intent
 
 
+def parse_page_targets(query: str) -> tuple[Optional[int], Optional[str]]:
+    """Resolve PDF page index vs printed document page label from the question.
+
+    Module-level (not a PageStrategy method) since it's pure and also needed
+    by TocStrategy (a TOC lookup can be scoped to a specific requested page).
+    """
+    pdf_page, doc_page = parse_page_number_from_query(query)
+    # Bare "page 29" → match document_page footer label, not PDF file page 29.
+    if doc_page and str(doc_page).isdigit() and pdf_page is None:
+        if re.search(r"\bpdf\b", (query or "").lower()) and re.search(
+            r"\b(?:pdf\s+page|page\s+\d+\s+(?:of|in|from)\s+(?:the\s+)?pdf)\b",
+            query or "",
+            re.I,
+        ):
+            pdf_page = int(doc_page)
+            doc_page = None
+    return pdf_page, doc_page
+
+
 class PageStrategy:
     name = "structural_page"
 
@@ -46,7 +65,7 @@ class PageStrategy:
         if is_visual_page_question(query):
             visual_items = self._structural_page_visual_retrieve(session, query, tenant_id)
             if visual_items:
-                pdf_page, doc_page = self._parse_page_targets(query)
+                pdf_page, doc_page = parse_page_targets(query)
                 response = self._formatter.format(query, visual_items, ctx=ctx)
                 if self._query_wants_all_page_visuals(query) and any(
                     (c.get("visual_content") or "").strip() for c in visual_items
@@ -103,7 +122,7 @@ class PageStrategy:
         self, session: Any, query: str, tenant_id: str = ""
     ) -> list[dict]:
         """Page figures/diagrams via stored visual_content text (ingest vision enrichment)."""
-        pdf_page, doc_page = self._parse_page_targets(query)
+        pdf_page, doc_page = parse_page_targets(query)
         if pdf_page is None and not doc_page:
             return []
 
@@ -246,20 +265,6 @@ class PageStrategy:
             return chunks[:1]
         return chunks
 
-    def _parse_page_targets(self, query: str) -> tuple[Optional[int], Optional[str]]:
-        """Resolve PDF page index vs printed document page label from the question."""
-        pdf_page, doc_page = parse_page_number_from_query(query)
-        # Bare "page 29" → match document_page footer label, not PDF file page 29.
-        if doc_page and str(doc_page).isdigit() and pdf_page is None:
-            if re.search(r"\bpdf\b", (query or "").lower()) and re.search(
-                r"\b(?:pdf\s+page|page\s+\d+\s+(?:of|in|from)\s+(?:the\s+)?pdf)\b",
-                query or "",
-                re.I,
-            ):
-                pdf_page = int(doc_page)
-                doc_page = None
-        return pdf_page, doc_page
-
     def _structural_page_retrieve(
         self, session: Any, query: str, tenant_id: str = ""
     ) -> list[dict]:
@@ -267,7 +272,7 @@ class PageStrategy:
         Fetch Page node content by pdf_page / document_page for a resolved document.
         Works for any ingested PDF with Page nodes in the graph.
         """
-        pdf_page, doc_page = self._parse_page_targets(query)
+        pdf_page, doc_page = parse_page_targets(query)
         if pdf_page is None and not doc_page:
             return []
 
