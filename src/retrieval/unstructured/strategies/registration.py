@@ -13,6 +13,7 @@ and every request.
 """
 from __future__ import annotations
 
+from ....graph.driver import get_neo4j_driver
 from ...strategy_registry import register_unstructured
 from ..executor import DocumentQueryExecutor
 from ..services.document_resolver import DocumentResolver
@@ -21,6 +22,7 @@ from ..services.graph_seeds import GraphSeedService
 from ..services.lexical import LexicalService
 from ..services.ranking import RankingService
 from .box import BoxStrategy
+from .full_hybrid import FullHybridStrategy
 from .page import PageStrategy
 from .subsection import SubsectionStrategy
 from .toc import TocStrategy
@@ -36,3 +38,7 @@ register_unstructured("subsection_tree", lambda: SubsectionStrategy(document_res
 register_unstructured("structural_box_list", lambda: BoxStrategy(document_resolver, formatter, exec_))
 register_unstructured("structural_page", lambda: PageStrategy(document_resolver, formatter))
 register_unstructured("structural_toc", lambda: TocStrategy(document_resolver, formatter, exec_))
+register_unstructured(
+    "graph_rag_hybrid",
+    lambda: FullHybridStrategy(get_neo4j_driver(), ranking, graph_seeds, lexical, formatter),
+)
