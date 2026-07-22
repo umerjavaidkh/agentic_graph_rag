@@ -32,6 +32,14 @@ Built with **Neo4j · FastAPI · LangGraph · OpenAI**.
 
 The same user session can ask *"Top 5 products by revenue in 1997"* (structured) and *"Which network deployed fellows to Greece and Kosovo?"* (unstructured, multi-hop) — an LLM router chooses `query_data` vs. `search_documents`, RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
 
+### Modular, not a monolith
+
+Most RAG repos hardcode one retrieval path and one ingestion pipeline. Here both are swappable at the component level, and retrieval strategies are individually pluggable:
+
+- **Retrieval is a strategy registry, not a fixed function.** `src/retrieval/strategy_registry.py` name-keys every retrieval strategy — 5 unstructured (`box`, `subsection`, `toc`, `page`, `full_hybrid`), 2 structured (`text2cypher`, `multistep`) — resolved by name at call time. Adding a 6th, 7th, or 10th strategy to A/B is one new class plus one registration line; nothing existing changes.
+- **Ingestion is component-swappable.** Parser (`src/document/parser_registry.py`, extension-keyed), blob store, vector store, and LLM provider are each resolved through their own factory and injected into `IngestionManager` — swap Qdrant for another vector DB, or the parser for a different backend, without touching the pipeline.
+- **Schema-driven, not domain-hardcoded.** The query router reads the live Neo4j schema (`structured_entity_summary()`) at runtime instead of hardcoding a demo domain — bring your own graph and the routing adapts.
+
 ## Architecture
 
 ```mermaid
