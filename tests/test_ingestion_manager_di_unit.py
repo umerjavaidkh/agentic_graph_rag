@@ -42,28 +42,48 @@ for _mod_name in list(sys.modules):
     if _mod_name.startswith("src.ingestion") or _mod_name.startswith("src.document"):
         del sys.modules[_mod_name]
 
-if "neo4j" not in sys.modules:
-    _stub_module("neo4j")
-if "neo4j.exceptions" not in sys.modules:
-    _stub_module("neo4j.exceptions")
-sys.modules["neo4j"].GraphDatabase = MagicMock()
-sys.modules["neo4j.exceptions"].ClientError = type("ClientError", (Exception,), {"message": "", "code": ""})
+# Always create a fresh, private stub for these and overwrite whatever's in
+# sys.modules — never conditionally reuse-then-mutate. fastapi in particular
+# is a real installed dependency: if some other test file already
+# real-imported it before this prelude runs, "stub only if absent, then
+# unconditionally set an attribute" would patch a MagicMock onto the REAL
+# fastapi module's UploadFile class in place, corrupting it for every other
+# test that runs afterward in the same process — an import-order-dependent
+# bug that only reproduces depending on which test files happen to collect
+# first. This file wants these faked regardless of what's already loaded,
+# so always replacing is both the safe and the semantically correct choice.
+_stub_module("neo4j").GraphDatabase = MagicMock()
+_stub_module("neo4j.exceptions").ClientError = type("ClientError", (Exception,), {"message": "", "code": ""})
 
-if "fastapi" not in sys.modules:
-    _stub_module("fastapi")
-sys.modules["fastapi"].UploadFile = MagicMock()
+_stub_module("fastapi").UploadFile = MagicMock()
 
-for _n in ["src.auth", "src.auth.rbac_setup"]:
-    if _n not in sys.modules:
-        _stub_module(_n)
-sys.modules["src.auth.rbac_setup"].GraphRBAC = MagicMock()
+_stub_module("src.auth")
+_stub_module("src.auth.rbac_setup").GraphRBAC = MagicMock()
 
-for _n in ["src.graph", "src.graph.constants", "src.graph.driver"]:
-    if _n not in sys.modules:
-        _stub_module(_n)
-sys.modules["src.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
-sys.modules["src.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
-sys.modules["src.graph.driver"].get_neo4j_driver = MagicMock()
+_stub_module("src.graph")
+_graph_constants = _stub_module("src.graph.constants")
+_graph_constants.DOC_REVISION_LABEL = "DocRevision"
+_graph_constants.DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
+_stub_module("src.graph.driver").get_neo4j_driver = MagicMock()
+
+_STUBBED_MODULE_NAMES = (
+    "neo4j", "neo4j.exceptions", "fastapi",
+    "src.auth.rbac_setup", "src.auth",
+    "src.graph.driver", "src.graph.constants", "src.graph",
+)
+
+
+def teardown_module(module) -> None:
+    """Remove this file's fake stand-ins once its own tests are done, so a
+    test file collected afterward gets a clean sys.modules and can import
+    the real neo4j/fastapi/src.auth/src.graph if it needs them — otherwise
+    whichever of those modules this file stubbed stays faked for every test
+    that runs later in the same pytest process, an import-order-dependent
+    failure mode that only shows up in a full-suite run, never a
+    single-file one."""
+    for _n in _STUBBED_MODULE_NAMES:
+        sys.modules.pop(_n, None)
+
 
 from src.ingestion.service import IngestionJob, IngestionManager
 from src.ingestion.job_store import InMemoryJobStore

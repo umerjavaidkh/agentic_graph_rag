@@ -79,6 +79,14 @@ class StructuredRetriever:
     def close(self) -> None:
         """No-op: driver is process-wide; use close_neo4j_driver() on shutdown."""
 
+    def clear_schema_cache(self) -> None:
+        """Force the next Text-to-Cypher call to re-introspect the graph
+        schema. Call after ingestion — SchemaProvider caches for process
+        lifetime, so new node/relationship types from a completed job would
+        otherwise stay invisible to query generation until the next
+        restart."""
+        self._schema.clear_cache()
+
     def _run_multistep(
         self,
         query: str,
