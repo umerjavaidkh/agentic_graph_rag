@@ -229,12 +229,37 @@ class IngestionManager:
 
             job.finished_at = datetime.utcnow()
             self._set_status(job, IngestionStatus.completed, "Job completed successfully")
+            self._clear_structured_query_caches()
         except Exception as exc:
             job.finished_at = datetime.utcnow()
             job.error = str(exc)
             self._set_status(job, IngestionStatus.failed, f"Job failed: {job.error}")
         finally:
             self._cleanup_job_inputs(job)
+
+    @staticmethod
+    def _clear_structured_query_caches() -> None:
+        """A completed ingestion job may add node/relationship types the
+        structured query path hasn't seen — its schema and entity-summary
+        caches are process-lifetime by design (re-querying Neo4j on every
+        request would be wasteful), so they need an explicit bust here
+        instead of silently staying stale until the next restart. Deferred
+        imports: avoids constructing the structured-retrieval singleton (and
+        its Neo4j/RBAC/LLM collaborators) as a side effect of importing this
+        module, and there's no reverse dependency either way to worry about.
+        """
+        try:
+            from ..retrieval.structured.graph import retriever as _structured_retriever
+
+            _structured_retriever.clear_schema_cache()
+        except Exception:
+            pass
+        try:
+            from ..routing import clear_structured_entity_cache
+
+            clear_structured_entity_cache()
+        except Exception:
+            pass
 
     # ── Internal helpers ───────────────────────────────────────────────────
 

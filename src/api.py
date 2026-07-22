@@ -21,6 +21,8 @@ from .auth.oidc import auth_public_config, resolve_admin_session, resolve_scoped
 from .config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
+    API_INGEST_EXECUTOR_WORKERS,
+    API_QUERY_EXECUTOR_WORKERS,
     CORPUS_SCAN_TIMEOUT,
     NEO4J_PASSWORD,
     NEO4J_URI,
@@ -58,9 +60,9 @@ app = FastAPI(title="Agentic Graph RAG API")
 ingestion_manager = IngestionManager()
 
 # Fallback executor: used only when REDIS_URL is not set (dev / single-process mode).
-_ingest_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ingest")
+_ingest_executor = ThreadPoolExecutor(max_workers=API_INGEST_EXECUTOR_WORKERS, thread_name_prefix="ingest")
 # Run sync RAG pipeline (LLM + Neo4j) off the asyncio event loop.
-_query_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="query")
+_query_executor = ThreadPoolExecutor(max_workers=API_QUERY_EXECUTOR_WORKERS, thread_name_prefix="query")
 
 
 async def _run_ingest_job_local(job_id: str) -> None:

@@ -62,6 +62,14 @@ class FullHybridStrategy:
         self._lexical = lexical
         self._formatter = formatter
         self._document_resolver = document_resolver
+        # One process-wide pool, not a fresh ThreadPoolExecutor spun up and
+        # torn down on every retrieve() call — this strategy is itself a
+        # process-wide singleton (see strategies/registration.py), so the
+        # pool can live exactly as long as it does, same lifecycle as the
+        # shared Neo4j driver. Sized for one query's own peak fan-out (up to
+        # 4 concurrent tasks: resolve+embed, then phrase/keyword/vector/
+        # fulltext) with headroom for more than one query overlapping.
+        self._pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="hybrid")
 
     def _neo4j_session_call(self, fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
         """Run a Neo4j read in its own session (safe for thread-pool parallelism)."""
@@ -103,50 +111,67 @@ class FullHybridStrategy:
         # it silently searches the whole tenant corpus. Ambiguous queries
         # still degrade to unscoped search — resolve_document_for_query
         # only returns a document when it has a clear-enough signal.
-        document_id = self._neo4j_session_call(
-            self._document_resolver.resolve_document_for_query, query, tenant_id=tenant_id
-        )[0] or ""
+        #
+        # Resolution (a Neo4j round trip) and embedding (an external API
+        # call) are independent of each other, so they run as concurrent
+        # futures on the shared pool instead of one blocking the other's
+        # start — the same pool is reused below for the phrase/keyword/
+        # vector/fulltext fetches once both are in hand.
+        pool = self._pool
+        doc_id_future = pool.submit(
+            self._neo4j_session_call,
+            self._document_resolver.resolve_document_for_query,
+            query,
+            tenant_id=tenant_id,
+        )
+        embed_future = None if skip_vector else pool.submit(self._graph_seeds.get_embedding, query)
 
-        embedding = None if skip_vector else self._graph_seeds.get_embedding(query)
+        document_id = doc_id_future.result()[0] or ""
+        embedding = None if embed_future is None else embed_future.result()
 
-        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="hybrid_seed") as pool:
-            phrase_future = pool.submit(
+        # document_id is already resolved here, so the lexical calls take
+        # it directly instead of each re-resolving it themselves — that
+        # used to cost 2 extra, fully redundant Neo4j round trips (with
+        # their own sessions) on every single query.
+        phrase_future = pool.submit(
+            self._neo4j_session_call,
+            self._lexical.structural_phrase_retrieve,
+            query,
+            tenant_id=tenant_id,
+            document_id=document_id,
+        )
+        keyword_future = pool.submit(
+            self._neo4j_session_call,
+            self._lexical.structural_keyword_retrieve,
+            query,
+            tenant_id=tenant_id,
+            document_id=document_id,
+        )
+        if skip_vector:
+            vector_future = None
+            vector_hits: list[dict] = []
+        else:
+            vector_future = pool.submit(
                 self._neo4j_session_call,
-                self._lexical.structural_phrase_retrieve,
-                query,
-                tenant_id=tenant_id,
-            )
-            keyword_future = pool.submit(
-                self._neo4j_session_call,
-                self._lexical.structural_keyword_retrieve,
-                query,
-                tenant_id=tenant_id,
-            )
-            if skip_vector:
-                vector_future = None
-                vector_hits: list[dict] = []
-            else:
-                vector_future = pool.submit(
-                    self._neo4j_session_call,
-                    self._graph_seeds.vector_seed,
-                    embedding,
-                    vector_limit,
-                    tenant_id=tenant_id,
-                    document_id=document_id,
-                )
-            fulltext_future = pool.submit(
-                self._neo4j_session_call,
-                self._graph_seeds.fulltext_seed,
-                query,
-                _FULLTEXT_LIMIT,
+                self._graph_seeds.vector_seed,
+                embedding,
+                vector_limit,
                 tenant_id=tenant_id,
                 document_id=document_id,
             )
-            phrase_hits = phrase_future.result()
-            keyword_hits = keyword_future.result()
-            if vector_future is not None:
-                vector_hits = vector_future.result()
-            fulltext_hits = fulltext_future.result()
+        fulltext_future = pool.submit(
+            self._neo4j_session_call,
+            self._graph_seeds.fulltext_seed,
+            query,
+            _FULLTEXT_LIMIT,
+            tenant_id=tenant_id,
+            document_id=document_id,
+        )
+        phrase_hits = phrase_future.result()
+        keyword_hits = keyword_future.result()
+        if vector_future is not None:
+            vector_hits = vector_future.result()
+        fulltext_hits = fulltext_future.result()
 
         lexical_hits = self._ranking._merge_retrieval_chunks(phrase_hits, keyword_hits)
         seed_ids = [h["id"] for h in vector_hits if h.get("id")]
@@ -154,26 +179,25 @@ class FullHybridStrategy:
 
         graph_hits: list[dict] = []
         if seed_ids:
-            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="hybrid_graph") as pool:
-                hop1_future = pool.submit(
-                    self._neo4j_session_call,
-                    self._graph_seeds.graph_expand,
-                    seed_ids,
-                    hops=1,
-                    limit=graph_1hop,
-                    tenant_id=tenant_id,
-                    document_id=document_id,
-                )
-                hop2_future = pool.submit(
-                    self._neo4j_session_call,
-                    self._graph_seeds.graph_expand,
-                    seed_ids,
-                    hops=2,
-                    limit=graph_2hop,
-                    document_id=document_id,
-                    tenant_id=tenant_id,
-                )
-                graph_hits = hop1_future.result() + hop2_future.result()
+            hop1_future = pool.submit(
+                self._neo4j_session_call,
+                self._graph_seeds.graph_expand,
+                seed_ids,
+                hops=1,
+                limit=graph_1hop,
+                tenant_id=tenant_id,
+                document_id=document_id,
+            )
+            hop2_future = pool.submit(
+                self._neo4j_session_call,
+                self._graph_seeds.graph_expand,
+                seed_ids,
+                hops=2,
+                limit=graph_2hop,
+                document_id=document_id,
+                tenant_id=tenant_id,
+            )
+            graph_hits = hop1_future.result() + hop2_future.result()
 
         items = self._ranking._merge_and_rank(
             query,

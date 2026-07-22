@@ -187,6 +187,15 @@ INGEST_WORKER_CONCURRENCY = int(os.environ.get("INGEST_WORKER_CONCURRENCY", "2")
 # Axis 2 — parallel NER: max simultaneous LLM calls for entity extraction.
 AXIS2_NER_CONCURRENCY = int(os.environ.get("AXIS2_NER_CONCURRENCY", "8"))
 
+# API-process thread pools (src/api.py) that run blocking work (LLM calls,
+# Neo4j reads/writes) off the asyncio event loop. Defaults match what was
+# previously hardcoded — override per deployment to match expected
+# concurrent request volume and available CPU/connection headroom.
+API_QUERY_EXECUTOR_WORKERS = int(os.environ.get("API_QUERY_EXECUTOR_WORKERS", "4"))
+# Only used when REDIS_URL is unset (dev / single-process mode) — the RQ
+# path (INGEST_WORKER_CONCURRENCY above) handles ingestion otherwise.
+API_INGEST_EXECUTOR_WORKERS = int(os.environ.get("API_INGEST_EXECUTOR_WORKERS", "2"))
+
 # Axis 2 — parallel LLM relationship pass: max simultaneous calls.
 AXIS2_LLM_PAIR_CONCURRENCY = int(os.environ.get("AXIS2_LLM_PAIR_CONCURRENCY", "6"))
 
