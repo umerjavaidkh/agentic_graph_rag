@@ -41,6 +41,22 @@ def test_score_toc_page_number_on_own_line():
     assert score_page_text_as_toc(toc) >= 0.6
 
 
+def test_score_toc_page_form_10k_index_heading():
+    # "Form 10-K Index" is a real, standard alternate TOC heading used by
+    # many actual filers (banks in particular) instead of "Table of
+    # Contents" — real text pattern from a JPMorgan 10-K.
+    toc = (
+        "Form 10-K Index\n\n"
+        "Part I\nPage\n\n"
+        "Item 1. Business.\n1\n\n"
+        "Overview\n1\n\n"
+        "Business segments\n1\n\n"
+        "Competition\n1\n\n"
+        "Supervision and regulation\n1\n\n"
+    )
+    assert score_page_text_as_toc(toc) > 0.42
+
+
 def test_outline_filters_boxes():
     assert not include_in_outline_fallback("Box 8", 2, "Section")
     assert include_in_outline_fallback("1. Introduction", 2, "Section")
