@@ -74,6 +74,7 @@ def iter_document_stream(
     parent_section_id: Optional[str] = None,
     document_id: Optional[str] = None,
     prior_context: Optional[dict] = None,
+    skip_structured_guard: bool = False,
 ) -> Iterator[str]:
     state: dict[str, Any] = {"question": resolved_question}
     if user_context is not None:
@@ -86,7 +87,12 @@ def iter_document_stream(
     if prior_context:
         state["prior_context"] = prior_context
 
-    if guard := document_agent_structured_guard(question, user_context):
+    # Skipped when called as the structured path's own low-confidence
+    # fallback (structured.py's _try_document_fallback_stream) — bouncing
+    # back to structured there would just recreate the low-confidence
+    # answer we're trying to improve on. Mirrors the non-streaming
+    # skip_structured_guard on ESGState (retrieval/unstructured/graph.py).
+    if not skip_structured_guard and (guard := document_agent_structured_guard(question, user_context)):
         if guard.get("_autofix_agent") == "structured":
             yield stream_event(type="status", phase="reroute", agent="structured", reason="misroute_autofix")
             yield from iter_structured_stream(

@@ -40,5 +40,5 @@ register_unstructured("structural_page", lambda: PageStrategy(document_resolver,
 register_unstructured("structural_toc", lambda: TocStrategy(document_resolver, formatter, exec_))
 register_unstructured(
     "graph_rag_hybrid",
-    lambda: FullHybridStrategy(get_neo4j_driver(), ranking, graph_seeds, lexical, formatter),
+    lambda: FullHybridStrategy(get_neo4j_driver(), ranking, graph_seeds, lexical, formatter, document_resolver),
 )

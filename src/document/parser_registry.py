@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Callable
 
 from ..config.settings import PDF_PARSER_BACKEND
-from .parser import LightPdfParser
+from .light.parser import LightPdfParser
 from .parser_base import DocumentParser
+from .table_aware.parser import TableAwarePdfParser
 
 _PARSER_REGISTRY: dict[str, Callable[[], DocumentParser]] = {}
 
@@ -43,3 +44,4 @@ def supported_extensions() -> set[str]:
 
 register_parser(".pdf", LightPdfParser)
 register_parser(".pdf:light", LightPdfParser)
+register_parser(".pdf:table-aware", TableAwarePdfParser)

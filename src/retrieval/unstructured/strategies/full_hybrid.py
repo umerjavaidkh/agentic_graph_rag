@@ -35,6 +35,7 @@ from ..constants import (
     _VECTOR_SEED_LIMIT,
 )
 from ..query_intent import is_enumeration_question, is_synthesis_question
+from ..services.document_resolver import DocumentResolver
 from ..services.formatter import ResponseFormatter
 from ..services.graph_seeds import GraphSeedService
 from ..services.lexical import LexicalService
@@ -53,12 +54,14 @@ class FullHybridStrategy:
         graph_seeds: GraphSeedService,
         lexical: LexicalService,
         formatter: ResponseFormatter,
+        document_resolver: DocumentResolver,
     ):
         self._driver = driver
         self._ranking = ranking
         self._graph_seeds = graph_seeds
         self._lexical = lexical
         self._formatter = formatter
+        self._document_resolver = document_resolver
 
     def _neo4j_session_call(self, fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
         """Run a Neo4j read in its own session (safe for thread-pool parallelism)."""
@@ -88,6 +91,22 @@ class FullHybridStrategy:
         mode_hint = get_feedback_routing().document_mode(query)
         skip_vector = mode_hint == "graph_rag_lexical"
 
+        # Scope vector/fulltext/graph-expand to a single document when one
+        # can be confidently resolved (explicit naming, or the query's own
+        # vocabulary is distinctive enough) — this is the terminal fallback
+        # every non-structural question reaches, and previously the only
+        # unscoped retrieval path (TOC/page/box/subsection strategies
+        # already resolve via the same DocumentResolver). A generic
+        # question ("what does Part II discuss") has no distinguishing
+        # vocabulary to bias vector similarity toward the right document on
+        # its own once more than one document is ingested, so without this
+        # it silently searches the whole tenant corpus. Ambiguous queries
+        # still degrade to unscoped search — resolve_document_for_query
+        # only returns a document when it has a clear-enough signal.
+        document_id = self._neo4j_session_call(
+            self._document_resolver.resolve_document_for_query, query, tenant_id=tenant_id
+        )[0] or ""
+
         embedding = None if skip_vector else self._graph_seeds.get_embedding(query)
 
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="hybrid_seed") as pool:
@@ -113,6 +132,7 @@ class FullHybridStrategy:
                     embedding,
                     vector_limit,
                     tenant_id=tenant_id,
+                    document_id=document_id,
                 )
             fulltext_future = pool.submit(
                 self._neo4j_session_call,
@@ -120,6 +140,7 @@ class FullHybridStrategy:
                 query,
                 _FULLTEXT_LIMIT,
                 tenant_id=tenant_id,
+                document_id=document_id,
             )
             phrase_hits = phrase_future.result()
             keyword_hits = keyword_future.result()
@@ -141,6 +162,7 @@ class FullHybridStrategy:
                     hops=1,
                     limit=graph_1hop,
                     tenant_id=tenant_id,
+                    document_id=document_id,
                 )
                 hop2_future = pool.submit(
                     self._neo4j_session_call,
@@ -148,6 +170,7 @@ class FullHybridStrategy:
                     seed_ids,
                     hops=2,
                     limit=graph_2hop,
+                    document_id=document_id,
                     tenant_id=tenant_id,
                 )
                 graph_hits = hop1_future.result() + hop2_future.result()

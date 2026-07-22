@@ -17,8 +17,8 @@ _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-import src.document.parser as parser_mod
-from src.document.parser import LightPdfParser
+import src.document.light.parser as parser_mod
+from src.document.light.parser import LightPdfParser
 
 
 def _blank_page():

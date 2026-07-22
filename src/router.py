@@ -29,6 +29,7 @@ from .routing import (
     is_structured_data_question,
     make_structured_access_denied_result,
     run_via_mcp_tool,
+    try_document_fallback,
 )
 
 
@@ -95,6 +96,21 @@ def query_data(question: str, user_context: Optional[UserContext] = None, thread
         state["user_context"] = user_context
 
     result = structured_agent.invoke(state)
+
+    fallback_used = False
+    if result.get("low_confidence"):
+        fallback = try_document_fallback(resolved["question"], user_context)
+        if fallback is not None:
+            fallback_used = True
+            result = {
+                "answer": fallback.get("answer", ""),
+                "sources": fallback.get("sources", []),
+                "strategy": fallback.get("query_type", "graph_rag"),
+                "low_confidence": False,
+                "confidence_note": None,
+                "retrieved_context": fallback.get("retrieved_context", {}),
+            }
+
     presentation = build_presentation(
         question=question,
         answer=result.get("answer", ""),
@@ -114,6 +130,8 @@ def query_data(question: str, user_context: Optional[UserContext] = None, thread
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
         "_follow_up": resolved.get("follow_up_kind") if resolved.get("use_prior") else None,
     }
+    if fallback_used:
+        out["_fallback_agent"] = "unstructured"
     tel = get_telemetry()
     if tel is not None:
         out["_telemetry"] = tel.summary()
@@ -221,12 +239,12 @@ def ask(
             and is_structured_data_question(question)
             and not _rbac_check().can_query_knowledge_area(ctx.user_id, "structured")
         ):
-            out = make_structured_access_denied_result(question, ctx)
-            if tel is not None:
-                tel.set_route("query_data", "structured_access_denied")
-                out["_telemetry"] = tel.summary()
-            clear_telemetry()
-            save_turn(thread_id, question, out)
+            # Structured access is denied outright — but the question being
+            # phrased like analytics doesn't mean the entity actually lives
+            # in the structured graph; it may only be in ingested documents,
+            # which this user's role can separately have access to. Same
+            # remedy as the low-confidence fallback in query_data(): try
+            # documents before giving up, never worse than the flat denial.
             record_audit_event(
                 event_type=AuditEventType.ACCESS_DENIED,
                 user_id=ctx.user_id,
@@ -238,6 +256,54 @@ def ask(
                 result="denied",
                 reason="rbac_denied",
             )
+            fallback = try_document_fallback(question, ctx)
+            if fallback is not None:
+                presentation = build_presentation(
+                    question=question,
+                    answer=fallback.get("answer", ""),
+                    sources=fallback.get("sources", []),
+                    retrieved_context=fallback.get("retrieved_context", {}),
+                )
+                out = {
+                    "answer": fallback.get("answer", ""),
+                    "sources": fallback.get("sources", []),
+                    "strategy": fallback.get("query_type", "graph_rag"),
+                    "agent": "unstructured",
+                    "low_confidence": False,
+                    "confidence_note": None,
+                    "presentation": presentation,
+                    "retrieved_context": fallback.get("retrieved_context", {}),
+                    "_access_level": ctx.role.value,
+                    "_fallback_agent": "unstructured",
+                }
+                if tel is not None:
+                    tel.set_route("query_data", "structured_denied_document_fallback")
+                    out["_telemetry"] = tel.summary()
+                clear_telemetry()
+                save_turn(thread_id, question, out)
+                record_audit_event(
+                    event_type=AuditEventType.QUERY,
+                    user_id=ctx.user_id,
+                    tenant_id=ctx.tenant_id,
+                    role=ctx.role.value,
+                    request_id=request_id,
+                    action=question,
+                    result="success",
+                    metadata={
+                        "route_tool": "query_data",
+                        "agent": "unstructured",
+                        "strategy": out["strategy"],
+                        "fallback_reason": "structured_rbac_denied",
+                    },
+                )
+                return out
+
+            out = make_structured_access_denied_result(question, ctx)
+            if tel is not None:
+                tel.set_route("query_data", "structured_access_denied")
+                out["_telemetry"] = tel.summary()
+            clear_telemetry()
+            save_turn(thread_id, question, out)
             return out
 
         result = run_via_mcp_tool(

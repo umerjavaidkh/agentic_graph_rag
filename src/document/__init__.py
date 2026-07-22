@@ -1,3 +1,3 @@
-from .parser import LightPdfParser
+from .light.parser import LightPdfParser
 
 __all__ = ["LightPdfParser"]

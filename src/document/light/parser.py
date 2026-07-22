@@ -13,7 +13,7 @@ import re
 
 import fitz
 
-from ..config.settings import (
+from ...config.settings import (
     PDF_ENABLE_OCR,
     PDF_ENABLE_PDFPLUMBER,
     PDF_LOW_TEXT_CHARS,
@@ -22,10 +22,10 @@ from ..config.settings import (
     PDF_OCR_LANG,
     PDF_PLUMBER_PAGE_TIMEOUT_SEC,
 )
-from ..models import DKGEdge, DKGNode, NodeType, RelType
-from .ocr import get_ocr_backend
-from .page_numbers import enrich_page_nodes
-from .patterns import (
+from ...models import DKGEdge, DKGNode, NodeType, RelType
+from ..ocr import get_ocr_backend
+from ..page_numbers import enrich_page_nodes
+from ..patterns import (
     REFERENCE_PATTERN,
     is_standalone_number,
     number_depth,
@@ -98,6 +98,8 @@ class _PdfBlock:
     source: str = "pymupdf"
     kind: str = "text"  # text | table | region
     low_confidence: bool = False
+    in_table_region: bool = False  # set only by TableAwarePdfParser; unused here
+    is_repeated_header: bool = False  # set only by TableAwarePdfParser; unused here
 
 
 @dataclass
@@ -596,19 +598,33 @@ class LightPdfParser:
                 is_chapter = bool(section_number and number_depth(section_number) == 1)
                 level = structural_level(is_chapter, title, section_number)
 
-                # Nest under the current section when depth would otherwise make them siblings.
+                # Nest a genuinely deeper numbered sub-heading under its
+                # numbered parent (e.g. "4.5.1" under "4.5") even when
+                # structural_level's own computation would otherwise put
+                # them at the same nominal level. Only fires when BOTH
+                # headings carry a real number to compare depths against —
+                # deliberately does NOT nest two consecutive non-numbered
+                # headings ("PART I" -> "PART II", "Note 1" -> "Note 2")
+                # under one another; those are siblings. An unconditional
+                # "nest whenever level <= top-of-stack" fallback used to
+                # live here, inherited unchanged from a since-removed
+                # Docling-based parser where it compensated for Docling
+                # emitting subsections at their parent's level — a quirk
+                # specific to that parser's layout model, not this one.
+                # Left in place here it forced EVERY non-numbered heading
+                # to nest one level under the previous one, producing a
+                # runaway chain as deep as the section count on any
+                # document whose real headings aren't dot-numbered.
                 if (
                     not is_chapter
                     and current_section is not None
                     and heading_stack
                     and level <= heading_stack[-1][0]
                     and heading_stack[-1][1] == current_section.id
+                    and section_number
                 ):
                     sn_parent, _ = parse_numbered_title(current_section.title)
-                    if section_number and sn_parent:
-                        if number_depth(section_number) > number_depth(sn_parent):
-                            level = heading_stack[-1][0] + 1
-                    else:
+                    if sn_parent and number_depth(section_number) > number_depth(sn_parent):
                         level = heading_stack[-1][0] + 1
 
                 parent_id = parent_id_for_level(level)

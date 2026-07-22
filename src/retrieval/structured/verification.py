@@ -36,6 +36,33 @@ _HAS_ORDER_BY = re.compile(r"\border\s+by\b", re.I)
 _HAS_LIMIT = re.compile(r"\blimit\b", re.I)
 
 
+def _is_blank_value(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (int, float)):
+        return value == 0
+    if isinstance(value, str):
+        return value.strip() == ""
+    return False
+
+
+def _is_empty_aggregate(rows: list[dict]) -> bool:
+    """True for a single row where every value is zero/None/blank.
+
+    Aggregating (SUM/AVG/COUNT-like) over zero matched base rows still
+    yields one row with a zero/null aggregate, not zero rows — Cypher (like
+    SQL) can't distinguish "nothing matched" from "genuinely zero" at that
+    point. A named-entity lookup ("Acme's total sales") that silently
+    matched nothing looks identical to a real zero unless flagged here.
+    """
+    if len(rows) != 1:
+        return False
+    row = rows[0]
+    if not row:
+        return False
+    return all(_is_blank_value(v) for v in row.values())
+
+
 def check_answer_sanity(question: str, cypher: str, rows: list[dict]) -> Optional[str]:
     """Cheap regex-only pattern-mismatch checks. Returns a reason string or None.
 
@@ -55,6 +82,15 @@ def check_answer_sanity(question: str, cypher: str, rows: list[dict]) -> Optiona
 
     if _RANK_WORDS.search(q) and not (_HAS_ORDER_BY.search(c) and _HAS_LIMIT.search(c)):
         return "Question asks for a top/highest/lowest result, but the query has no ORDER BY + LIMIT."
+
+    # Skip for explicit count questions — a literal "how many X" legitimately
+    # answering zero is common and not a sign anything went wrong.
+    if not _COUNT_WORDS.search(q) and _is_empty_aggregate(rows):
+        return (
+            "The query returned a single row with every value zero/empty — "
+            "likely no matching entity was found in the structured data, "
+            "not a genuine zero result."
+        )
 
     return None
 
@@ -132,11 +168,44 @@ def compute_confidence(
     provider,
     model: str,
 ) -> tuple[bool, Optional[str]]:
-    """low_confidence, confidence_note — the one gate structured answer paths call."""
-    cypher = chunks[0].get("cypher") if chunks else None
-    rows = [c.get("raw") for c in chunks if c.get("raw") is not None]
+    """low_confidence, confidence_note — the one gate structured answer paths call.
+
+    Text2Cypher and multistep shape `chunks` differently: Text2Cypher makes
+    one chunk per result row (`raw` is a row dict); multistep makes one
+    chunk per *plan step* (`raw` is that step's own full row list). Both are
+    normalized to a single `rows: list[dict]` representing the actual
+    answer data before running the shared sanity checks — using the last
+    chunk's cypher/rows for multistep, since the final step is the one that
+    actually produced the answer (the first step is typically just an ID
+    lookup feeding the rest of the plan).
+    """
+    cypher = chunks[-1].get("cypher") if chunks else None
+    raw_values = [c.get("raw") for c in chunks if c.get("raw") is not None]
+
+    is_multistep_shape = bool(raw_values) and isinstance(raw_values[0], list)
+    if is_multistep_shape:
+        rows = raw_values[-1] if isinstance(raw_values[-1], list) else []
+    else:
+        rows = raw_values
 
     confidence_note = check_answer_sanity(question, cypher or "", rows)
+
+    # Multistep's UNWIND-chained steps short-circuit to zero rows (rather
+    # than a fake single zero/null aggregate row) when an earlier step found
+    # no matching entity — check_answer_sanity can't see this shape, so
+    # check it here instead of teaching that shared, directly-tested
+    # function about multistep's row semantics.
+    if (
+        confidence_note is None
+        and is_multistep_shape
+        and not rows
+        and not _COUNT_WORDS.search(question or "")
+    ):
+        confidence_note = (
+            "The final planned step returned no rows — likely no matching "
+            "entity was found in the structured data, not a genuine empty result."
+        )
+
     if confidence_note is None and STRUCTURED_VERIFY_ENABLED:
         is_valid, llm_reason = verify_with_llm(
             question,

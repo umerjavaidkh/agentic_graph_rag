@@ -72,7 +72,20 @@ class RankingService:
         max_ft = max((float(h.get("score", 0.0)) for h in fulltext_hits), default=1.0) or 1.0
         for item in fulltext_hits:
             norm = float(item.get("score", 0.0)) / max_ft
-            _upsert(item, norm * 0.92, "fulltext")
+            weighted = norm * 0.92
+            # Page nodes are never embedded (only Chapter/Section get
+            # embeddings in Axis2 enrichment — see SEMANTIC_NODE_TYPES in
+            # semantic/axis2.py), so a Page can never appear in vector_hits
+            # at all, regardless of how directly it answers the question.
+            # Without this, fulltext's normalized ceiling (0.92) plus that
+            # structural exclusion means Page content routinely loses to
+            # Section-level vector/graph hits that are merely topically
+            # related, even when the Page is the one place with the actual
+            # answer (e.g. a signature page listing names no Section
+            # captures coherently). Applies to every document, not this one.
+            if item.get("node_label") == "Page":
+                weighted *= 1.3
+            _upsert(item, weighted, "fulltext")
 
         for item in graph_hits:
             seed_id = item.get("seed_id") or ""

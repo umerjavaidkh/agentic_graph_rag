@@ -39,6 +39,7 @@ from .streaming import iter_query_stream
 from .ingestion.service import IngestionManager
 from .ingestion.job_store import get_job_store
 from .ingestion.queue import enqueue_ingest, list_failed_jobs, queue_depth
+from .ingestion.validation import build_ingestion_quality_report, list_ingested_documents
 from .feedback_loop import (
     best_mode_for_question,
     build_dashboard_overview,
@@ -758,6 +759,50 @@ async def get_ingestion_job(
         skipped_duplicate=job.skipped_duplicate,
         child_job_ids=job.child_job_ids,
     )
+
+
+@app.get("/ingest/quality")
+async def list_ingestion_quality_documents(
+    tenant_id: Optional[str] = Query(None),
+    limit: int = 200,
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+):
+    """List ingested documents (ACTIVE revisions) for the quality-report picker. Admin-only."""
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+    )
+    driver = get_neo4j_driver()
+    with driver.session() as session:
+        docs = list_ingested_documents(session, tenant_id=tenant_id, limit=min(max(limit, 1), 500))
+    return docs
+
+
+@app.get("/ingest/quality/{logical_doc_id}")
+async def get_ingestion_quality_report(
+    logical_doc_id: str,
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+):
+    """
+    Cheap, LLM-free ingestion-quality report for one document (node/edge
+    counts, text/NER/embedding coverage, page continuity, orphan nodes).
+    Admin-only. Pure Cypher aggregation — no OpenAI calls, safe to call often.
+    """
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+    )
+    driver = get_neo4j_driver()
+    report = build_ingestion_quality_report(driver, logical_doc_id)
+    if not report.get("found"):
+        raise HTTPException(status_code=404, detail=f"No ingested document found for {logical_doc_id!r}")
+    return report
 
 
 @app.get("/ingest/queue/status")

@@ -108,7 +108,11 @@ def generate_node(state: ESGState):
         chunks=len(chunks),
     ):
         return _generate_document_answer(
-            question, retrieved, chunks, user_context=state.get("user_context")
+            question,
+            retrieved,
+            chunks,
+            user_context=state.get("user_context"),
+            skip_structured_guard=bool(state.get("skip_structured_guard")),
         )
 
 
@@ -118,11 +122,18 @@ def _generate_document_answer(
     chunks: list,
     *,
     user_context=None,
+    skip_structured_guard: bool = False,
 ) -> dict:
     # Misroute guard: structured-graph question sent to document agent → autofix or generic hint.
-    guard = document_agent_structured_guard(question, user_context)
-    if guard is not None:
-        return guard
+    # Skipped when called as the structured path's own low-confidence
+    # fallback (routing.try_document_fallback) — bouncing back to structured
+    # there would just recreate the low-confidence answer we're trying to
+    # improve on, an infinite ping-pong for questions that are phrased like
+    # analytics but whose entity only exists in the ingested documents.
+    if not skip_structured_guard:
+        guard = document_agent_structured_guard(question, user_context)
+        if guard is not None:
+            return guard
 
     if not chunks:
         answer = "I could not find relevant information in the ingested documents."

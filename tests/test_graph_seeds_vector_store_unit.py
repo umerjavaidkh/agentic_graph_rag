@@ -100,7 +100,7 @@ def test_vector_seed_dispatches_to_vector_store_when_backend_is_qdrant(service, 
     monkeypatch.setattr(graph_seeds_mod, "VECTOR_STORE_BACKEND", "qdrant")
     called = {}
 
-    def fake_dispatch(self, session, embedding, limit, tenant_id=""):
+    def fake_dispatch(self, session, embedding, limit, tenant_id="", document_id=""):
         called["invoked"] = True
         return ["via_vector_store"]
 

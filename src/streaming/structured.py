@@ -1,6 +1,7 @@
 """Structured agent streaming: chart/table first, then narrative tokens."""
 from __future__ import annotations
 
+import json
 from typing import Any, Iterator, Optional
 
 from ..auth.roles import UserContext
@@ -19,9 +20,45 @@ from ..retrieval.structured.graph import (
     retrieve_node,
 )
 from ..retrieval.structured.query_intent import estimate_structured_synthesis_max_tokens
-from ..retrieval.structured.verification import compute_confidence
+from ..retrieval.structured.verification import _COUNT_WORDS, compute_confidence
 from ..telemetry.pipeline import record_pipeline_step
 from .events import stream_event
+
+
+def _try_document_fallback_stream(
+    question: str, user_context: Optional[UserContext]
+) -> Optional[tuple[list[str], Iterator[str]]]:
+    """
+    Peek at document retrieval before committing to it as a fallback.
+
+    Only consumes iter_document_stream's cheap retrieval-only status event
+    first (no LLM synthesis cost yet) — if it found no usable chunks,
+    returns None so the caller keeps its original structured answer instead
+    of streaming a worse guess. Returns the small buffered event list plus
+    the rest of the generator so nothing already consumed is lost.
+    """
+    from .document import iter_document_stream  # lazy: avoids document.py <-> structured.py cycle
+
+    gen = iter_document_stream(
+        question,
+        user_context=user_context,
+        resolved_question=question,
+        skip_structured_guard=True,
+    )
+    buffered: list[str] = []
+    for line in gen:
+        buffered.append(line)
+        payload = json.loads(line)
+        if payload.get("type") == "status" and payload.get("phase") == "retrieved":
+            if not payload.get("chunks"):
+                return None
+            return buffered, gen
+        if payload.get("type") == "done":
+            # Denied / no-chunks short-circuit before a "retrieved" event.
+            if payload.get("agent") == "unstructured" and payload.get("sources"):
+                return buffered, gen
+            return None
+    return None
 
 
 def _viz_blocks_only(question: str, sources: list[dict]) -> Optional[dict]:
@@ -68,12 +105,40 @@ def iter_structured_stream(
         return
 
     if not chunks:
+        # Zero rows for a non-aggregate query — try documents before
+        # answering flatly (same root cause as the graph.py non-streaming
+        # fix: a named entity may only exist in ingested documents).
+        if not _COUNT_WORDS.search(question or ""):
+            fallback = _try_document_fallback_stream(question, user_context)
+            if fallback is not None:
+                buffered, rest = fallback
+                yield stream_event(type="status", phase="reroute", agent="unstructured", reason="structured_no_results")
+                yield from buffered
+                yield from rest
+                return
         answer = "No matching records were found in the business database for that query."
-        yield stream_event(type="done", agent="structured", answer=answer, sources=[], strategy=strategy)
+        yield stream_event(
+            type="done",
+            agent="structured",
+            answer=answer,
+            sources=[],
+            strategy=strategy,
+            low_confidence=not _COUNT_WORDS.search(question or ""),
+        )
         return
 
     denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
     if denied:
+        # RBAC denial resolved deep inside the retrieval layer, not the
+        # streaming orchestrator's own top-level pre-gate — same fallback:
+        # the question may be answerable from documents regardless.
+        fallback = _try_document_fallback_stream(question, user_context)
+        if fallback is not None:
+            buffered, rest = fallback
+            yield stream_event(type="status", phase="reroute", agent="unstructured", reason="structured_access_denied")
+            yield from buffered
+            yield from rest
+            return
         answer = (denied.get("text") or "Access denied for structured data.").strip()
         yield stream_event(type="done", agent="structured", answer=answer, sources=[], strategy=strategy)
         return
@@ -102,6 +167,18 @@ def iter_structured_stream(
     low_confidence, confidence_note = compute_confidence(
         question, chunks, provider=provider, model=STRUCTURED_MODEL
     )
+
+    if low_confidence:
+        # Known before any structured tokens are streamed — safe to try
+        # documents now and switch streams entirely if they're usable,
+        # rather than streaming a possibly-wrong structured answer first.
+        fallback = _try_document_fallback_stream(question, user_context)
+        if fallback is not None:
+            buffered, rest = fallback
+            yield stream_event(type="status", phase="reroute", agent="unstructured", reason="structured_low_confidence")
+            yield from buffered
+            yield from rest
+            return
 
     viz = _viz_blocks_only(question, chunks)
     if viz:

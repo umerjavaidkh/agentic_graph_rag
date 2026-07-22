@@ -67,6 +67,16 @@
     .result-error { color: var(--warn); }
     select { background: #334155; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.45rem 0.75rem; font-size: 0.85rem; }
     footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 1.5rem; }
+    .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
+    .tab-btn {
+      background: transparent; border: none; border-bottom: 2px solid transparent;
+      color: var(--muted); padding: 0.7rem 1rem; font-size: 0.9rem; font-weight: 700;
+      cursor: pointer; border-radius: 0;
+    }
+    .tab-btn:hover { color: var(--text); background: transparent; }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
   </style>
 </head>
 <body>
@@ -90,86 +100,113 @@
       </label>
     </div>
 
-    <div class="grid grid-4" id="kpis"></div>
+    <div class="tabs">
+      <button type="button" class="tab-btn active" id="tab-btn-overview" data-tab="overview">Feedback overview</button>
+      <button type="button" class="tab-btn" id="tab-btn-audit" data-tab="audit">Audit log</button>
+      <button type="button" class="tab-btn" id="tab-btn-ingestion" data-tab="ingestion">Ingestion quality</button>
+    </div>
 
-    <div class="grid grid-2" style="margin-top:1rem;">
+    <div class="tab-panel active" id="tab-panel-overview" data-tab="overview">
+      <div class="grid grid-4" id="kpis"></div>
+
+      <div class="grid grid-2" style="margin-top:1rem;">
+        <div class="card">
+          <h2>Label coverage</h2>
+          <div class="chart-box"><canvas id="chart-labels"></canvas></div>
+        </div>
+        <div class="card">
+          <h2>Pass rate by retrieval mode</h2>
+          <div class="chart-box"><canvas id="chart-modes"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:1rem;">
+        <h2>Probe a question</h2>
+        <div class="toolbar">
+          <input id="probe-q" placeholder="Type a question to inspect pattern stats…" />
+          <input id="probe-agent" placeholder="agent (optional)" style="max-width:140px;flex:0;" />
+          <button type="button" id="btn-probe">Inspect</button>
+        </div>
+        <pre id="probe-out" class="mono" style="white-space:pre-wrap;margin:0;color:var(--muted);"></pre>
+      </div>
+
+      <div class="card" style="margin-top:1rem;">
+        <h2>Patterns (learned buckets)</h2>
+        <div style="overflow-x:auto;">
+          <table id="tbl-patterns">
+            <thead>
+              <tr>
+                <th>Pattern</th><th>Queries</th><th>Labeled</th><th>Pass rate</th>
+                <th>Retrieval hint</th><th>Route hint</th><th>Would apply</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:1rem;">
+        <h2>Recent events</h2>
+        <div style="overflow-x:auto;">
+          <table id="tbl-events">
+            <thead>
+              <tr>
+                <th>Time</th><th>Request</th><th>Agent</th><th>Mode</th><th>Route</th>
+                <th>Outcome</th><th>Routing applied</th><th>Preview</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-panel-audit" data-tab="audit">
       <div class="card">
-        <h2>Label coverage</h2>
-        <div class="chart-box"><canvas id="chart-labels"></canvas></div>
+        <h2>Audit log</h2>
+        <div class="toolbar">
+          <input id="audit-user" placeholder="filter: user_id" style="max-width:160px;" />
+          <input id="audit-tenant" placeholder="filter: tenant_id" style="max-width:160px;" />
+          <select id="audit-type">
+            <option value="">all event types</option>
+            <option value="query">query</option>
+            <option value="access_denied">access_denied</option>
+            <option value="ingestion_submitted">ingestion_submitted</option>
+            <option value="ingestion_completed">ingestion_completed</option>
+            <option value="ingestion_failed">ingestion_failed</option>
+          </select>
+          <button type="button" id="btn-audit-refresh">Apply</button>
+          <span style="margin-left:auto;color:var(--muted);font-size:0.8rem;">admin role (dev fallback):</span>
+          <input id="audit-admin-role" placeholder="admin role" value="admin" style="max-width:100px;flex:0;" />
+        </div>
+        <div style="overflow-x:auto;">
+          <table id="tbl-audit">
+            <thead>
+              <tr>
+                <th>Time</th><th>User</th><th>Tenant</th><th>Role</th><th>Type</th>
+                <th>Resource</th><th>Action</th><th>Result</th><th>Reason</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
+    </div>
+
+    <div class="tab-panel" id="tab-panel-ingestion" data-tab="ingestion">
       <div class="card">
-        <h2>Pass rate by retrieval mode</h2>
-        <div class="chart-box"><canvas id="chart-modes"></canvas></div>
-      </div>
-    </div>
-
-    <div class="card" style="margin-top:1rem;">
-      <h2>Probe a question</h2>
-      <div class="toolbar">
-        <input id="probe-q" placeholder="Type a question to inspect pattern stats…" />
-        <input id="probe-agent" placeholder="agent (optional)" style="max-width:140px;flex:0;" />
-        <button type="button" id="btn-probe">Inspect</button>
-      </div>
-      <pre id="probe-out" class="mono" style="white-space:pre-wrap;margin:0;color:var(--muted);"></pre>
-    </div>
-
-    <div class="card" style="margin-top:1rem;">
-      <h2>Patterns (learned buckets)</h2>
-      <div style="overflow-x:auto;">
-        <table id="tbl-patterns">
-          <thead>
-            <tr>
-              <th>Pattern</th><th>Queries</th><th>Labeled</th><th>Pass rate</th>
-              <th>Retrieval hint</th><th>Route hint</th><th>Would apply</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="card" style="margin-top:1rem;">
-      <h2>Recent events</h2>
-      <div style="overflow-x:auto;">
-        <table id="tbl-events">
-          <thead>
-            <tr>
-              <th>Time</th><th>Request</th><th>Agent</th><th>Mode</th><th>Route</th>
-              <th>Outcome</th><th>Routing applied</th><th>Preview</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="card" style="margin-top:1rem;">
-      <h2>Audit log</h2>
-      <div class="toolbar">
-        <input id="audit-user" placeholder="filter: user_id" style="max-width:160px;" />
-        <input id="audit-tenant" placeholder="filter: tenant_id" style="max-width:160px;" />
-        <select id="audit-type">
-          <option value="">all event types</option>
-          <option value="query">query</option>
-          <option value="access_denied">access_denied</option>
-          <option value="ingestion_submitted">ingestion_submitted</option>
-          <option value="ingestion_completed">ingestion_completed</option>
-          <option value="ingestion_failed">ingestion_failed</option>
-        </select>
-        <button type="button" id="btn-audit-refresh">Apply</button>
-        <span style="margin-left:auto;color:var(--muted);font-size:0.8rem;">admin role (dev fallback):</span>
-        <input id="audit-admin-role" placeholder="admin role" value="admin" style="max-width:100px;flex:0;" />
-      </div>
-      <div style="overflow-x:auto;">
-        <table id="tbl-audit">
-          <thead>
-            <tr>
-              <th>Time</th><th>User</th><th>Tenant</th><th>Role</th><th>Type</th>
-              <th>Resource</th><th>Action</th><th>Result</th><th>Reason</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+        <h2>Ingestion quality</h2>
+        <p style="margin:0 0 0.75rem;color:var(--muted);font-size:0.82rem;">
+          Cheap, LLM-free per-document report — pure Cypher aggregation over the ingested graph, no OpenAI calls.
+        </p>
+        <div class="toolbar">
+          <select id="iq-doc" style="flex:1;min-width:260px;"><option value="">Loading documents…</option></select>
+          <button type="button" id="btn-iq-load">Load report</button>
+          <button type="button" id="btn-iq-refresh-list">Refresh list</button>
+          <span style="margin-left:auto;color:var(--muted);font-size:0.8rem;">admin role (dev fallback):</span>
+          <input id="iq-admin-role" placeholder="admin role" value="admin" style="max-width:100px;flex:0;" />
+        </div>
+        <div id="iq-report"><p style="color:var(--muted);font-size:0.85rem;">Pick a document and click "Load report".</p></div>
       </div>
     </div>
   </div>
@@ -349,6 +386,112 @@
       }
     }
 
+    function iqAdminParams() {
+      const params = new URLSearchParams();
+      params.set("role", document.getElementById("iq-admin-role").value.trim() || "admin");
+      return params;
+    }
+
+    async function loadIngestionDocList() {
+      const sel = document.getElementById("iq-doc");
+      sel.innerHTML = '<option value="">Loading documents…</option>';
+      try {
+        const res = await fetch("/ingest/quality?" + iqAdminParams().toString());
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || res.statusText);
+        }
+        const docs = await res.json();
+        if (!docs.length) {
+          sel.innerHTML = '<option value="">No ingested documents found</option>';
+          return;
+        }
+        sel.innerHTML = docs.map(d => {
+          const label = (d.source_filename || d.title || d.logical_doc_id) + ` (v${d.version_number ?? "?"})`;
+          return `<option value="${d.logical_doc_id}">${label}</option>`;
+        }).join("");
+      } catch (e) {
+        sel.innerHTML = '<option value="">Failed to load</option>';
+        document.getElementById("iq-report").innerHTML =
+          `<p style="color:var(--bad)">${String(e.message || e)}</p>`;
+      }
+    }
+
+    function iqPctColor(pct) {
+      if (pct >= 90) return "var(--ok)";
+      if (pct >= 60) return "var(--warn)";
+      return "var(--bad)";
+    }
+
+    function renderIngestionReport(report) {
+      const out = document.getElementById("iq-report");
+      if (!report.found) {
+        out.innerHTML = `<p style="color:var(--bad)">No ingested document found.</p>`;
+        return;
+      }
+
+      const nodeRows = Object.entries(report.node_counts).sort();
+      const edgeRows = Object.entries(report.edge_counts).sort();
+      const cov = (label, c) => `
+        <div class="card" style="padding:0.75rem 1rem;">
+          <div style="color:var(--muted);font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">${label}</div>
+          <div class="kpi" style="color:${iqPctColor(c.pct)};font-size:1.4rem;">${c.pct}%</div>
+          <div class="kpi-sub">${c.good}/${c.total}</div>
+        </div>`;
+
+      const pc = report.page_continuity;
+      const flagsHtml = report.flags.length
+        ? `<ul style="margin:0.5rem 0 0;padding-left:1.2rem;color:var(--warn);">${report.flags.map(f => `<li style="margin-bottom:0.25rem;">${f}</li>`).join("")}</ul>`
+        : `<p style="margin:0.5rem 0 0;color:var(--ok);">No anomalies flagged.</p>`;
+
+      out.innerHTML = `
+        <div class="mono" style="color:var(--muted);font-size:0.78rem;margin-bottom:0.75rem;">
+          ${report.logical_doc_id} · revision ${report.revision_id}
+        </div>
+        <div class="grid grid-4" style="margin-bottom:0.75rem;">
+          ${cov("Text coverage", report.text_coverage)}
+          ${cov("NER coverage", report.ner_coverage)}
+          ${cov("Embedding coverage", report.embedding_coverage)}
+          <div class="card" style="padding:0.75rem 1rem;">
+            <div style="color:var(--muted);font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;">Pages</div>
+            <div class="kpi" style="font-size:1.4rem;">${pc.count}</div>
+            <div class="kpi-sub">${pc.min ?? "—"}–${pc.max ?? "—"}, ${pc.gaps.length} gap(s)</div>
+          </div>
+        </div>
+        <div class="grid grid-2">
+          <div>
+            <div style="color:var(--muted);font-size:0.8rem;margin-bottom:0.35rem;">Nodes</div>
+            <table><tbody>${nodeRows.map(([k, v]) => `<tr><td>${k}</td><td class="mono">${v}</td></tr>`).join("")}</tbody></table>
+          </div>
+          <div>
+            <div style="color:var(--muted);font-size:0.8rem;margin-bottom:0.35rem;">Edges (${report.semantic_edge_count} semantic)</div>
+            <table><tbody>${edgeRows.map(([k, v]) => `<tr><td>${k}</td><td class="mono">${v}</td></tr>`).join("") || '<tr><td style="color:var(--muted)">none</td></tr>'}</tbody></table>
+          </div>
+        </div>
+        <div style="margin-top:0.75rem;">
+          <div style="color:var(--muted);font-size:0.8rem;">Orphan nodes: <span class="mono">${report.orphan_nodes}</span></div>
+          ${flagsHtml}
+        </div>
+      `;
+    }
+
+    async function loadIngestionReport() {
+      const docId = document.getElementById("iq-doc").value;
+      const out = document.getElementById("iq-report");
+      if (!docId) { out.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Pick a document first.</p>'; return; }
+      out.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Loading…</p>';
+      try {
+        const res = await fetch(`/ingest/quality/${encodeURIComponent(docId)}?` + iqAdminParams().toString());
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || res.statusText);
+        }
+        renderIngestionReport(await res.json());
+      } catch (e) {
+        out.innerHTML = `<p style="color:var(--bad)">${String(e.message || e)}</p>`;
+      }
+    }
+
     async function probeQuestion() {
       const q = document.getElementById("probe-q").value.trim();
       const agent = document.getElementById("probe-agent").value.trim();
@@ -364,6 +507,16 @@
     document.getElementById("btn-refresh").addEventListener("click", () => { loadDashboard(); loadAudit(); });
     document.getElementById("btn-probe").addEventListener("click", probeQuestion);
     document.getElementById("btn-audit-refresh").addEventListener("click", loadAudit);
+    document.getElementById("btn-iq-load").addEventListener("click", loadIngestionReport);
+    document.getElementById("btn-iq-refresh-list").addEventListener("click", loadIngestionDocList);
+
+    function switchTab(name) {
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.dataset.tab === name));
+    }
+    document.querySelectorAll(".tab-btn").forEach(btn => {
+      btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    });
     document.getElementById("auto-refresh").addEventListener("change", (e) => {
       if (e.target.checked) {
         timer = setInterval(() => { loadDashboard(); loadAudit(); }, 30000);
@@ -375,6 +528,7 @@
 
     loadDashboard();
     loadAudit();
+    loadIngestionDocList();
     timer = setInterval(() => { loadDashboard(); loadAudit(); }, 30000);
   </script>
 </body>
