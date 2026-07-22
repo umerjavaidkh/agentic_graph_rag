@@ -95,7 +95,10 @@ agentic_graph_rag/
 │   │   ├── tasks.py           # run_ingest_job() — RQ worker callable
 │   │   └── models.py          # IngestionStatus enum
 │   ├── document/
-│   │   ├── parser.py          # LightPdfParser (PyMuPDF + pdfplumber)
+│   │   ├── parser_base.py     # DocumentParser Protocol
+│   │   ├── parser_registry.py # Extension-keyed parser dispatch (.pdf:light, .pdf:table-aware)
+│   │   ├── light/parser.py    # LightPdfParser — default (PyMuPDF + pdfplumber)
+│   │   ├── table_aware/parser.py  # TableAwarePdfParser — fixes table over-segmentation
 │   │   ├── page_vision.py     # Optional vision enrichment
 │   │   └── versioning.py      # Logical doc ID, revision plans, hashing
 │   ├── exporter/exporter.py   # Neo4jExporter — UNWIND batched writes

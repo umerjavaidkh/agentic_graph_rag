@@ -4,7 +4,7 @@
 
 **One Neo4j graph. Two knowledge modes. Answers that flat RAG cannot reliably give.**
 
-Retrieval is a **strategy registry, not a fixed pipeline** — 5 unstructured + 2 structured retrieval strategies are individually pluggable and swappable at runtime, so you can add and A/B new strategies without touching existing code. Ingestion is component-swappable the same way (parser, blob store, vector store, LLM provider each behind their own factory). See [Modular, not a monolith](#modular-not-a-monolith) below.
+**Every layer is a plug-in point, not a fixed pipeline.** Parsing, ingestion, and retrieval are each built behind a real interface — `DocumentParser`, `ModelProvider`/`BlobStore`/`VectorStore`, `StructuredStrategy`/`UnstructuredStrategy` — so you can bring your own PDF parser, embedding/LLM provider, storage backend, or retrieval strategy and register it, without forking or touching existing code. Retrieval alone already ships 5 unstructured + 2 structured strategies resolved by name at runtime; parsing ships 2 (a fast default and a table-aware variant that fixes real over-segmentation bugs found on live SEC filings). See [Pluggable by design](#pluggable-by-design) below for the exact seams and how to add your own.
 
 Agentic GraphRAG keeps **structured business data** and **unstructured documents** in the same graph database, then routes each question to the right retrieval strategy — or combines both. SQL-grade analytics *and* multi-hop reasoning over PDFs/DOCX, without separate vector DBs, ETL pipelines, or ad-hoc orchestration glue.
 
@@ -34,12 +34,23 @@ Built with **Neo4j · FastAPI · LangGraph · OpenAI**.
 
 The same user session can ask *"Top 5 products by revenue in 1997"* (structured) and *"Which network deployed fellows to Greece and Kosovo?"* (unstructured, multi-hop) — an LLM router chooses `query_data` vs. `search_documents`, RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
 
-### Modular, not a monolith
+### Pluggable by design
 
-Most RAG repos hardcode one retrieval path and one ingestion pipeline. Here both are swappable at the component level, and retrieval strategies are individually pluggable:
+Most RAG repos hardcode one parser, one embedding provider, and one retrieval path. Here every one of those is a named implementation of a real interface, resolved at runtime — not a hypothetical "you could refactor this later." These are the actual seams in the code today:
 
-- **Retrieval is a strategy registry, not a fixed function.** `src/retrieval/strategy_registry.py` name-keys every retrieval strategy — 5 unstructured (`box`, `subsection`, `toc`, `page`, `full_hybrid`), 2 structured (`text2cypher`, `multistep`) — resolved by name at call time. Adding a 6th, 7th, or 10th strategy to A/B is one new class plus one registration line; nothing existing changes.
-- **Ingestion is component-swappable.** Parser (`src/document/parser_registry.py`, extension-keyed), blob store, vector store, and LLM provider are each resolved through their own factory and injected into `IngestionManager` — swap Qdrant for another vector DB, or the parser for a different backend, without touching the pipeline.
+| Seam | Interface | Registered implementations | Add your own |
+|------|-----------|------------------------------|---------------|
+| **Parsing** | `DocumentParser` Protocol — [`src/document/parser_base.py`](src/document/parser_base.py) | `LightPdfParser` (`.pdf:light`), `TableAwarePdfParser` (`.pdf:table-aware`) — [`src/document/parser_registry.py`](src/document/parser_registry.py) | Implement `parse(source) -> (nodes, edges)`, call `register_parser(".pdf:yourname", YourParser)` |
+| **Retrieval (unstructured)** | `UnstructuredStrategy` Protocol — [`src/retrieval/unstructured/strategies/base.py`](src/retrieval/unstructured/strategies/base.py) | `structural_box_list`, `subsection_tree`, `structural_toc`, `structural_page`, `graph_rag_hybrid` | Implement `retrieve(...)`, call `register_unstructured("yourname", factory)` |
+| **Retrieval (structured)** | `StructuredStrategy` Protocol — [`src/retrieval/structured/strategies/base.py`](src/retrieval/structured/strategies/base.py) | `text2cypher`, `multistep` | Implement `retrieve(...)`, call `register_structured("yourname", factory)` |
+| **LLM / embeddings** | `ModelProvider` ABC — [`src/model_providers/base.py`](src/model_providers/base.py) | `OpenAIProvider` — [`src/model_providers/factory.py`](src/model_providers/factory.py) | Implement `chat_completion`/`embeddings`, add it to `get_model_provider()` |
+| **Blob storage** | `BlobStore` ABC — [`src/storage/blob/base.py`](src/storage/blob/base.py) | Local filesystem, MinIO | Implement `put`/`get`/`delete`/`exists`, wire into `get_blob_store()` |
+| **Vector storage** | `VectorStore` ABC — [`src/storage/vector/base.py`](src/storage/vector/base.py) | In-memory, Qdrant | Implement `upsert`/`query`/`delete`, wire into `get_vector_store()` |
+
+Two consequences worth calling out:
+
+- **Parsing bugs get fixed as new strategies, not patches on the default.** `TableAwarePdfParser` was added after real ingestion-quality regressions surfaced on live SEC filings (table rows misread as headings, repeated running headers counted as chapters) — it's a second, independently-selectable implementation (`PDF_PARSER_BACKEND=table-aware`), A/B-compared against the default on the same documents before being trusted, not a silent behavior change to everyone's pipeline.
+- **Ingestion quality is measured, not assumed.** [`scripts/validate_ingestion.py`](scripts/validate_ingestion.py) and `GET /ingest/quality/{doc_id}` compute a cheap, LLM-free per-document report (text/NER/embedding coverage, orphan nodes, page continuity) straight from the ingested graph — the same tool that caught the regressions above, and how any new parser/provider gets evaluated before it's recommended.
 - **Schema-driven, not domain-hardcoded.** The query router reads the live Neo4j schema (`structured_entity_summary()`) at runtime instead of hardcoding a demo domain — bring your own graph and the routing adapts.
 
 ## Architecture
@@ -110,15 +121,18 @@ Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstruc
 | Area | Status |
 |------|--------|
 | Dual-graph RAG (structured + documents + hybrid), schema-driven routing | ✅ |
+| Pluggable parser / retrieval strategy registries (see [Pluggable by design](#pluggable-by-design)) | ✅ |
 | Scalable ingestion (Redis + RQ workers, versioning) | ✅ |
+| Ingestion-quality validation (`GET /ingest/quality`, LLM-free per-document report) | ✅ |
 | Multi-tenancy (property-based `tenant_id` isolation) | ✅ |
 | Audit log (who / what / when / result, admin API + dashboard) | ✅ |
 | Google OIDC auth, RBAC, per-user thread isolation | ✅ (`release/v1.0`) |
 | Streaming answers with charts, retrieval feedback loop | ✅ |
 | Regression eval suite (40 cases) | ✅ 40/40 |
+| 1000-document corpus validation, then a tagged release | 🚧 in progress |
 | CI (tests on push/PR) | 🚧 in progress |
 
-**Roadmap:** per-user short/long memory across threads, multi-language query & answer support, Kubernetes/Terraform deployment reference.
+**Roadmap:** validate ingestion + retrieval quality across a 1000-document real-world corpus before cutting a tagged release; per-user short/long memory across threads; multi-language query & answer support; Kubernetes/Terraform deployment reference.
 
 ## Documentation
 
