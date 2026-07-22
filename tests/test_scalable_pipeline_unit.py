@@ -111,16 +111,21 @@ sys.modules["src.auth.roles"].UserContext = MagicMock()
 sys.modules["src.auth.roles"].validate_role = MagicMock()
 
 # --- document stubs ---
+# Always create fresh fake modules here (never reuse/mutate a real
+# src.document that an earlier-collected test file may have already
+# imported) — mutating the real module's functions in place would corrupt
+# it for every other test file that runs afterward in the same pytest
+# process. Same fix as the src.auth block above.
 for _n in [
     "src.document",
     "src.document.versioning",
-    "src.document.parser",
+    "src.document.light",
+    "src.document.light.parser",
     "src.document.parser_base",
     "src.document.parser_registry",
     "src.document.page_vision",
 ]:
-    if _n not in sys.modules:
-        _stub_module(_n)
+    _stub_module(_n)
 sys.modules["src.document.parser_base"].DocumentParser = object
 sys.modules["src.document.versioning"].resolve_logical_id = MagicMock(return_value="doc_test")
 sys.modules["src.document.versioning"].build_revision_plan = MagicMock()
@@ -129,7 +134,7 @@ sys.modules["src.document.versioning"].file_content_sha256 = MagicMock(return_va
 # DocumentRevisionPlan as a simple MagicMock class (exporter.py uses it only as a type annotation)
 sys.modules["src.document.versioning"].DocumentRevisionPlan = MagicMock
 
-sys.modules["src.document.parser"].LightPdfParser = MagicMock()
+sys.modules["src.document.light.parser"].LightPdfParser = MagicMock()
 _fake_parser_instance = MagicMock()
 sys.modules["src.document.parser_registry"].get_parser = MagicMock(return_value=_fake_parser_instance)
 sys.modules["src.document.parser_registry"].supported_extensions = MagicMock(return_value={".pdf"})

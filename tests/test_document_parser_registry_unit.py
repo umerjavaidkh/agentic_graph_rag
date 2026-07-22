@@ -39,7 +39,7 @@ def parser_registry():
 
 @pytest.fixture()
 def light_pdf_parser_cls(parser_registry):
-    from src.document.parser import LightPdfParser
+    from src.document.light.parser import LightPdfParser
 
     return LightPdfParser
 
