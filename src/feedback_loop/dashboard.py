@@ -8,6 +8,14 @@ from .hints import ModeHint, best_mode_for_question
 from .models import AggregateDimension
 from .store import FeedbackStore, JsonlFeedbackStore, RedisFeedbackStore, get_feedback_store
 
+# Short, not zero: build_dashboard_overview calls best_mode_for_question
+# twice per pattern (retrieval + route hint), up to pattern_limit patterns —
+# with no caching that's up to 2 * pattern_limit real feedback-store scans
+# on every dashboard load. A few seconds of staleness is invisible to a
+# human looking at an ops dashboard but dedupes back-to-back loads (e.g.
+# auto-refresh, or two people viewing it at once) into one real scan.
+_DASHBOARD_HINT_CACHE_SEC = 5
+
 
 def _hint_dict(hint: Optional[ModeHint]) -> Optional[dict[str, Any]]:
     if hint is None:
@@ -138,7 +146,7 @@ def build_dashboard_overview(
             dimension=AggregateDimension.RETRIEVAL_MODE,
             min_samples=cfg.min_samples,
             min_margin=cfg.min_margin,
-            cache_sec=0,
+            cache_sec=_DASHBOARD_HINT_CACHE_SEC,
         )
         route_hint = best_mode_for_question(
             _pattern_probe(row["pattern"]),
@@ -146,7 +154,7 @@ def build_dashboard_overview(
             dimension=AggregateDimension.ROUTE_TOOL,
             min_samples=cfg.min_samples,
             min_margin=cfg.min_margin,
-            cache_sec=0,
+            cache_sec=_DASHBOARD_HINT_CACHE_SEC,
         )
         patterns_out.append(
             {
