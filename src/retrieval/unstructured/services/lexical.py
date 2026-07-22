@@ -7,6 +7,7 @@ RankingService (query keyword/phrase extraction) and DocumentResolver
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
@@ -23,7 +24,7 @@ class LexicalService:
         self._document_resolver = document_resolver
 
     def structural_keyword_retrieve(
-        self, session, query: str, tenant_id: str = ""
+        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
     ) -> list[dict]:
         """
         Rank nodes by how many query keywords they match, weighted by each
@@ -39,6 +40,13 @@ class LexicalService:
         document_resolver.resolve_document_for_query_strict's document
         scoring, applied here to node-level ranking instead of document
         selection.
+
+        `document_id`: pass the caller's already-resolved document id (may
+        be "" for "resolved to unscoped") to skip re-resolving it here —
+        the caller (FullHybridStrategy) already pays for one resolution
+        per query, and this ran a second, fully redundant one on every
+        call before this parameter existed. Leave unset (None) to resolve
+        internally, e.g. when called standalone.
         """
         keywords = self._ranking._content_keywords_from_query(query)
         if len(keywords) < 2:
@@ -54,7 +62,15 @@ class LexicalService:
         # ever got a chance to rank it above a false match padded with
         # extra generic-word hits.
         min_hits = 2
-        doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        if document_id is None:
+            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        else:
+            # "" means the caller resolved and got no confident match —
+            # normalize to None so _doc_scope_cypher's `$doc_id IS NULL`
+            # branch degrades to unscoped, instead of comparing every
+            # document's id against the literal empty string and matching
+            # none of them.
+            doc_id = document_id or None
 
         # Document frequency per keyword — how many scoped nodes contain it
         # at all, regardless of the min_hits threshold below.
@@ -150,16 +166,22 @@ class LexicalService:
         return f"{body}\n\n[Extracted URLs]\n{url_block}".strip()
 
     def structural_phrase_retrieve(
-        self, session, query: str, tenant_id: str = ""
+        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
     ) -> list[dict]:
         """
         Direct phrase CONTAINS search for fact/URL questions vector search often misses.
+
+        `document_id`: see structural_keyword_retrieve — same
+        skip-re-resolution contract.
         """
         phrases = self._ranking._search_phrases_from_query(query)
         if not phrases:
             return []
 
-        doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        if document_id is None:
+            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        else:
+            doc_id = document_id or None
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
