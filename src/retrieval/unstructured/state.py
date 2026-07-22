@@ -15,3 +15,4 @@ class ESGState(TypedDict, total=False):
     prior_context: Optional[Dict]
     low_confidence: bool
     confidence_note: Optional[str]
+    skip_structured_guard: bool

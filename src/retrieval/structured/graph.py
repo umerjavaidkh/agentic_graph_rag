@@ -19,7 +19,7 @@ from .query_intent import estimate_structured_synthesis_max_tokens
 from ...model_providers.factory import get_model_provider
 from .query_intent import analytics_result_limit
 from .state import StructuredState
-from .verification import compute_confidence
+from .verification import _COUNT_WORDS, compute_confidence
 
 provider = get_model_provider()
 retriever = StructuredRetriever()
@@ -137,16 +137,27 @@ def _generate_structured_answer(
         }
 
     if not chunks:
+        # Zero rows for a non-aggregate Cypher query — could be genuinely
+        # empty data, or (same root cause as the multistep/aggregate case in
+        # verification.py) a named entity that simply doesn't exist in the
+        # structured graph even though it's covered in ingested documents.
+        # Flag low-confidence (except literal count questions, where a
+        # legitimate zero is common) so the router's document fallback gets
+        # a chance before this flat answer is final.
         return {
             "answer": "No matching records were found in the business database for that query.",
-            "low_confidence": False,
+            "low_confidence": not _COUNT_WORDS.search(question or ""),
         }
 
     denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
     if denied:
+        # RBAC denial resolved deep inside the retrieval layer (Text2Cypher/
+        # multistep's own can_query check), not the router's top-level
+        # pre-gate — same remedy applies: the question may be answerable
+        # from documents even though structured access is denied.
         return {
             "answer": (denied.get("text") or "Access denied for structured data.").strip(),
-            "low_confidence": False,
+            "low_confidence": True,
         }
 
     has_error = any(c.get("id") == "error" for c in chunks)

@@ -164,15 +164,23 @@ def test_error_branch_sets_confidence_note():
     assert result["confidence_note"]
 
 
-def test_clarification_and_no_chunks_branches_are_high_confidence():
-    # These branches never reach the verification step (no Cypher/rows to
-    # check), so they're untouched — no confidence_note key at all, unlike
-    # the has_error/fast-path/LLM-synthesis branches which always set one.
+def test_clarification_branch_is_high_confidence():
+    # Never reaches the verification step (no Cypher/rows to check).
     result = _generate_structured_answer(
         {}, {"mode": "needs_clarification"}, [], "ambiguous question"
     )
     assert result["low_confidence"] is False
     assert result.get("confidence_note") is None
 
-    result2 = _generate_structured_answer({}, {}, [], "no data question")
+
+def test_no_chunks_branch_flags_low_confidence_except_count_questions():
+    # Zero rows for a non-aggregate query could mean genuinely empty data,
+    # or (same root cause as the multistep/aggregate confidence check) a
+    # named entity that only exists in ingested documents, not the
+    # structured graph — flagged so the router's document fallback gets a
+    # chance, except for a literal count question where zero is legitimate.
+    result = _generate_structured_answer({}, {}, [], "no data question")
+    assert result["low_confidence"] is True
+
+    result2 = _generate_structured_answer({}, {}, [], "how many orders were placed")
     assert result2["low_confidence"] is False

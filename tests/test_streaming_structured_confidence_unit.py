@@ -126,6 +126,10 @@ def test_fast_path_flags_low_confidence_on_rule_mismatch(monkeypatch):
     )
     monkeypatch.setattr(structured_stream_mod, "_should_fast_structured_answer", lambda chunks, strategy: True)
     monkeypatch.setattr(structured_stream_mod, "get_model_provider", lambda: MagicMock())
+    # This test is about the confidence flag itself, not the document
+    # fallback it now triggers — stub it out so low_confidence=True doesn't
+    # pull in the real unstructured retrieval stack.
+    monkeypatch.setattr(structured_stream_mod, "_try_document_fallback_stream", lambda *a, **k: None)
 
     lines = list(
         iter_structured_stream(

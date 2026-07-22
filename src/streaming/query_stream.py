@@ -9,7 +9,11 @@ from ..conversation import get_turn, save_turn
 from ..feedback_loop import maybe_record_retrieval_feedback, resolve_query_tool
 from ..presentation import build_presentation
 from ..router import _rbac_check
-from ..routing import is_structured_data_question, make_structured_access_denied_result
+from ..routing import (
+    is_structured_data_question,
+    make_structured_access_denied_result,
+    try_document_fallback,
+)
 from ..telemetry import clear_telemetry, get_telemetry, pipeline_step, start_telemetry
 from .document import (
     _build_context_text,
@@ -247,6 +251,32 @@ def iter_query_stream(
             and is_structured_data_question(question)
             and not _rbac_check().can_query_knowledge_area(ctx.user_id, "structured")
         ):
+            # Same fallback as router.ask(): the question being phrased like
+            # analytics doesn't mean the entity is actually in the structured
+            # graph — it may only be in ingested documents. No tokens have
+            # streamed yet at this point, so it's safe to try the (non-
+            # streaming) document fallback here before committing to denial.
+            doc_fallback = try_document_fallback(question, ctx)
+            if doc_fallback is not None:
+                final = _enrich_and_persist(
+                    tool_name="query_data",
+                    question=question,
+                    thread_id=thread_id,
+                    ctx=ctx,
+                    resolved=resolved,
+                    final={
+                        "type": "done",
+                        "agent": "unstructured",
+                        "answer": doc_fallback.get("answer", ""),
+                        "sources": doc_fallback.get("sources", []),
+                        "strategy": doc_fallback.get("query_type", "graph_rag"),
+                        "route_method": "structured_denied_document_fallback",
+                    },
+                    request_id=request_id,
+                )
+                yield stream_event(**final)
+                return
+
             out = make_structured_access_denied_result(question, ctx)
             if tel is not None:
                 tel.set_route("query_data", "structured_access_denied")

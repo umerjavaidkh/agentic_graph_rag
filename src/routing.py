@@ -238,6 +238,36 @@ def document_agent_structured_guard(
     }
 
 
+def try_document_fallback(
+    question: str, user_context: Optional[UserContext]
+) -> Optional[dict]:
+    """
+    When the structured path answered with low confidence, retry via
+    document search — schema-agnostic: a named entity may simply not exist
+    in the structured graph even though it's covered in ingested documents
+    (e.g. a company mentioned only in a PDF, not the business graph).
+
+    Returns the document agent's result only if it found real, confident
+    content; otherwise None, so the original (low-confidence) structured
+    answer stands rather than being replaced by a worse guess — mirrors the
+    "only take the fallback if it actually improved things" discipline used
+    for the multistep/text2cypher fallback in StructuredRetriever.retrieve().
+    """
+    from .retrieval.unstructured.graph import esg_agent
+
+    state: dict[str, Any] = {"question": question, "skip_structured_guard": True}
+    if user_context is not None:
+        state["user_context"] = user_context
+    result = esg_agent.invoke(state)
+
+    chunks = result.get("sources") or []
+    if not chunks or any(c.get("id") in ("access_denied", "error") for c in chunks):
+        return None
+    if result.get("low_confidence"):
+        return None
+    return result
+
+
 def has_document_cue(question: str) -> bool:
     """True when the question clearly references documents/PDF/sections (not business analytics)."""
     return bool(_DOC_ROUTE.search(question or ""))
