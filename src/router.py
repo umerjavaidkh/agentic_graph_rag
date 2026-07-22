@@ -4,6 +4,8 @@ router.py — Query router for structured and unstructured retrieval.
 Exposes ask() and MCP tool registry via src.bridge.
 Routing uses LLM MCP tool selection (no keyword lists).
 """
+import contextvars
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from .retrieval.unstructured.graph import esg_agent
@@ -17,6 +19,11 @@ from .feedback_loop import resolve_query_tool
 from .telemetry import clear_telemetry, get_telemetry, start_telemetry
 
 _rbac: GraphRBAC | None = None
+
+# Shared across query_hybrid calls rather than created fresh per request —
+# same reasoning as FullHybridStrategy's pool (retrieval/unstructured/
+# strategies/full_hybrid.py).
+_hybrid_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="query_hybrid")
 
 
 def _rbac_check() -> GraphRBAC:
@@ -146,8 +153,24 @@ def query_hybrid(question: str, user_context: Optional[UserContext] = None, thre
     if user_context is not None:
         state["user_context"] = user_context
 
-    doc_result = esg_agent.invoke(state)
-    data_result = structured_agent.invoke(state)
+    # esg_agent and structured_agent are independent — data_result never
+    # reads doc_result — so run them concurrently instead of back-to-back;
+    # each is its own LLM+DB round trip, so this roughly halves this mode's
+    # latency. get_telemetry()/pipeline_step() read a contextvars.ContextVar
+    # that does NOT propagate into a new thread on its own (submit() alone
+    # would silently drop one agent's telemetry, since get_telemetry()
+    # would just see the ContextVar's default None there) — copy_context()
+    # captures the current value explicitly so each submitted call sees the
+    # same Telemetry object start_telemetry() already set above. Each
+    # future gets its own copy (not one shared Context) because
+    # Context.run() forbids being entered concurrently from two threads at
+    # once.
+    doc_ctx = contextvars.copy_context()
+    data_ctx = contextvars.copy_context()
+    doc_future = _hybrid_pool.submit(doc_ctx.run, esg_agent.invoke, state)
+    data_future = _hybrid_pool.submit(data_ctx.run, structured_agent.invoke, state)
+    doc_result = doc_future.result()
+    data_result = data_future.result()
     data_pres = build_presentation(
         question=question,
         answer=data_result.get("answer", ""),
