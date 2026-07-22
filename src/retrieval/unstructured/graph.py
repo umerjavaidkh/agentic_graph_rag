@@ -8,7 +8,7 @@ from langgraph.graph import END, StateGraph
 
 import re
 
-from ...routing import document_agent_structured_guard, has_document_cue
+from ...routing import document_agent_structured_guard, has_document_cue, structured_entity_summary
 from .retriever import (
     DocumentRAGRetriever,
     is_page_question,
@@ -180,7 +180,12 @@ def _generate_document_answer(
         prompt_name = "document_synthesis"
     else:
         prompt_name = "document_default"
-    system_prompt = load_prompt(prompt_name, context=context_text, question=question)
+    system_prompt = load_prompt(
+        prompt_name,
+        context=context_text,
+        question=question,
+        structured_entities=structured_entity_summary(),
+    )
     response = provider.chat_completion(
         model=CHAT_MODEL,
         messages=[

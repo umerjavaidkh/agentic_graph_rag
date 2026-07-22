@@ -26,14 +26,71 @@ class LexicalService:
         self, session, query: str, tenant_id: str = ""
     ) -> list[dict]:
         """
-        Rank nodes by how many distinct query keywords appear in text (robust to PDF spacing).
+        Rank nodes by how many query keywords they match, weighted by each
+        keyword's rarity (inverse document frequency) within the scoped
+        document — not a flat count.
+
+        A flat count over-rewards common English words that coincidentally
+        appear in any long section of prose ("down", "across", "year") —
+        an unrelated section matching 6 generic words can outscore the one
+        page that actually answers the question but only matches 3 truly
+        distinctive terms ("quarterly", "income"). Mirrors the same IDF
+        weighting already used in
+        document_resolver.resolve_document_for_query_strict's document
+        scoring, applied here to node-level ranking instead of document
+        selection.
         """
         keywords = self._ranking._content_keywords_from_query(query)
         if len(keywords) < 2:
             return []
+        keywords = [k.lower() for k in keywords]
 
-        min_hits = max(2, min(4, len(keywords) // 3))
+        # A fixed floor, not one that scales up with query length: a node
+        # matching just 2-3 keywords should still be eligible if those few
+        # matches are highly specific (weighted ranking below sorts that
+        # correctly) — the old scaling-up floor (up to 4 for longer
+        # queries) excluded exactly this case, filtering out a real answer
+        # matching only its 3 most distinctive terms before the weighting
+        # ever got a chance to rank it above a false match padded with
+        # extra generic-word hits.
+        min_hits = 2
         doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+
+        # Document frequency per keyword — how many scoped nodes contain it
+        # at all, regardless of the min_hits threshold below.
+        freq_rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
+            MATCH (n)
+            WHERE any(l IN labels(n) WHERE l IN $labels)
+              AND coalesce(n.text, '') <> ''
+              AND (
+                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
+                OR n.id STARTS WITH d.id + '_'
+              )
+            UNWIND $keywords AS k
+            WITH k, n WHERE toLower(n.text) CONTAINS k
+            RETURN k AS keyword, count(DISTINCT n) AS df
+            """,
+            doc_id=doc_id,
+            keywords=keywords,
+            labels=list(_TEXT_NODE_LABELS),
+            tenant_id=tenant_id,
+        )
+        doc_freq = {r["keyword"]: int(r["df"]) for r in freq_rows}
+        if not doc_freq:
+            return []
+        max_df = max(doc_freq.values())
+        weight = {k: max_df / df for k, df in doc_freq.items() if df > 0}
+
+        # The weighted score is computed here in Cypher (not after fetching
+        # candidates into Python) because the candidate pool can be large
+        # (e.g. 200+ nodes matching >= min_hits keywords in a long filing) —
+        # truncating with LIMIT before ordering by relevance would silently
+        # drop the best match in Neo4j's arbitrary internal row order. Only
+        # ORDER BY ... LIMIT keeps the truncation itself relevance-informed.
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
@@ -49,31 +106,37 @@ class LexicalService:
             WITH n,
               [k IN $keywords WHERE toLower(n.text) CONTAINS k] AS matched
             WHERE size(matched) >= $min_hits
+            WITH n, matched,
+              reduce(s = 0.0, k IN matched | s + coalesce($weight[k], 0.0)) AS w
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
               coalesce(n.text, '') AS text,
-              size(matched) AS keyword_hits
-            ORDER BY keyword_hits DESC, size(coalesce(n.text, '')) ASC
+              matched,
+              w
+            ORDER BY w DESC, size(coalesce(n.text, '')) ASC
             LIMIT 6
             """,
             doc_id=doc_id,
-            keywords=[k.lower() for k in keywords],
+            keywords=keywords,
             min_hits=min_hits,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            weight=weight,
         )
 
         items: list[dict] = []
         for r in rows:
             if not r.get("id"):
                 continue
+            matched = r.get("matched") or []
+            w = float(r.get("w") or 0.0)
             title = r.get("title") or r["id"]
             items.append({
                 "id": r["id"],
                 "title": title,
                 "text": self.enrich_chunk_text_for_facts(title, r.get("text") or ""),
-                "score": 0.88 + 0.06 * int(r.get("keyword_hits") or 0),
+                "score": 0.88 + 0.06 * min(len(matched), 4) + 0.01 * min(w, 20),
                 "related": ["via:keyword_search"],
             })
         return items

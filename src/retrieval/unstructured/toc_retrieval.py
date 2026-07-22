@@ -5,7 +5,11 @@ import re
 from typing import Any, Optional
 
 _TOC_PAGE_HEADING_RE = re.compile(
-    r"(?:^|\n)\s*(?:table\s+of\s+contents?|contents)\s*(?:\n|$)",
+    # "Form 10-K Index" / "10-K Index" is a real, standard alternate TOC
+    # heading used across many actual SEC filings (banks in particular),
+    # not specific to any one filer — without it, a page using this
+    # convention instead of "Table of Contents" got zero heading credit.
+    r"(?:^|\n)\s*(?:table\s+of\s+contents?|contents|(?:form\s+)?10-?k\s+index)\s*(?:\n|$)",
     re.I | re.M,
 )
 _TOC_LINE_RE = re.compile(

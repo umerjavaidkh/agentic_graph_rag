@@ -42,6 +42,26 @@ _KEYWORD_STOP = frozenset({
     "own", "too", "very", "will", "just", "now", "these", "those", "here",
     "more", "once", "through", "until", "while", "whom", "why", "being",
     "having", "both", "few", "nor", "same",
+    # Generic directional/temporal connector words from a question's own
+    # natural phrasing ("break down across the year") rather than its
+    # actual subject matter — low information value as search keywords
+    # regardless of document domain, and IDF weighting alone doesn't
+    # reliably discount them: a formal document's real subject-matter
+    # vocabulary (e.g. "net", "income" in a financial filing) is often
+    # itself very common throughout that document, while these connector
+    # words happen to cluster in narrative/prose sections and be
+    # comparatively rarer — inverting the intended weighting rather than
+    # fixing it. "year"/"years" specifically: the actual year number
+    # (e.g. "2016") is already captured separately via date-pattern
+    # matching, so the bare word isn't needed as its own keyword. "break"
+    # is part of the same phrasal verb ("break down") as "down" above —
+    # its rarity as a literal word in formal financial prose (vs. its very
+    # common use in casual questions) makes it get an outsized IDF weight
+    # in structural_keyword_retrieve, letting one incidental match swamp
+    # several genuinely on-topic term matches (verified: JPM 10-K query
+    # "...quarterly net income break down across the year..." — "break"
+    # alone had ~5x the weight of "quarterly", the next-rarest real term).
+    "down", "across", "away", "back", "year", "years", "break",
 })
 
 _TOC_RE = re.compile(
