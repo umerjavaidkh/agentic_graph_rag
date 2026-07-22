@@ -25,7 +25,7 @@ from ..retrieval.unstructured.retriever import (
     is_visual_page_question,
 )
 from ..retrieval.unstructured.verification import compute_confidence
-from ..routing import document_agent_structured_guard
+from ..routing import document_agent_structured_guard, structured_entity_summary
 from .structured import iter_structured_stream
 from .events import stream_event
 
@@ -172,7 +172,12 @@ def iter_document_stream(
 
     context_text = _build_context_text(chunks)
     prompt_name = _document_prompt_name(question)
-    system_prompt = load_prompt(prompt_name, context=context_text, question=question)
+    system_prompt = load_prompt(
+        prompt_name,
+        context=context_text,
+        question=question,
+        structured_entities=structured_entity_summary(),
+    )
     provider = get_model_provider()
 
     yield stream_event(type="status", phase="synthesis", agent="unstructured")
