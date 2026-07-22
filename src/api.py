@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from .graph.driver import close_neo4j_driver, get_neo4j_driver
 from pydantic import BaseModel, Field
@@ -121,23 +121,24 @@ async def root():
     return RedirectResponse(url="/static/chat.html")
 
 
-@app.get("/upload", response_class=HTMLResponse)
+@app.get("/upload")
 async def upload_page():
-    html_path = Path(__file__).resolve().parent / "static" / "upload.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    # Redirect into the mounted StaticFiles app (same pattern as root())
+    # instead of reading the file off disk on every request — the old
+    # per-request read_text() blocked the event loop for real disk I/O
+    # that StaticFiles already serves with caching/conditional-GET support.
+    return RedirectResponse(url="/static/upload.html")
 
 
-@app.get("/chat", response_class=HTMLResponse)
+@app.get("/chat")
 async def chat_page():
-    html_path = Path(__file__).resolve().parent / "static" / "chat.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return RedirectResponse(url="/static/chat.html")
 
 
-@app.get("/feedback", response_class=HTMLResponse)
+@app.get("/feedback")
 async def feedback_dashboard_page():
     """Ops dashboard: feedback store, hints, and routing apply status."""
-    html_path = Path(__file__).resolve().parent / "static" / "feedback.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return RedirectResponse(url="/static/feedback.html")
 
 
 @app.get("/auth/config")
@@ -763,6 +764,12 @@ async def get_ingestion_job(
     )
 
 
+def _list_ingestion_quality_documents_sync(tenant_id: Optional[str], limit: int) -> list[dict]:
+    driver = get_neo4j_driver()
+    with driver.session() as session:
+        return list_ingested_documents(session, tenant_id=tenant_id, limit=min(max(limit, 1), 500))
+
+
 @app.get("/ingest/quality")
 async def list_ingestion_quality_documents(
     tenant_id: Optional[str] = Query(None),
@@ -777,9 +784,12 @@ async def list_ingestion_quality_documents(
         body_user_id=user_id,
         body_role=role,
     )
-    driver = get_neo4j_driver()
-    with driver.session() as session:
-        docs = list_ingested_documents(session, tenant_id=tenant_id, limit=min(max(limit, 1), 500))
+    loop = asyncio.get_running_loop()
+    # Neo4j reads are synchronous — off the event loop, same as /query, so
+    # this endpoint doesn't stall every other in-flight request while it runs.
+    docs = await loop.run_in_executor(
+        _query_executor, _list_ingestion_quality_documents_sync, tenant_id, limit
+    )
     return docs
 
 
@@ -801,7 +811,8 @@ async def get_ingestion_quality_report(
         body_role=role,
     )
     driver = get_neo4j_driver()
-    report = build_ingestion_quality_report(driver, logical_doc_id)
+    loop = asyncio.get_running_loop()
+    report = await loop.run_in_executor(_query_executor, build_ingestion_quality_report, driver, logical_doc_id)
     if not report.get("found"):
         raise HTTPException(status_code=404, detail=f"No ingested document found for {logical_doc_id!r}")
     return report
@@ -833,30 +844,7 @@ async def ingest_queue_status(
     }
 
 
-@app.post("/admin/reset-neo4j")
-async def reset_neo4j(
-    authorization: Optional[str] = Header(default=None),
-    user_id: Optional[str] = Query(None),
-    role: Optional[str] = Query(None),
-):
-    """
-    DANGEROUS: Wipes Neo4j database contents.
-
-    - Disabled by default (ALLOW_DB_RESET=true to enable)
-    - Admin role required (JWT when AUTH_ENABLED, else body role=admin)
-    """
-    if not ALLOW_DB_RESET:
-        raise HTTPException(
-            status_code=403,
-            detail="DB reset is disabled. Set ALLOW_DB_RESET=true to enable.",
-        )
-
-    resolve_admin_session(
-        authorization=authorization,
-        body_user_id=user_id,
-        body_role=role,
-    )
-
+def _reset_neo4j_sync() -> tuple[int, int]:
     driver = get_neo4j_driver()
     dropped_indexes = 0
     dropped_constraints = 0
@@ -890,6 +878,36 @@ async def reset_neo4j(
             pass
 
         session.run("MATCH (n) DETACH DELETE n").consume()
+
+    return dropped_indexes, dropped_constraints
+
+
+@app.post("/admin/reset-neo4j")
+async def reset_neo4j(
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+):
+    """
+    DANGEROUS: Wipes Neo4j database contents.
+
+    - Disabled by default (ALLOW_DB_RESET=true to enable)
+    - Admin role required (JWT when AUTH_ENABLED, else body role=admin)
+    """
+    if not ALLOW_DB_RESET:
+        raise HTTPException(
+            status_code=403,
+            detail="DB reset is disabled. Set ALLOW_DB_RESET=true to enable.",
+        )
+
+    resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+    )
+
+    loop = asyncio.get_running_loop()
+    dropped_indexes, dropped_constraints = await loop.run_in_executor(_query_executor, _reset_neo4j_sync)
 
     return {
         "status": "ok",
