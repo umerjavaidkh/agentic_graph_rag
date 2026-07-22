@@ -24,6 +24,8 @@ def query_anchor_terms(query: str) -> list[str]:
     """Proper names and dotted tokens from the user question (corpus-agnostic)."""
     terms: list[str] = []
     seen: set[str] = set()
+    q = query or ""
+    sentence_start = len(q) - len(q.lstrip())
 
     def _add(raw: str) -> None:
         for variant in (
@@ -37,13 +39,24 @@ def query_anchor_terms(query: str) -> list[str]:
                 seen.add(tl)
                 terms.append(tl)
 
-    for m in re.finditer(r"\b[A-Za-z][\w]*(?:\.[\w]+)+\b", query or ""):
+    for m in re.finditer(r"\b[A-Za-z][\w]*(?:\.[\w]+)+\b", q):
         _add(m.group(0))
 
-    for m in re.finditer(r"\b[A-Z][A-Z0-9]{2,}\b", query or ""):
+    for m in re.finditer(r"\b[A-Z][A-Z0-9]{2,}\b", q):
         _add(m.group(0))
 
-    for m in re.finditer(r"\b[A-Z][a-z][A-Za-z0-9]{2,}\b", query or ""):
+    # Capitalized-word pattern only — skip the sentence-initial word here,
+    # since natural-language questions are overwhelmingly phrased as
+    # commands ("List...", "Show...", "Describe...", "Summarize...") whose
+    # capitalization comes from sentence position, not from being a proper
+    # noun/document name. A real document name that happens to be the very
+    # first word is rarer than this false-positive class, and this mirrors
+    # the same i==0 guard document_resolver.doc_name_terms() already
+    # applies to its own capitalized-word extraction — this just makes
+    # this shared helper consistent with that existing precedent.
+    for m in re.finditer(r"\b[A-Z][a-z][A-Za-z0-9]{2,}\b", q):
+        if m.start() == sentence_start:
+            continue
         _add(m.group(0))
 
     return terms[:10]

@@ -25,10 +25,23 @@ _CONTRAST_COMPARE_RE = re.compile(
 )
 
 _KEYWORD_STOP = frozenset({
+    # Original project-specific additions.
     "what", "which", "where", "when", "that", "this", "with", "from", "into",
     "have", "been", "were", "they", "their", "there", "about", "under", "based",
     "specific", "according", "should", "would", "could", "document", "text",
     "showing", "single", "show", "build", "does", "explicitly", "detailed",
+    # Common English stopwords (3+ letters — shorter ones are already
+    # dropped by _query_keywords' length-3 regex) that were simply missing
+    # here, diluting full-text/lexical relevance scoring on every question
+    # containing them (not specific to any one document or query) — e.g.
+    # "who" and "are" were absent even though "what"/"which"/"were" were
+    # already filtered.
+    "who", "how", "are", "was", "the", "and", "but", "for", "not", "all",
+    "any", "can", "her", "him", "his", "she", "you", "your", "our", "out",
+    "off", "over", "then", "than", "such", "some", "each", "other", "only",
+    "own", "too", "very", "will", "just", "now", "these", "those", "here",
+    "more", "once", "through", "until", "while", "whom", "why", "being",
+    "having", "both", "few", "nor", "same",
 })
 
 _TOC_RE = re.compile(
