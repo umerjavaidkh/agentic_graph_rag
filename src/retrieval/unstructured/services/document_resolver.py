@@ -1,4 +1,11 @@
-"""Document RAG retriever — document resolver."""
+"""document_resolver.py — logical-document resolution, shared by retrieval strategies.
+
+Extracted from mixins/document_resolver.py (DocumentResolverMixin). Depends
+on GraphSeedService (embedding + vector-seed, used by the vector-majority
+resolution path) — constructed after GraphSeedService in the service bundle.
+Depended on by nearly every strategy (Toc, Page, Box, Subsection, Lexical,
+FullHybrid all need "which document is this question about").
+"""
 from __future__ import annotations
 
 import re
@@ -14,10 +21,14 @@ from ....graph.versioning import lifecycle_active
 from ..cypher_scope import _clean_doc_title
 from ..query_intent import KEYWORD_STOP as _KEYWORD_STOP
 from ..text_utils import _query_anchor_terms
+from .graph_seeds import GraphSeedService
 
 
-class DocumentResolverMixin:
-    def _resolve_document_for_query_strict(
+class DocumentResolver:
+    def __init__(self, graph_seeds: GraphSeedService):
+        self._graph_seeds = graph_seeds
+
+    def resolve_document_for_query_strict(
         self, session, query: str, tenant_id: str = ""
     ) -> tuple[Optional[str], Optional[str]]:
         """
@@ -38,7 +49,7 @@ class DocumentResolverMixin:
           - A title / logical-id match is treated as a very strong signal.
           - The winner must lead the runner-up clearly, else we return None.
         """
-        terms = self._doc_name_terms(query)
+        terms = self.doc_name_terms(query)
         if not terms:
             return None, None
 
@@ -120,7 +131,7 @@ class DocumentResolverMixin:
         # Revision-scoped ids look like "<logical_id>:<rev>::<...>".
         return node_id.split(":", 1)[0] or None
 
-    def _resolve_document_by_vector(
+    def resolve_document_by_vector(
         self, session, query: str, tenant_id: str = ""
     ) -> tuple[Optional[str], Optional[str]]:
         """
@@ -129,13 +140,13 @@ class DocumentResolverMixin:
         that owns a clear majority of them. No per-document or per-topic terms.
         """
         try:
-            embedding = self._get_embedding(query)
+            embedding = self._graph_seeds.get_embedding(query)
         except Exception:
             return None, None
         if not embedding:
             return None, None
 
-        seeds = self._vector_seed(session, embedding, 12, tenant_id)
+        seeds = self._graph_seeds.vector_seed(session, embedding, 12, tenant_id)
         if len(seeds) < 3:
             return None, None
 
@@ -156,10 +167,10 @@ class DocumentResolverMixin:
         if top_n < max(3, len(seeds) // 2):
             return None, None
 
-        title = self._document_title_for_logical_id(session, top_id, tenant_id)
+        title = self.document_title_for_logical_id(session, top_id, tenant_id)
         return top_id, title
 
-    def _document_title_for_logical_id(
+    def document_title_for_logical_id(
         self, session, logical_id: str, tenant_id: str = ""
     ) -> Optional[str]:
         if not logical_id:
@@ -179,19 +190,19 @@ class DocumentResolverMixin:
             return _clean_doc_title(str(row["title"]))
         return _clean_doc_title(logical_id)
 
-    def _resolve_document_for_query(
+    def resolve_document_for_query(
         self, session, query: str, tenant_id: str = ""
     ) -> tuple[Optional[str], Optional[str]]:
         """Return logical document id (preferred) and display title for doc-scoped retrieval."""
-        strict_id, strict_title = self._resolve_document_for_query_strict(session, query, tenant_id)
+        strict_id, strict_title = self.resolve_document_for_query_strict(session, query, tenant_id)
         if strict_id:
             return strict_id, strict_title
 
-        vector_id, vector_title = self._resolve_document_by_vector(session, query, tenant_id)
+        vector_id, vector_title = self.resolve_document_by_vector(session, query, tenant_id)
         if vector_id:
             return vector_id, vector_title
 
-        terms = self._document_match_terms(query)
+        terms = self.document_match_terms(query)
         lc = lifecycle_active("d")
         lc_n = lifecycle_active("n")
         if terms:
@@ -279,7 +290,7 @@ class DocumentResolverMixin:
             return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
         return None, None
 
-    def _document_match_terms(self, query: str) -> list[str]:
+    def document_match_terms(self, query: str) -> list[str]:
         terms: list[str] = list(_query_anchor_terms(query))
         for t in re.findall(r"[\w'-]{3,}", (query or "").lower()):
             if t in _KEYWORD_STOP:
@@ -290,11 +301,11 @@ class DocumentResolverMixin:
                 terms.append(t)
         return terms[:6]
 
-    def _doc_name_terms(self, query: str) -> list[str]:
+    def doc_name_terms(self, query: str) -> list[str]:
         """
         Return only the high-confidence document-name tokens from a query.
 
-        Unlike _document_match_terms (which adds generic keywords for broad matching),
+        Unlike document_match_terms (which adds generic keywords for broad matching),
         this returns anchor tokens and proper nouns from the question only.
 
         Used by the strict document resolver to avoid matching the wrong document
@@ -330,7 +341,7 @@ class DocumentResolverMixin:
 
         return terms[:6]
 
-    def _resolve_document_id(self, session, name: str, tenant_id: str = "") -> Optional[str]:
+    def resolve_document_id(self, session, name: str, tenant_id: str = "") -> Optional[str]:
         if not name:
             return None
         row = session.run(
@@ -362,7 +373,7 @@ class DocumentResolverMixin:
         ).single()
         return str(row["id"]) if row and row.get("id") else None
 
-    def _list_documents(self, session, limit: int = 5, tenant_id: str = "") -> list[dict[str, str]]:
+    def list_documents(self, session, limit: int = 5, tenant_id: str = "") -> list[dict[str, str]]:
         rows = session.run(
             f"""
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
@@ -398,4 +409,3 @@ class DocumentResolverMixin:
                 continue
             out.append({"id": str(r["id"]), "title": str(r.get("title") or r["id"])})
         return out
-

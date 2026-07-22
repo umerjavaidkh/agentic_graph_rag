@@ -1,4 +1,10 @@
-"""Document RAG retriever — ranking."""
+"""ranking.py — chunk merging, scoring, and pinning, shared by retrieval strategies.
+
+Extracted verbatim from mixins/ranking.py (RankingMixin) as part of the
+loosely-coupled retrieval refactor. Fully self-contained — no dependency on
+any other service or on `self.driver`/`self.rbac`/etc, so it's the first
+service in construction order.
+"""
 from __future__ import annotations
 
 import re
@@ -14,7 +20,7 @@ from ..query_intent import (
 from ..text_utils import _query_anchor_terms
 
 
-class RankingMixin:
+class RankingService:
     def _merge_and_rank(
         self,
         query: str,
@@ -379,4 +385,3 @@ class RankingMixin:
             hits = sum(1 for k in keywords if k in hay)
             boost *= 1.0 + min(0.45, 0.07 * hits)
         return boost
-

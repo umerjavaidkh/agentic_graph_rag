@@ -1,22 +1,81 @@
-"""Document RAG retriever — box strategy."""
+"""box.py — "Box N" heading enumeration and content-fetch strategy.
+
+Extracted from mixins/box_strategy.py (BoxStrategyMixin). Handles both box
+list ("list all box headings") and box content ("Box 5") — the two were
+already one mixin/one concern, kept as one strategy here too. Preserves the
+original mutual-exclusion behavior exactly: if the query looks like a list
+request, only the list branch is tried (never falls through to content,
+even when the list comes back empty) — matching mixins/hybrid.py's original
+`box_n is not None and not is_box_list_request(query)` guard.
+"""
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Any, Optional
 
+from ....auth.roles import UserContext
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import _doc_scope_cypher
+from ..executor import DocumentQueryExecutor
+from ..services.document_resolver import DocumentResolver
+from ..services.formatter import ResponseFormatter
 
 
-class BoxStrategyMixin:
-    def _structural_box_headings(self, session, query: str, tenant_id: str = "") -> list[dict]:
+class BoxStrategy:
+    name = "structural_box_list"
+
+    def __init__(
+        self,
+        document_resolver: DocumentResolver,
+        formatter: ResponseFormatter,
+        exec_: DocumentQueryExecutor,
+    ):
+        self._document_resolver = document_resolver
+        self._formatter = formatter
+        self._exec = exec_
+
+    def retrieve(
+        self,
+        session: Any,
+        query: str,
+        *,
+        tenant_id: str,
+        limit: int,
+        ctx: UserContext,
+    ) -> Optional[dict[str, Any]]:
+        if self._exec.is_box_list_request(query):
+            items = self._structural_box_headings(session, query, tenant_id)
+            if not items:
+                return None
+            response = self._formatter.format(query, items, ctx=ctx)
+            response["mode"] = "structural_box_list"
+            response["strategy"] = "graph_rag"
+            response["vector_seeds"] = 0
+            response["fulltext_hits"] = 0
+            response["graph_expanded"] = len(items)
+            return response
+
+        box_n = self._exec.parse_box_number(query)
+        if box_n is not None:
+            items = self._structural_box_content(session, query, box_n, tenant_id)
+            if items:
+                response = self._formatter.format(query, items, ctx=ctx)
+                response["mode"] = "structural_box_content"
+                response["strategy"] = "graph_rag"
+                response["vector_seeds"] = 0
+                response["fulltext_hits"] = 0
+                response["graph_expanded"] = len(items)
+                return response
+        return None
+
+    def _structural_box_headings(self, session: Any, query: str, tenant_id: str = "") -> list[dict]:
         """
         Enumerate Box headings (e.g. "Box 10") inside a document.
         Generic: works for any document that contains "Box <number>" in titles or text.
         """
-        doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
+        doc_id, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
@@ -69,13 +128,13 @@ class BoxStrategyMixin:
         return [found[k] for k in sorted(found.keys())]
 
     def _structural_box_content(
-        self, session, query: str, box_n: int, tenant_id: str = ""
+        self, session: Any, query: str, box_n: int, tenant_id: str = ""
     ) -> list[dict]:
         """
         Retrieve content for a specific Box N (e.g. Box 5).
         Looks for nodes whose title/text mention the box, then returns the best matches.
         """
-        doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
+        doc_id, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
         box_phrase = f"box {int(box_n)}"
         rows = session.run(
             f"""
@@ -139,14 +198,14 @@ class BoxStrategyMixin:
 
     def _box_content_from_page_text(
         self,
-        session,
+        session: Any,
         query: str,
         box_n: int,
         doc_id: Optional[str],
         tenant_id: str = "",
     ) -> list[dict]:
         """Fallback when Box sections in Neo4j only store the label (pre-fix ingest)."""
-        _, doc_title = self._resolve_document_for_query(session, query, tenant_id)
+        _, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
@@ -202,4 +261,3 @@ class BoxStrategyMixin:
                 break
             body.append(ln)
         return "\n".join(body).strip()
-

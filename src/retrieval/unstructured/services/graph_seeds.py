@@ -1,4 +1,9 @@
-"""Document RAG retriever — graph seeds."""
+"""graph_seeds.py — vector/fulltext seeding and graph expansion, shared by retrieval strategies.
+
+Extracted from mixins/graph_seeds.py (GraphSeedsMixin). Depends on
+RankingService for query-keyword/phrase extraction used in Lucene query
+building — constructed after RankingService in the service bundle.
+"""
 from __future__ import annotations
 
 from ....config.settings import EMBEDDING_MODEL, VECTOR_STORE_BACKEND
@@ -7,10 +12,14 @@ from ....graph.versioning import lifecycle_active
 from ....storage.vector.factory import get_vector_store
 from ..constants import _GRAPH_REL_TYPES, _TEXT_NODE_LABELS
 from ..model_provider import provider
+from .ranking import RankingService
 
 
-class GraphSeedsMixin:
-    def _vector_seed(
+class GraphSeedService:
+    def __init__(self, ranking: RankingService):
+        self._ranking = ranking
+
+    def vector_seed(
         self, session, embedding: list[float], limit: int, tenant_id: str = ""
     ) -> list[dict]:
         # The in-process "memory" VectorStore doesn't survive across worker/API
@@ -18,7 +27,7 @@ class GraphSeedsMixin:
         # trustworthy as the similarity-search read path; otherwise fall back
         # to Neo4j's native vector index, which dual-write keeps populated.
         if VECTOR_STORE_BACKEND == "qdrant":
-            return self._vector_seed_via_vector_store(session, embedding, limit, tenant_id)
+            return self.vector_seed_via_vector_store(session, embedding, limit, tenant_id)
         try:
             rows = session.run(
                 f"""
@@ -54,7 +63,7 @@ class GraphSeedsMixin:
         except Exception:
             return []
 
-    def _vector_seed_via_vector_store(
+    def vector_seed_via_vector_store(
         self, session, embedding: list[float], limit: int, tenant_id: str = ""
     ) -> list[dict]:
         """Similarity search against the external VectorStore, hydrated from Neo4j."""
@@ -97,8 +106,8 @@ class GraphSeedsMixin:
         except Exception:
             return []
 
-    def _fulltext_seed(self, session, query: str, limit: int, tenant_id: str = "") -> list[dict]:
-        lucene_q = self._fulltext_query(query)
+    def fulltext_seed(self, session, query: str, limit: int, tenant_id: str = "") -> list[dict]:
+        lucene_q = self.fulltext_query(query)
         if not lucene_q:
             return []
         try:
@@ -138,7 +147,7 @@ class GraphSeedsMixin:
         except Exception:
             return []
 
-    def _graph_expand(
+    def graph_expand(
         self,
         session,
         seed_ids: list[str],
@@ -222,23 +231,22 @@ class GraphSeedsMixin:
         except Exception:
             return []
 
-    def _get_embedding(self, text: str) -> list[float]:
+    def get_embedding(self, text: str) -> list[float]:
         resp = provider.embeddings(model=EMBEDDING_MODEL, input=(text or "")[:8000])
         return list(resp.data[0].embedding)
 
-    def _fulltext_query(self, question: str) -> str:
+    def fulltext_query(self, question: str) -> str:
         """Build a Lucene query from question terms (document-agnostic)."""
-        phrases = self._search_phrases_from_query(question)
+        phrases = self._ranking._search_phrases_from_query(question)
         if phrases:
             quoted = [f'"{p}"' for p in phrases[:5] if " " in p]
-            terms = self._query_keywords(question)[:6]
+            terms = self._ranking._query_keywords(question)[:6]
             parts = quoted + terms
             if parts:
                 return " OR ".join(parts)
-        keywords = self._query_keywords(question)
+        keywords = self._ranking._query_keywords(question)
         extra_stop = {"employees", "employee", "company", "corporate", "policy"}
         keywords = [k for k in keywords if k not in extra_stop][:14]
         if not keywords:
             return (question or "")[:120]
         return " OR ".join(keywords)
-

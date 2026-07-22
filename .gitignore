@@ -7,6 +7,13 @@ __pycache__/
 venv/
 .env
 
+# Terraform secrets (real API keys / passwords live here)
+*.tfvars
+*.tfvars.json
+.terraform/
+*.tfstate
+*.tfstate.*
+
 # Output and generated data
 data/assets/
 data/feedback/

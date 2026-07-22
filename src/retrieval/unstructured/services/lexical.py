@@ -1,4 +1,9 @@
-"""Document RAG retriever — lexical."""
+"""lexical.py — phrase/keyword CONTAINS retrieval, shared by retrieval strategies.
+
+Extracted from mixins/lexical.py (LexicalRetrievalMixin). Depends on
+RankingService (query keyword/phrase extraction) and DocumentResolver
+(doc-scoped search) — constructed after both in the service bundle.
+"""
 from __future__ import annotations
 
 import re
@@ -8,21 +13,27 @@ from ....graph.tenancy import tenant_filter
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import _doc_scope_cypher
 from ..text_utils import _extract_urls
+from .document_resolver import DocumentResolver
+from .ranking import RankingService
 
 
-class LexicalRetrievalMixin:
-    def _structural_keyword_retrieve(
+class LexicalService:
+    def __init__(self, ranking: RankingService, document_resolver: DocumentResolver):
+        self._ranking = ranking
+        self._document_resolver = document_resolver
+
+    def structural_keyword_retrieve(
         self, session, query: str, tenant_id: str = ""
     ) -> list[dict]:
         """
         Rank nodes by how many distinct query keywords appear in text (robust to PDF spacing).
         """
-        keywords = self._content_keywords_from_query(query)
+        keywords = self._ranking._content_keywords_from_query(query)
         if len(keywords) < 2:
             return []
 
         min_hits = max(2, min(4, len(keywords) // 3))
-        doc_id, _ = self._resolve_document_for_query(session, query, tenant_id)
+        doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
@@ -61,13 +72,13 @@ class LexicalRetrievalMixin:
             items.append({
                 "id": r["id"],
                 "title": title,
-                "text": self._enrich_chunk_text_for_facts(title, r.get("text") or ""),
+                "text": self.enrich_chunk_text_for_facts(title, r.get("text") or ""),
                 "score": 0.88 + 0.06 * int(r.get("keyword_hits") or 0),
                 "related": ["via:keyword_search"],
             })
         return items
 
-    def _enrich_chunk_text_for_facts(self, title: str, text: str) -> str:
+    def enrich_chunk_text_for_facts(self, title: str, text: str) -> str:
         body = (text or "").strip()
         urls = _extract_urls(body)
         if not urls:
@@ -75,17 +86,17 @@ class LexicalRetrievalMixin:
         url_block = "\n".join(f"- {u}" for u in urls)
         return f"{body}\n\n[Extracted URLs]\n{url_block}".strip()
 
-    def _structural_phrase_retrieve(
+    def structural_phrase_retrieve(
         self, session, query: str, tenant_id: str = ""
     ) -> list[dict]:
         """
         Direct phrase CONTAINS search for fact/URL questions vector search often misses.
         """
-        phrases = self._search_phrases_from_query(query)
+        phrases = self._ranking._search_phrases_from_query(query)
         if not phrases:
             return []
 
-        doc_id, _ = self._resolve_document_for_query(session, query, tenant_id)
+        doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
@@ -121,7 +132,7 @@ class LexicalRetrievalMixin:
             if not r.get("id"):
                 continue
             title = r.get("title") or r["id"]
-            text = self._enrich_chunk_text_for_facts(title, r.get("text") or "")
+            text = self.enrich_chunk_text_for_facts(title, r.get("text") or "")
             score = 0.9 + 0.08 * int(r.get("phrase_hits") or 0)
             if len(text) < 1200:
                 score += 0.12
@@ -136,4 +147,3 @@ class LexicalRetrievalMixin:
                 "related": ["via:phrase_search"],
             })
         return items
-

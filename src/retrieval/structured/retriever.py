@@ -19,6 +19,7 @@ from ...config.settings import (
     STRUCTURED_EMPTY_MULTISTEP_FALLBACK,
 )
 from ...graph.driver import get_neo4j_driver
+from ..strategy_registry import get_structured, register_structured
 from ...telemetry import pipeline_step
 from .cypher.generator import OpenAICypherGenerator
 from .cypher.pipeline import Text2CypherPipeline
@@ -30,6 +31,8 @@ from .policies.rbac import StructuredRbac
 from ...feedback_loop import get_feedback_routing
 from .query_intent import likely_needs_multistep_plan
 from .schema.provider import SchemaProvider
+from .strategies.multistep import MultiStepStrategy
+from .strategies.text2cypher import Text2CypherStrategy
 
 
 class StructuredRetriever:
@@ -62,6 +65,17 @@ class StructuredRetriever:
             can_query=self._rbac.can_query,
         )
 
+        # Register this instance's strategies under the same flat registry
+        # the unstructured side uses (strategy_registry). StructuredRetriever
+        # is a module-level singleton in graph.py in production, so this is
+        # a one-time registration; re-instantiating (e.g. in tests) simply
+        # re-registers with the new instance's collaborators, which is safe
+        # since they all wrap the same process-wide Neo4j driver.
+        text2cypher_strategy = Text2CypherStrategy(self._text2cypher_pipeline)
+        multistep_strategy = MultiStepStrategy(self._planner, self._multistep)
+        register_structured("text2cypher", lambda *a, **kw: text2cypher_strategy)
+        register_structured("multistep", lambda *a, **kw: multistep_strategy)
+
     def close(self) -> None:
         """No-op: driver is process-wide; use close_neo4j_driver() on shutdown."""
 
@@ -71,19 +85,16 @@ class StructuredRetriever:
         schema: str,
         user_context: UserContext,
         *,
+        limit: int = 5,
         reason: str = "gate",
-    ) -> list | None:
-        """Plan and execute multistep Cypher; return chunks or None if not applicable."""
-        with pipeline_step("structured.multistep.plan", reason=reason):
-            plan = self._planner.plan(query, schema)
-        if not plan or not plan.needs_multistep or not plan.steps:
-            return None
-        with pipeline_step(
-            "structured.multistep.execute",
-            steps=len(plan.steps),
-            reason=reason,
-        ):
-            return self._multistep.execute(plan, user_context=user_context, query=query)
+    ):
+        """Plan and execute multistep Cypher via the registered strategy; return
+        a formatted response, or None if the planner decided multistep isn't
+        applicable (no plan / no steps) — an empty-but-valid plan result is
+        still a real answer, not "not applicable"."""
+        return get_structured("multistep").retrieve(
+            query, schema=schema, ctx=user_context, limit=limit, reason=reason
+        )
 
     def retrieve(
         self,
@@ -107,25 +118,32 @@ class StructuredRetriever:
                 use_multistep = True
 
             if use_multistep:
-                chunks = self._run_multistep(query, schema, ctx, reason="gate")
-                if chunks is not None:
-                    return format_response(query, chunks, strategy="multistep")
+                response = self._run_multistep(query, schema, ctx, limit=limit, reason="gate")
+                if response is not None:
+                    return response
 
-            with pipeline_step("structured.text2cypher"):
-                chunks = self._text2cypher_pipeline.run(query, limit, user_context=ctx)
+            text2cypher_response = get_structured("text2cypher").retrieve(
+                query, schema=schema, ctx=ctx, limit=limit
+            )
+            chunks = text2cypher_response.get("chunks", [])
 
             if (
                 STRUCTURED_EMPTY_MULTISTEP_FALLBACK
                 and not chunks
                 and not any(c.get("id") == "error" for c in chunks)
             ):
-                fallback_chunks = self._run_multistep(
-                    query, schema, ctx, reason="empty_text2cypher"
+                fallback_response = self._run_multistep(
+                    query, schema, ctx, limit=limit, reason="empty_text2cypher"
                 )
-                if fallback_chunks:
-                    return format_response(query, fallback_chunks, strategy="multistep")
+                # Original behavior: only take the fallback if it actually
+                # produced non-empty chunks — an empty-but-valid fallback
+                # plan still falls through to the (also empty) text2cypher
+                # response, unlike the primary path above which accepts any
+                # valid-plan result including an empty one.
+                if fallback_response is not None and fallback_response.get("chunks"):
+                    return fallback_response
 
-            return format_response(query, chunks, strategy="text2cypher")
+            return text2cypher_response
 
     def get_schema(self) -> dict:
         schema = self._schema.fetch()

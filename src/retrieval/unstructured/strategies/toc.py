@@ -1,11 +1,22 @@
-"""Document RAG retriever — toc strategy."""
+"""toc.py — table-of-contents retrieval strategy.
+
+Extracted from mixins/toc_strategy.py (TocStrategyMixin) plus the doc-choice
+clarification logic that previously lived inline in mixins/hybrid.py's
+ladder (same split-across-files pattern as Subsection — consolidated here).
+"""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
+from ....auth.roles import UserContext
 from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
 from ..cypher_scope import _node_scope_cypher
+from ..executor import DocumentQueryExecutor
+from ..query_intent import is_toc_question
+from ..services.document_resolver import DocumentResolver
+from ..services.formatter import ResponseFormatter
+from .page import parse_page_targets
 from ..toc_retrieval import (
     format_outline_chunk,
     format_toc_chunk,
@@ -15,8 +26,72 @@ from ..toc_retrieval import (
 )
 
 
-class TocStrategyMixin:
-    def _structural_toc_retrieve(self, session, query: str, tenant_id: str = "") -> list[dict]:
+class TocStrategy:
+    name = "structural_toc"
+
+    def __init__(
+        self,
+        document_resolver: DocumentResolver,
+        formatter: ResponseFormatter,
+        exec_: DocumentQueryExecutor,
+    ):
+        self._document_resolver = document_resolver
+        self._formatter = formatter
+        self._exec = exec_
+
+    def retrieve(
+        self,
+        session: Any,
+        query: str,
+        *,
+        tenant_id: str,
+        limit: int,
+        ctx: UserContext,
+    ) -> Optional[dict[str, Any]]:
+        if not is_toc_question(query):
+            return None
+
+        # If the user named a specific document but we cannot find it,
+        # return a clarification rather than silently using the wrong doc.
+        doc_terms = self._document_resolver.doc_name_terms(query)
+        if doc_terms:
+            doc_id, _ = self._document_resolver.resolve_document_for_query_strict(session, query, tenant_id)
+            if doc_id is None:
+                docs = self._document_resolver.list_documents(session, limit=8, tenant_id=tenant_id)
+                if docs:
+                    clar = self._exec.build_doc_choice_clarification(
+                        original_question=query,
+                        documents=docs,
+                    )
+                    return {
+                        "query": query,
+                        "strategy": "graph_rag",
+                        "mode": "needs_clarification",
+                        "original_question": query,
+                        "clarification_kind": clar.kind,
+                        "clarification_options": clar.options,
+                        "chunks": [{
+                            "id": "clarification",
+                            "title": "Clarification",
+                            "text": clar.prompt,
+                            "score": 1.0,
+                            "related": [],
+                        }],
+                        "total_available": 1,
+                    }
+
+        toc_items = self._structural_toc_retrieve(session, query, tenant_id)
+        if toc_items:
+            response = self._formatter.format(query, toc_items, ctx=ctx)
+            response["mode"] = "structural_toc"
+            response["strategy"] = "graph_rag"
+            response["vector_seeds"] = 0
+            response["fulltext_hits"] = 0
+            response["graph_expanded"] = len(toc_items)
+            return response
+        return None
+
+    def _structural_toc_retrieve(self, session: Any, query: str, tenant_id: str = "") -> list[dict]:
         """
         1) TOC page text (printed/PDF page if named in query, else best-scoring early page).
         2) Section titled Table of Contents / Contents.
@@ -24,12 +99,12 @@ class TocStrategyMixin:
         """
         # Prefer strict resolution when the user named a specific document, so a
         # generic term (e.g. "all") can't rank a bigger unrelated doc above it.
-        doc_id, doc_title = self._resolve_document_for_query_strict(session, query, tenant_id)
+        doc_id, doc_title = self._document_resolver.resolve_document_for_query_strict(session, query, tenant_id)
         if doc_id is None:
-            doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
+            doc_id, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
         label = doc_title or doc_id or "ingested document"
 
-        pdf_page, doc_page = self._parse_page_targets(query)
+        pdf_page, doc_page = parse_page_targets(query)
         if pdf_page is not None or doc_page:
             page_hit = self._toc_fetch_page(
                 session, doc_id, pdf_page=pdf_page, doc_page=doc_page, tenant_id=tenant_id
@@ -74,7 +149,7 @@ class TocStrategyMixin:
 
     def _toc_fetch_page(
         self,
-        session,
+        session: Any,
         doc_id: Optional[str],
         *,
         pdf_page: Optional[int],
@@ -110,7 +185,7 @@ class TocStrategyMixin:
         return dict(row) if row else None
 
     def _toc_find_best_page(
-        self, session, doc_id: Optional[str], tenant_id: str = ""
+        self, session: Any, doc_id: Optional[str], tenant_id: str = ""
     ) -> Optional[dict]:
         rows = session.run(
             f"""
@@ -143,7 +218,7 @@ class TocStrategyMixin:
         return best
 
     def _toc_find_section(
-        self, session, doc_id: Optional[str], tenant_id: str = ""
+        self, session: Any, doc_id: Optional[str], tenant_id: str = ""
     ) -> Optional[dict]:
         rows = session.run(
             f"""
@@ -169,7 +244,7 @@ class TocStrategyMixin:
         return None
 
     def _toc_outline_fallback(
-        self, session, doc_id: Optional[str], tenant_id: str = ""
+        self, session: Any, doc_id: Optional[str], tenant_id: str = ""
     ) -> list[str]:
         rows = session.run(
             f"""
@@ -204,4 +279,3 @@ class TocStrategyMixin:
             seen.add(key)
             entries.append(title)
         return entries
-

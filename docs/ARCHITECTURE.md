@@ -32,6 +32,17 @@ See [CONFIGURATION.md](CONFIGURATION.md#retrieval-feedback-loop) for the ops UI 
 
 **Unstructured retrieval modes** (selected per question): vector similarity · full-text · graph expand from NER · TOC structural fetch · page-by-number · phrase/fact lookup (URLs, licenses).
 
+## Retrieval strategies (registry pattern)
+
+`src/retrieval/strategy_registry.py` is a flat, name-keyed registry — `register_structured`/`register_unstructured` at module load, `get_structured`/`get_unstructured` at call time — mirroring `src/document/parser_registry.py`'s extension-keyed parser dispatch. Each strategy is a standalone class with a single `retrieve(...)` method; nothing but the registry name couples a strategy to its caller.
+
+| Side | Registered strategies | Dispatched by |
+|------|------------------------|---------------|
+| Structured | `text2cypher`, `multistep` | `StructuredRetriever.retrieve()` — schema + feedback-loop routing hint decide which runs first, with fallback |
+| Unstructured | `structural_box_list`, `subsection_tree`, `structural_toc`, `structural_page`, `graph_rag_hybrid` | `HybridRetrieveMixin.hybrid_retrieve()` — question-shape checks (`is_box_list_request`, `is_toc_question`, …) pick a strategy, falling through to `graph_rag_hybrid` |
+
+Unstructured strategies share five constructor-injected services (`src/retrieval/unstructured/services/`) — `RankingService`, `GraphSeedService`, `DocumentResolver`, `LexicalService`, `ResponseFormatter` — built once in `strategies/registration.py` and passed to every strategy that needs them, instead of the mixins-with-implicit-`self`-state pattern this replaced. Adding a new strategy means writing one class and registering it — no existing strategy or dispatch code changes.
+
 ## Audit log
 
 `src/audit/` — dual-backend (Redis stream / daily JSONL) append-only event store, fire-and-forget so a write failure never blocks a real request. Records `QUERY`, `ACCESS_DENIED`, and `INGESTION_SUBMITTED` events with user, tenant, role, resource, and result. Query via `GET /audit/events` (admin-only) or the **Audit log** panel on `/feedback`. Defaults **on** — see [CONFIGURATION.md](CONFIGURATION.md).
@@ -90,15 +101,19 @@ agentic_graph_rag/
 │   ├── exporter/exporter.py   # Neo4jExporter — UNWIND batched writes
 │   ├── semantic/axis2.py      # Axis 2 (parallel NER + LLM relationship pass)
 │   ├── retrieval/
-│   │   ├── unstructured/        # DocumentRAGRetriever (facade + mixins)
-│   │   │   ├── retriever.py     # Public API + backward-compat exports
-│   │   │   ├── mixins/          # hybrid, graph_seeds, ranking, lexical, TOC/page/box strategies
-│   │   │   ├── query_intent.py  # Question-shape routing (TOC, page, synthesis, …)
+│   │   ├── strategy_registry.py   # Name-keyed registry shared by both sides
+│   │   ├── unstructured/          # DocumentRAGRetriever (thin facade)
+│   │   │   ├── retriever.py       # Public API + backward-compat exports
+│   │   │   ├── mixins/hybrid.py   # Dispatch only: question-shape → registered strategy
+│   │   │   ├── strategies/        # box, subsection, toc, page, full_hybrid (+ base Protocol, registration)
+│   │   │   ├── services/          # ranking, graph_seeds, document_resolver, lexical, formatter
+│   │   │   ├── query_intent.py    # Question-shape routing (TOC, page, synthesis, …)
 │   │   │   ├── toc_retrieval.py, visual_retrieval.py, executor.py
-│   │   └── structured/          # StructuredRetriever (facade)
+│   │   └── structured/            # StructuredRetriever (facade)
 │   │       ├── retriever.py
-│   │       ├── cypher/          # generate, validate, repair, pipeline, tenant_injection
-│   │       ├── multistep/       # planner, executor, context
+│   │       ├── strategies/        # text2cypher, multistep (+ base Protocol)
+│   │       ├── cypher/            # generate, validate, repair, pipeline, tenant_injection
+│   │       ├── multistep/         # planner, executor, context
 │   │       ├── schema/ · policies/ · formatting/
 │   ├── graph/                  # Neo4j constants, lifecycle helpers, tenancy
 │   ├── audit/                  # Audit event store + recorder (Redis / JSONL)

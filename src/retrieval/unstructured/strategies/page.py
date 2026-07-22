@@ -1,19 +1,99 @@
-"""Document RAG retriever — page strategy."""
+"""page.py — PDF/printed page text and page-visual (figure/image) retrieval strategy.
+
+Extracted from mixins/page_strategy.py (PageStrategyMixin). Handles both
+page-visual and plain page-text retrieval — the two were already one
+mixin/one concern, kept as one strategy here too. Preserves the original
+independent-check behavior exactly: `is_visual_page_question` and
+`is_page_question` are checked unconditionally in sequence (not if/elif),
+matching mixins/hybrid.py's original two separate if-blocks — a query that
+matches the visual check but returns no hits still falls through to the
+plain-page check, it does not short-circuit like Box's list/content split.
+"""
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Any, Optional
 
+from ....auth.roles import UserContext
 from ....document.page_numbers import parse_page_number_from_query
 from ....document.page_vision import compact_visual_content
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
 from ..cypher_scope import _doc_scope_cypher
 from ..query_intent import FIG_CAPTION_RE as _FIG_CAPTION_RE
+from ..query_intent import is_page_question, is_visual_page_question
+from ..services.document_resolver import DocumentResolver
+from ..services.formatter import ResponseFormatter
 from ..visual_retrieval import parse_visual_intent
 
 
-class PageStrategyMixin:
+def parse_page_targets(query: str) -> tuple[Optional[int], Optional[str]]:
+    """Resolve PDF page index vs printed document page label from the question.
+
+    Module-level (not a PageStrategy method) since it's pure and also needed
+    by TocStrategy (a TOC lookup can be scoped to a specific requested page).
+    """
+    pdf_page, doc_page = parse_page_number_from_query(query)
+    # Bare "page 29" → match document_page footer label, not PDF file page 29.
+    if doc_page and str(doc_page).isdigit() and pdf_page is None:
+        if re.search(r"\bpdf\b", (query or "").lower()) and re.search(
+            r"\b(?:pdf\s+page|page\s+\d+\s+(?:of|in|from)\s+(?:the\s+)?pdf)\b",
+            query or "",
+            re.I,
+        ):
+            pdf_page = int(doc_page)
+            doc_page = None
+    return pdf_page, doc_page
+
+
+class PageStrategy:
+    name = "structural_page"
+
+    def __init__(self, document_resolver: DocumentResolver, formatter: ResponseFormatter):
+        self._document_resolver = document_resolver
+        self._formatter = formatter
+
+    def retrieve(
+        self,
+        session: Any,
+        query: str,
+        *,
+        tenant_id: str,
+        limit: int,
+        ctx: UserContext,
+    ) -> Optional[dict[str, Any]]:
+        if is_visual_page_question(query):
+            visual_items = self._structural_page_visual_retrieve(session, query, tenant_id)
+            if visual_items:
+                pdf_page, doc_page = parse_page_targets(query)
+                response = self._formatter.format(query, visual_items, ctx=ctx)
+                if self._query_wants_all_page_visuals(query) and any(
+                    (c.get("visual_content") or "").strip() for c in visual_items
+                ):
+                    response["mode"] = "page_visual_list"
+                else:
+                    response["mode"] = "structural_page_visual"
+                response["pdf_page"] = pdf_page
+                response["document_page"] = doc_page
+                response["strategy"] = "graph_rag"
+                response["vector_seeds"] = 0
+                response["fulltext_hits"] = 0
+                response["graph_expanded"] = len(visual_items)
+                return response
+
+        if is_page_question(query):
+            page_items = self._structural_page_retrieve(session, query, tenant_id)
+            if page_items:
+                response = self._formatter.format(query, page_items, ctx=ctx)
+                response["mode"] = "structural_page"
+                response["strategy"] = "graph_rag"
+                response["vector_seeds"] = 0
+                response["fulltext_hits"] = 0
+                response["graph_expanded"] = len(page_items)
+                return response
+
+        return None
+
     @staticmethod
     def _extract_figure_captions(page_text: str) -> dict[str, str]:
         """Map document figure number → caption line from page OCR text."""
@@ -39,15 +119,15 @@ class PageStrategyMixin:
         return parse_visual_intent(query).list_all
 
     def _structural_page_visual_retrieve(
-        self, session, query: str, tenant_id: str = ""
+        self, session: Any, query: str, tenant_id: str = ""
     ) -> list[dict]:
         """Page figures/diagrams via stored visual_content text (ingest vision enrichment)."""
-        pdf_page, doc_page = self._parse_page_targets(query)
+        pdf_page, doc_page = parse_page_targets(query)
         if pdf_page is None and not doc_page:
             return []
 
         list_all_visuals = self._query_wants_all_page_visuals(query)
-        doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
+        doc_id, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
@@ -185,32 +265,18 @@ class PageStrategyMixin:
             return chunks[:1]
         return chunks
 
-    def _parse_page_targets(self, query: str) -> tuple[Optional[int], Optional[str]]:
-        """Resolve PDF page index vs printed document page label from the question."""
-        pdf_page, doc_page = parse_page_number_from_query(query)
-        # Bare "page 29" → match document_page footer label, not PDF file page 29.
-        if doc_page and str(doc_page).isdigit() and pdf_page is None:
-            if re.search(r"\bpdf\b", (query or "").lower()) and re.search(
-                r"\b(?:pdf\s+page|page\s+\d+\s+(?:of|in|from)\s+(?:the\s+)?pdf)\b",
-                query or "",
-                re.I,
-            ):
-                pdf_page = int(doc_page)
-                doc_page = None
-        return pdf_page, doc_page
-
     def _structural_page_retrieve(
-        self, session, query: str, tenant_id: str = ""
+        self, session: Any, query: str, tenant_id: str = ""
     ) -> list[dict]:
         """
         Fetch Page node content by pdf_page / document_page for a resolved document.
         Works for any ingested PDF with Page nodes in the graph.
         """
-        pdf_page, doc_page = self._parse_page_targets(query)
+        pdf_page, doc_page = parse_page_targets(query)
         if pdf_page is None and not doc_page:
             return []
 
-        doc_id, doc_title = self._resolve_document_for_query(session, query, tenant_id)
+        doc_id, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
@@ -296,4 +362,3 @@ class PageStrategyMixin:
             "score": 1.0,
             "related": ["via:structural_page"],
         }]
-
