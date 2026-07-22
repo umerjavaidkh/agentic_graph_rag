@@ -32,11 +32,10 @@ _TEXT_ONLY = re.compile(
     r"\b(?:text\s+only|only\s+text|no\s+image|without\s+image|don'?t\s+show\s+image)\b",
     re.I,
 )
-_PERCENT_PATTERN = re.compile(
-    r"(\d+(?:\.\d+)?)\s*%|(\d+(?:\.\d+)?)\s*percent",
-    re.I,
-)
 _PIPE_TABLE_ROW = re.compile(r"^\s*\|.+\|\s*$")
+_LABELED_PERCENT_ITEM_RE = re.compile(
+    r"\*\*(?P<label>[^*]{2,80})\*\*\s*:?\s*[^%\n]{0,120}?(?P<value>\d+(?:\.\d+)?)\s*%",
+)
 
 
 def wants_page_visual(question: str) -> bool:
@@ -83,19 +82,31 @@ def _extract_markdown_tables(text: str) -> list[dict]:
 
 
 def _extract_chart_from_text(text: str) -> Optional[dict]:
-    matches = _PERCENT_PATTERN.findall(text)
-    values: list[float] = []
-    for a, b in matches:
-        raw = a or b
-        if raw:
-            values.append(float(raw))
-    if len(values) < 2:
+    """Build a bar chart only from genuinely labeled values — a bold label
+    immediately paired with a percentage, e.g. "**CET1 Capital Ratio**:
+    4.5%". A bare scan for "any N%" appearing anywhere in narrative prose
+    (the previous approach) has no real label for each number, so it fell
+    back to meaningless "Item 1"/"Item 2" placeholders — a chart nobody
+    can read, generated from unrelated figures scattered across a prose
+    answer explaining several different concepts, not a real comparison
+    dataset. Requiring a paired label means: no real label, no chart,
+    rather than a chart with fake ones.
+    """
+    labeled: list[tuple[str, float]] = []
+    seen: set[str] = set()
+    for m in _LABELED_PERCENT_ITEM_RE.finditer(text):
+        label = m.group("label").strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        labeled.append((label, float(m.group("value"))))
+    if len(labeled) < 2:
         return None
-    labels = [f"Item {i + 1}" for i in range(len(values))]
+    labeled = labeled[:12]
     return {
         "chartType": "bar",
-        "labels": labels[:12],
-        "values": values[:12],
+        "labels": [l for l, _ in labeled],
+        "values": [v for _, v in labeled],
         "title": "Values from answer",
     }
 
@@ -312,15 +323,22 @@ def build_presentation(
     )
 
     table_blocks = _table_blocks_from_answer(answer)
-    blocks.extend(table_blocks)
 
-    if agent != "structured" and not _has_tabular_sources(sources):
+    chart_blocks: list[dict] = []
+    if agent != "structured" and not _has_tabular_sources(sources) and not table_blocks:
         chart_blocks = _chart_blocks_from_answer(answer)
-        if chart_blocks and not table_blocks:
-            blocks.extend(chart_blocks)
 
-    if not blocks:
-        blocks.append(_markdown_block(answer, bool(table_blocks)))
+    # The synthesized answer text is always shown — a chart/table is a
+    # supplement, never a silent replacement. Previously this markdown
+    # block was only appended when `blocks` was still empty, so extracting
+    # a chart or table from the answer would make the real text answer
+    # vanish from the response entirely (not just visually de-emphasized —
+    # absent from presentation.blocks), while the chart above it was
+    # frequently the more misleading of the two (see
+    # _extract_chart_from_text's docstring).
+    blocks.append(_markdown_block(answer, bool(table_blocks)))
+    blocks.extend(table_blocks)
+    blocks.extend(chart_blocks)
 
     kinds = {b["type"] for b in blocks}
     kind = "mixed" if len(kinds) > 1 else (next(iter(kinds)) if kinds else "plain")
