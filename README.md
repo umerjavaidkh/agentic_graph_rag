@@ -4,6 +4,8 @@
 
 **One Neo4j graph. Two knowledge modes. Answers that flat RAG cannot reliably give.**
 
+Retrieval is a **strategy registry, not a fixed pipeline** — 5 unstructured + 2 structured retrieval strategies are individually pluggable and swappable at runtime, so you can add and A/B new strategies without touching existing code. Ingestion is component-swappable the same way (parser, blob store, vector store, LLM provider each behind their own factory). See [Modular, not a monolith](#modular-not-a-monolith) below.
+
 Agentic GraphRAG keeps **structured business data** and **unstructured documents** in the same graph database, then routes each question to the right retrieval strategy — or combines both. SQL-grade analytics *and* multi-hop reasoning over PDFs/DOCX, without separate vector DBs, ETL pipelines, or ad-hoc orchestration glue.
 
 It brings **your own** Neo4j schema and **your own** documents: the query router reads the live graph schema at runtime rather than hardcoding a demo domain, so it isn't tied to the bundled Northwind + Go.Data sample data used below.
