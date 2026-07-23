@@ -87,6 +87,7 @@ class FullHybridStrategy:
         tenant_id: str,
         limit: int,
         ctx: UserContext,
+        document_id_hint: str = "",
     ) -> Optional[dict[str, Any]]:
         synthesis = is_synthesis_question(query)
         enumeration = is_enumeration_question(query)
@@ -132,10 +133,12 @@ class FullHybridStrategy:
             self._document_resolver.resolve_document_for_query,
             query,
             tenant_id=tenant_id,
+            document_id_hint=document_id_hint,
         )
         embed_future = None if skip_vector else pool.submit(self._graph_seeds.get_embedding, query)
 
-        document_id = doc_id_future.result()[0] or ""
+        document_id, document_title = doc_id_future.result()
+        document_id = document_id or ""
         embedding = None if embed_future is None else embed_future.result()
 
         # document_id is already resolved here, so the lexical calls take
@@ -260,6 +263,8 @@ class FullHybridStrategy:
         response["vector_seeds"] = len(vector_hits)
         response["fulltext_hits"] = len(fulltext_hits)
         response["graph_expanded"] = len(graph_hits)
+        response["document_id"] = document_id or None
+        response["document_title"] = document_title
         record_pipeline_step(
             "document.hybrid.merge",
             meta={

@@ -47,6 +47,7 @@ class TocStrategy:
         tenant_id: str,
         limit: int,
         ctx: UserContext,
+        document_id_hint: str = "",
     ) -> Optional[dict[str, Any]]:
         if not is_toc_question(query):
             return None
@@ -80,7 +81,9 @@ class TocStrategy:
                         "total_available": 1,
                     }
 
-        toc_items = self._structural_toc_retrieve(session, query, tenant_id)
+        toc_items, doc_id, doc_title = self._structural_toc_retrieve(
+            session, query, tenant_id, document_id_hint
+        )
         if toc_items:
             response = self._formatter.format(query, toc_items, ctx=ctx)
             response["mode"] = "structural_toc"
@@ -88,10 +91,14 @@ class TocStrategy:
             response["vector_seeds"] = 0
             response["fulltext_hits"] = 0
             response["graph_expanded"] = len(toc_items)
+            response["document_id"] = doc_id
+            response["document_title"] = doc_title
             return response
         return None
 
-    def _structural_toc_retrieve(self, session: Any, query: str, tenant_id: str = "") -> list[dict]:
+    def _structural_toc_retrieve(
+        self, session: Any, query: str, tenant_id: str = "", document_id_hint: str = ""
+    ) -> tuple[list[dict], Optional[str], Optional[str]]:
         """
         1) TOC page text (printed/PDF page if named in query, else best-scoring early page).
         2) Section titled Table of Contents / Contents.
@@ -101,7 +108,9 @@ class TocStrategy:
         # generic term (e.g. "all") can't rank a bigger unrelated doc above it.
         doc_id, doc_title = self._document_resolver.resolve_document_for_query_strict(session, query, tenant_id)
         if doc_id is None:
-            doc_id, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+            doc_id, doc_title = self._document_resolver.resolve_document_for_query(
+                session, query, tenant_id, document_id_hint=document_id_hint
+            )
         label = doc_title or doc_id or "ingested document"
 
         pdf_page, doc_page = parse_page_targets(query)
@@ -118,7 +127,7 @@ class TocStrategy:
                         pdf_page=page_hit.get("pdf_page"),
                         document_page=page_hit.get("document_page"),
                     )
-                ]
+                ], doc_id, doc_title
 
         page_hit = self._toc_find_best_page(session, doc_id, tenant_id)
         if page_hit:
@@ -130,7 +139,7 @@ class TocStrategy:
                     pdf_page=page_hit.get("pdf_page"),
                     document_page=page_hit.get("document_page"),
                 )
-            ]
+            ], doc_id, doc_title
 
         section_hit = self._toc_find_section(session, doc_id, tenant_id)
         if section_hit and (section_hit.get("text") or "").strip():
@@ -140,12 +149,12 @@ class TocStrategy:
                     doc_title=section_hit.get("doc_title") or label,
                     source="Table of contents (from Contents section):",
                 )
-            ]
+            ], doc_id, doc_title
 
         outline = self._toc_outline_fallback(session, doc_id, tenant_id)
         if outline:
-            return [format_outline_chunk(outline, doc_title=label)]
-        return []
+            return [format_outline_chunk(outline, doc_title=label)], doc_id, doc_title
+        return [], doc_id, doc_title
 
     def _toc_fetch_page(
         self,

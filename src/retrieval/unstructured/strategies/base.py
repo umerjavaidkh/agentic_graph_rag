@@ -32,6 +32,7 @@ class UnstructuredStrategy(Protocol):
         tenant_id: str,
         limit: int,
         ctx: UserContext,
+        document_id_hint: str = "",
     ) -> Optional[dict[str, Any]]:
         """
         Attempt to answer `query`. Returns a terminal response dict (same
@@ -39,5 +40,13 @@ class UnstructuredStrategy(Protocol):
         `total_available`, `mode`, `strategy`, ...) or None to mean "not
         applicable / no hits," signaling the caller to try the next
         strategy in whatever selection order it uses.
+
+        `document_id_hint`: the document the current conversation thread
+        was already discussing (see conversation/thread_memory.py) — passed
+        through to DocumentResolver.resolve_document_for_query, used only
+        when the query has no stronger signal of its own (an explicit
+        document name always wins). A response that resolves a document
+        should echo it back as `document_id`/`document_title` so the next
+        turn can carry it forward in turn.
         """
         ...
