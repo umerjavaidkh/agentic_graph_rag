@@ -33,17 +33,31 @@ _NUMBERED_OUTLINE_RE = re.compile(r"^\d+(?:\.\d+)*\.?\s+\S")
 
 
 def score_page_text_as_toc(text: str) -> float:
-    """Higher = more likely a dedicated TOC page (not body content)."""
+    """Higher = more likely a dedicated TOC page (not body content).
+
+    Many SEC filings print "Table of Contents" as a small running header on
+    every page that follows the real TOC, not just on the TOC page itself
+    (e.g. Tesla's 10-K: the actual Item/page-number listing is on one page
+    with no such heading at all -- its first line is just the column header
+    "Page" -- while the very next page, pure "Forward-Looking Statements"
+    prose with zero entries, carries the "Table of Contents" running header
+    and used to win on that heading match alone). The heading phrase is
+    therefore corroborating evidence at best, not proof by itself -- it's
+    scaled by how much real entry/page-number structure the page's own body
+    actually has, so a heading with no supporting structure contributes
+    close to nothing, while a strong entry-pair ratio can win the page on
+    its own even with zero heading match (verified: this flips the Tesla
+    case correctly -- real TOC page 0.379->0.528, decoy page 0.500->0.050
+    -- while every previously-correct document's real TOC page scores the
+    same or higher and every negative-control page scores the same or
+    lower).
+    """
     body = (text or "").strip()
     if len(body) < 40:
         return 0.0
-    score = 0.0
-    head = body[:600]
-    if _TOC_PAGE_HEADING_RE.search(head):
-        score += 0.45
     lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
     if len(lines) < 3:
-        return score
+        return 0.0
 
     # Same-line page numbers / dotted leaders.
     toc_lines = sum(1 for ln in lines if _TOC_LINE_RE.search(ln))
@@ -57,7 +71,11 @@ def score_page_text_as_toc(text: str) -> float:
 
     signal = toc_lines + entry_pairs
     ratio = signal / max(1, len(lines))
-    score += min(0.55, ratio * 1.1)
+
+    score = 0.0
+    if _TOC_PAGE_HEADING_RE.search(body[:600]):
+        score += 0.45 * min(1.0, ratio * 6)
+    score += min(0.7, ratio * 1.6)
     # TOC pages are usually short lists, not long prose.
     if len(lines) <= 120 and len(body) < 14000:
         score += 0.05
