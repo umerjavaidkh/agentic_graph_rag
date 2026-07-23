@@ -128,6 +128,7 @@ Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstruc
 | Audit log (who / what / when / result, admin API + dashboard) | ✅ |
 | Google OIDC auth, RBAC, per-user thread isolation | ✅ (`release/v1.0`) |
 | Streaming answers with charts, retrieval feedback loop | ✅ |
+| Chapter-level rollup summaries for broad "what does this document/chapter discuss" questions | ✅ |
 | Regression eval suite (40 cases) | ✅ 40/40 |
 | 1000-document corpus validation, then a tagged release | 🚧 in progress |
 | CI (tests on push/PR) | 🚧 in progress |
@@ -139,6 +140,7 @@ Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstruc
 | Doc | Covers |
 |-----|--------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Query path, ingestion pipeline, multi-tenancy, audit log, project layout |
+| [docs/INGESTION_RETRIEVAL_ARCHITECTURE.md](docs/INGESTION_RETRIEVAL_ARCHITECTURE.md) | Deep dive: how parsing, ingestion enrichment, and retrieval strategies are loosely coupled — diagrams for the parser registry, full ingestion pipeline, retrieval strategy dispatch, and the extension points map |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every environment variable, feedback loop workflow |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth branches, RBAC, seeded demo users, identity flow |
 | [docs/API.md](docs/API.md) | curl reference for every endpoint |

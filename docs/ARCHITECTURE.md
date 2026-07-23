@@ -30,7 +30,7 @@ The router's tool descriptions and system prompt are schema-driven: `structured_
 
 See [CONFIGURATION.md](CONFIGURATION.md#retrieval-feedback-loop) for the ops UI and workflow. Application code imports from `src/feedback_loop`; `src/telemetry/feedback/` is a deprecated shim.
 
-**Unstructured retrieval modes** (selected per question): vector similarity · full-text · graph expand from NER · TOC structural fetch · page-by-number · phrase/fact lookup (URLs, licenses).
+**Unstructured retrieval modes** (selected per question): vector similarity · full-text · graph expand from NER · TOC structural fetch · page-by-number · phrase/fact lookup (URLs, licenses) · chapter-summary rollups for "what does this document/chapter discuss" overview questions.
 
 ## Retrieval strategies (registry pattern)
 
@@ -41,7 +41,7 @@ See [CONFIGURATION.md](CONFIGURATION.md#retrieval-feedback-loop) for the ops UI 
 | Structured | `text2cypher`, `multistep` | `StructuredRetriever.retrieve()` — schema + feedback-loop routing hint decide which runs first, with fallback |
 | Unstructured | `structural_box_list`, `subsection_tree`, `structural_toc`, `structural_page`, `graph_rag_hybrid` | `HybridRetrieveMixin.hybrid_retrieve()` — question-shape checks (`is_box_list_request`, `is_toc_question`, …) pick a strategy, falling through to `graph_rag_hybrid` |
 
-Unstructured strategies share five constructor-injected services (`src/retrieval/unstructured/services/`) — `RankingService`, `GraphSeedService`, `DocumentResolver`, `LexicalService`, `ResponseFormatter` — built once in `strategies/registration.py` and passed to every strategy that needs them, instead of the mixins-with-implicit-`self`-state pattern this replaced. Adding a new strategy means writing one class and registering it — no existing strategy or dispatch code changes.
+Unstructured strategies share six constructor-injected services (`src/retrieval/unstructured/services/`) — `RankingService`, `GraphSeedService`, `DocumentResolver`, `LexicalService`, `ChapterSummaryService`, `ResponseFormatter` — built once in `strategies/registration.py` and passed to every strategy that needs them, instead of the mixins-with-implicit-`self`-state pattern this replaced. Adding a new strategy means writing one class and registering it — no existing strategy or dispatch code changes.
 
 ## Audit log
 
@@ -54,8 +54,10 @@ PDF → LightPdfParser
         │
         ├── Axis 1: Document → Chapter → Section → Page → Region
         ├── Page vision (optional, ENABLE_PAGE_VISION=true)
-        └── Axis 2: Embeddings · NER · Clustering · LLM relationship pass
-                      (parallel thread pools)
+        ├── Axis 2: Embeddings · NER · Clustering · LLM relationship pass
+        │             (parallel thread pools)
+        └── Chapter summaries: 1 bounded LLM call per Chapter, from its
+              own Sections' titles/excerpts (src/semantic/chapter_summary.py)
               │
               └── Neo4jExporter (UNWIND batched writes) → Neo4j
 ```
@@ -102,14 +104,16 @@ agentic_graph_rag/
 │   │   ├── page_vision.py     # Optional vision enrichment
 │   │   └── versioning.py      # Logical doc ID, revision plans, hashing
 │   ├── exporter/exporter.py   # Neo4jExporter — UNWIND batched writes
-│   ├── semantic/axis2.py      # Axis 2 (parallel NER + LLM relationship pass)
+│   ├── semantic/
+│   │   ├── axis2.py            # Axis 2 (parallel NER + LLM relationship pass)
+│   │   └── chapter_summary.py  # Chapter-level rollup summaries (1 LLM call/chapter)
 │   ├── retrieval/
 │   │   ├── strategy_registry.py   # Name-keyed registry shared by both sides
 │   │   ├── unstructured/          # DocumentRAGRetriever (thin facade)
 │   │   │   ├── retriever.py       # Public API + backward-compat exports
 │   │   │   ├── mixins/hybrid.py   # Dispatch only: question-shape → registered strategy
 │   │   │   ├── strategies/        # box, subsection, toc, page, full_hybrid (+ base Protocol, registration)
-│   │   │   ├── services/          # ranking, graph_seeds, document_resolver, lexical, formatter
+│   │   │   ├── services/          # ranking, graph_seeds, document_resolver, lexical, chapter_summary, formatter
 │   │   │   ├── query_intent.py    # Question-shape routing (TOC, page, synthesis, …)
 │   │   │   ├── toc_retrieval.py, visual_retrieval.py, executor.py
 │   │   └── structured/            # StructuredRetriever (facade)
@@ -133,7 +137,7 @@ agentic_graph_rag/
 │   └── prompts/                 # LLM prompts
 ├── eval/                       # JSON smoke suites + validators
 ├── scripts/run_rag_eval.py     # Regression eval against /query
-├── tests/                      # ~290 unit tests (pytest)
+├── tests/                      # 400+ unit tests (pytest)
 ├── docker-compose.yml          # Neo4j + Redis + API + worker
 ├── Dockerfile
 └── .env.example
