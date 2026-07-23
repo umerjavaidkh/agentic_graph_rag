@@ -124,6 +124,9 @@ def test_padded_table_bboxes_pads_by_row_height_not_a_fixed_value():
         def __init__(self, tables):
             self._tables = tables
 
+        def get_drawings(self):
+            return []
+
         def find_tables(self):
             return _FakeTables(self._tables)
 
@@ -143,10 +146,51 @@ def test_find_tables_failure_degrades_to_no_veto(monkeypatch):
     skip the geometric veto for that page (digit-ratio veto still applies)."""
 
     class _BrokenPage:
+        def get_drawings(self):
+            return []
+
         def find_tables(self):
             raise RuntimeError("layout analysis failed")
 
     assert TableAwarePdfParser._padded_table_bboxes(_BrokenPage()) == []
+
+
+def test_dense_graphics_page_skips_find_tables_entirely(monkeypatch):
+    """Regression: PyMuPDF's find_tables() (default "lines" strategy) does
+    graphics-based table inference, not just literal ruling-line detection —
+    its internal neighbor-checking hung indefinitely on a real page with
+    23k+ vector drawing primitives (a dense chart/map, not an actual table;
+    a real table page — even a dense financial-filing one — had ~194).
+    Skip find_tables() entirely above a generous ceiling instead of calling
+    into a known-pathological path."""
+    from src.document.table_aware.parser import _MAX_PAGE_DRAWINGS_FOR_TABLE_DETECTION
+
+    class _DenseGraphicsPage:
+        def get_drawings(self):
+            return [object()] * (_MAX_PAGE_DRAWINGS_FOR_TABLE_DETECTION + 1)
+
+        def find_tables(self):
+            raise AssertionError("find_tables() must not be called on a dense-graphics page")
+
+    assert TableAwarePdfParser._padded_table_bboxes(_DenseGraphicsPage()) == []
+
+
+def test_normal_graphics_count_still_calls_find_tables():
+    class _FakeTable:
+        bbox = (0, 100, 50, 150)
+        row_count = 10
+
+    class _FakeTables:
+        tables = [_FakeTable()]
+
+    class _NormalPage:
+        def get_drawings(self):
+            return [object()] * 194  # observed count on a real filing table page
+
+        def find_tables(self):
+            return _FakeTables()
+
+    assert TableAwarePdfParser._padded_table_bboxes(_NormalPage()) != []
 
 
 def test_parses_real_sample_pdf_without_error():

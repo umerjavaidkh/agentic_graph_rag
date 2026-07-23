@@ -24,6 +24,20 @@ from ..light.parser import LightPdfParser, _PageExtract, _PdfBlock
 # padding far enough to swallow an unrelated heading several lines above it.
 _MAX_TABLE_PAD_PT = 60.0
 
+# PyMuPDF's find_tables() (default "lines" strategy) does graphics-based
+# table inference, not just literal ruling-line detection — its internal
+# neighbor-checking degrades badly on pages with a very large number of
+# vector drawing primitives (confirmed: a page with 23k+ paths, a dense
+# chart/map/infographic rather than an actual table, hung indefinitely
+# inside PyMuPDF's own clean_graphics/are_neighbors). A real table page —
+# even a dense financial-filing one — has nowhere near this many drawing
+# primitives (observed ~194 on an actual SEC-filing table page vs. 2 on a
+# plain-text page); this is a wide, deliberately generous margin above
+# that, not a value tuned to one document. Skipping find_tables() entirely
+# above this ceiling degrades gracefully to the other two vetoes
+# (digit-dominance, repeated-header) rather than hanging ingestion.
+_MAX_PAGE_DRAWINGS_FOR_TABLE_DETECTION = 3000
+
 # Repeated-header/footer detection thresholds — both required, so a real
 # heading reused a few times across independent chapters of a long
 # document (e.g. "Overview" appearing 3 times in a 200-page report) isn't
@@ -115,6 +129,8 @@ class TableAwarePdfParser(LightPdfParser):
     @staticmethod
     def _padded_table_bboxes(page: fitz.Page) -> list[tuple[float, float, float, float]]:
         try:
+            if len(page.get_drawings()) > _MAX_PAGE_DRAWINGS_FOR_TABLE_DETECTION:
+                return []
             tables = page.find_tables()
         except Exception:
             return []

@@ -148,12 +148,33 @@ def test_document_match_terms_capped_at_6():
         assert "table" not in terms  # generic structural word filtered out
 
 
-def test_doc_name_terms_prefers_proper_nouns_and_long_tokens():
+def test_doc_name_terms_prefers_proper_nouns():
     resolver = DocumentResolver(GraphSeedService(RankingService()))
     terms = resolver.doc_name_terms("Which network deployed fellows to Greece and Kosovo?")
     assert "greece" in terms
     assert "kosovo" in terms
     assert len(terms) <= 6
+
+
+def test_doc_name_terms_excludes_generic_long_words():
+    """Regression: a prior version fell back to "any word >= 6 chars that
+    isn't a stopword" as a document-name candidate. In a multi-document
+    corpus with one much larger document, ordinary content vocabulary
+    ("employees", "conflicts", "benefits", "discussed") isn't distinctive —
+    it just appears more often in whichever document has the most content —
+    so resolve_document_for_query_strict's raw-occurrence scoring picked
+    the wrong document purely because it was bigger. Verified live: an
+    83-section policy document's own "how can I avoid conflicts when it
+    comes to gifts and benefits" question resolved to an unrelated
+    638-section 10-K instead, before this fix."""
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    terms = resolver.doc_name_terms(
+        "How can employees avoid conflicts when it comes to gifts and benefits?"
+    )
+    assert terms == []
+
+    terms = resolver.doc_name_terms("What is discussed on page 6 of this document?")
+    assert terms == []
 
 
 def test_logical_id_from_node_id_extracts_prefix():
