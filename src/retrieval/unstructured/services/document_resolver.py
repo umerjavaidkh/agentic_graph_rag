@@ -190,13 +190,100 @@ class DocumentResolver:
             return _clean_doc_title(str(row["title"]))
         return _clean_doc_title(logical_id)
 
+    @staticmethod
+    def _pick_best_by_term_weight(rows, terms: list[str]) -> Optional[tuple[str, str]]:
+        """Shared IDF-weighted scoring for a `collect({term, cnt, title_match})
+        per document` result set — same approach as
+        resolve_document_for_query_strict, factored out so the generic
+        (document_match_terms-driven) fallback tier can use it too instead
+        of a flat count() that favors whichever document has the most
+        content overall regardless of relevance. Unlike the strict
+        resolver, does not require a clear lead over the runner-up — this
+        tier is already the lower-confidence fallback, so ties are broken
+        by whatever Neo4j returns first rather than declining to guess."""
+        docs: list[dict] = [dict(r) for r in rows]
+        if not docs:
+            return None
+
+        term_doc_freq: dict[str, int] = {t: 0 for t in terms}
+        for d in docs:
+            for h in d["term_hits"]:
+                if h["cnt"] > 0 or h["title_match"]:
+                    term_doc_freq[h["term"]] = term_doc_freq.get(h["term"], 0) + 1
+
+        total_docs = len(docs)
+
+        def term_weight(term: str) -> float:
+            df = term_doc_freq.get(term, 0)
+            if df <= 0:
+                return 0.0
+            return float(total_docs) / float(df)
+
+        scored: list[tuple[float, str, str]] = []
+        for d in docs:
+            score = 0.0
+            for h in d["term_hits"]:
+                w = term_weight(h["term"])
+                if h["title_match"]:
+                    score += 1000.0 * w
+                score += float(h["cnt"]) * w
+            scored.append((score, str(d["id"]), _clean_doc_title(str(d["title"] or d["id"]))))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top = scored[0]
+        if top[0] <= 0.0:
+            return None
+        return top[1], top[2]
+
+    def _validate_document_id(
+        self, session, logical_id: str, tenant_id: str = ""
+    ) -> Optional[str]:
+        """Unlike document_title_for_logical_id (which always returns
+        *something*, falling back to the id itself), this returns None when
+        the id doesn't correspond to a real, active document — used to
+        confirm a conversation-carried document_id hint is still valid
+        before trusting it (e.g. the document could have been deleted or
+        expired since the prior turn)."""
+        if not logical_id:
+            return None
+        row = session.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
+            WHERE dl.logical_id = $lid
+              AND {tenant_filter("dl")}
+            RETURN coalesce(dl.title, dl.logical_id) AS title
+            LIMIT 1
+            """,
+            lid=logical_id,
+            tenant_id=tenant_id,
+        ).single()
+        if row and row.get("title"):
+            return _clean_doc_title(str(row["title"]))
+        return None
+
     def resolve_document_for_query(
-        self, session, query: str, tenant_id: str = ""
+        self, session, query: str, tenant_id: str = "", document_id_hint: str = ""
     ) -> tuple[Optional[str], Optional[str]]:
-        """Return logical document id (preferred) and display title for doc-scoped retrieval."""
+        """Return logical document id (preferred) and display title for doc-scoped retrieval.
+
+        `document_id_hint`: the document the current conversation thread was
+        already discussing (see conversation/thread_memory.py), checked
+        after strict name-matching but before vector-majority resolution —
+        an explicitly named document always wins (a real topic switch), but
+        for a question with no distinguishing vocabulary of its own ("what's
+        on page 6 of this document"), staying on the document the thread was
+        already about is a better default than vector-majority's fallback
+        behavior of favoring whichever document has the most content
+        overall, regardless of relevance.
+        """
         strict_id, strict_title = self.resolve_document_for_query_strict(session, query, tenant_id)
         if strict_id:
             return strict_id, strict_title
+
+        if document_id_hint:
+            hint_title = self._validate_document_id(session, document_id_hint, tenant_id)
+            if hint_title is not None:
+                return document_id_hint, hint_title
 
         vector_id, vector_title = self.resolve_document_by_vector(session, query, tenant_id)
         if vector_id:
@@ -206,32 +293,41 @@ class DocumentResolver:
         lc = lifecycle_active("d")
         lc_n = lifecycle_active("n")
         if terms:
-            row = session.run(
+            # IDF-weighted, not a flat count() — document_match_terms is
+            # deliberately broader/lower-confidence than doc_name_terms (it
+            # includes ordinary content words, not just anchors/proper
+            # nouns), so without weighting, a merely-common word ("annual",
+            # "report") reliably favors whichever document has the most
+            # content overall, regardless of relevance — the same failure
+            # mode already fixed in resolve_document_for_query_strict,
+            # reachable here too since this tier runs after that one
+            # declines. Mirrors that method's exact scoring approach.
+            rows = session.run(
                 f"""
+                MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]
+                      ->(:{DOC_REVISION_LABEL})-[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})
+                WHERE {lc}
+                  AND {tenant_filter("dl")}
+                  AND {tenant_filter("d")}
+                WITH dl, d
                 UNWIND $terms AS term
-                MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
-                WHERE {tenant_filter("dl")}
-                  AND (toLower(coalesce(dl.title, '')) CONTAINS term
-                   OR toLower(dl.logical_id) CONTAINS term
-                   OR EXISTS {{
-                     MATCH (dl)-[:ACTIVE_REVISION]->(:{DOC_REVISION_LABEL})
-                           -[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})
-                     WHERE {lc}
-                     MATCH (d)-[:CONTAINS*1..5]->(n)
-                     WHERE {lc_n}
-                       AND (toLower(coalesce(n.title, '')) CONTAINS term
-                            OR toLower(coalesce(n.text, '')) CONTAINS term)
-                   }})
+                OPTIONAL MATCH (d)-[:CONTAINS*1..5]->(n)
+                WHERE {lc_n}
+                  AND {tenant_filter("n")}
+                  AND (toLower(coalesce(n.title, '')) CONTAINS term
+                       OR toLower(coalesce(n.text, '')) CONTAINS term)
+                WITH dl, term, count(DISTINCT n) AS cnt,
+                     (toLower(coalesce(dl.title, '')) CONTAINS term
+                      OR toLower(dl.logical_id) CONTAINS term) AS title_match
                 RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title,
-                       count(*) AS hits
-                ORDER BY hits DESC
-                LIMIT 1
+                       collect({{term: term, cnt: cnt, title_match: title_match}}) AS term_hits
                 """,
                 terms=terms,
                 tenant_id=tenant_id,
-            ).single()
-            if row and row.get("id"):
-                return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
+            )
+            match = self._pick_best_by_term_weight(rows, terms)
+            if match:
+                return match
 
             row = session.run(
                 f"""

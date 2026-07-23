@@ -39,6 +39,7 @@ class SubsectionStrategy:
         tenant_id: str,
         limit: int,
         ctx: UserContext,
+        document_id_hint: str = "",
     ) -> Optional[dict[str, Any]]:
         if not self._exec.is_subsection_request(query):
             return None
@@ -72,7 +73,9 @@ class SubsectionStrategy:
                     "total_available": 1,
                 }
 
-        items, parent = self._structural_subsections(session, query, sec_num, tenant_id)
+        items, parent, doc_id, doc_title = self._structural_subsections(
+            session, query, sec_num, tenant_id, document_id_hint
+        )
         if items:
             response = self._formatter.format(query, items, ctx=ctx)
             response["mode"] = "subsection_tree"
@@ -82,6 +85,8 @@ class SubsectionStrategy:
             response["vector_seeds"] = 0
             response["fulltext_hits"] = 0
             response["graph_expanded"] = len(items)
+            response["document_id"] = doc_id
+            response["document_title"] = doc_title
             return response
 
         if parent and parent.get("text"):
@@ -93,6 +98,8 @@ class SubsectionStrategy:
             response["vector_seeds"] = 0
             response["fulltext_hits"] = 0
             response["graph_expanded"] = 1
+            response["document_id"] = doc_id
+            response["document_title"] = doc_title
             return response
 
         return None
@@ -103,9 +110,12 @@ class SubsectionStrategy:
         query: str,
         sec_num: str,
         tenant_id: str = "",
-    ) -> tuple[list[dict], dict]:
-        """Return (children items, parent item) for a numbered section like 2.5."""
-        doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        document_id_hint: str = "",
+    ) -> tuple[list[dict], dict, Optional[str], Optional[str]]:
+        """Return (children items, parent item, doc_id, doc_title) for a numbered section like 2.5."""
+        doc_id, doc_title = self._document_resolver.resolve_document_for_query(
+            session, query, tenant_id, document_id_hint=document_id_hint
+        )
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
@@ -133,7 +143,7 @@ class SubsectionStrategy:
             tenant_id=tenant_id,
         ).single()
         if not row:
-            return [], {}
+            return [], {}, doc_id, doc_title
 
         parent = {
             "id": row.get("sid") or "",
@@ -155,4 +165,4 @@ class SubsectionStrategy:
                 "score": 1.0,
                 "related": ["via:subsections"],
             })
-        return items, parent
+        return items, parent, doc_id, doc_title

@@ -67,6 +67,13 @@ def extract_critical_from_result(user_question: str, result: dict) -> Optional[d
         "pdf_page": rc.get("pdf_page"),
         "document_page": rc.get("document_page"),
         "agent": agent,
+        # Carried forward by resolve_follow_up as a fallback hint for the
+        # *next* turn's document resolution — not a hard override, only
+        # consulted when that turn's own question has no stronger signal
+        # (explicit naming, distinctive vocabulary) of its own. See
+        # DocumentResolver.resolve_document_for_query's document_id_hint.
+        "document_id": rc.get("document_id"),
+        "document_title": rc.get("document_title"),
     }
 
     if not any([mode, query_type, snapshot["parent_id"], snapshot["pdf_page"]]):
@@ -111,7 +118,15 @@ def resolve_follow_up(question: str, prior: Optional[dict[str, Any]]) -> dict[st
         "question": question,
         "focus_section_id": None,
         "parent_section_id": None,
-        "document_id": None,
+        # Carry the prior turn's document forward as a soft hint by default
+        # — every branch below that returns `{**base, ...}` inherits it
+        # unless it explicitly overrides "document_id" with something more
+        # specific (e.g. an explicit clarification choice). This does not
+        # force retrieval onto that document: it's consulted only when the
+        # new question has no stronger signal of its own (see
+        # DocumentResolver.resolve_document_for_query's document_id_hint) —
+        # an explicitly named different document always wins over this.
+        "document_id": prior.get("document_id") if prior else None,
         "use_prior": False,
         "follow_up_kind": None,
     }
@@ -234,7 +249,7 @@ def _subsection_detail_resolution(prior: dict, child: dict) -> dict:
         "question": rewritten,
         "focus_section_id": child.get("id"),
         "parent_section_id": prior.get("parent_id"),
-        "document_id": None,
+        "document_id": prior.get("document_id"),
         "use_prior": True,
         "follow_up_kind": "subsection_detail",
     }

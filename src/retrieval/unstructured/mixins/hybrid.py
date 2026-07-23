@@ -30,14 +30,18 @@ class HybridRetrieveMixin:
         query: str,
         limit: int = RETRIEVAL_FINAL_LIMIT,
         user_context: Optional[UserContext] = None,
+        document_id_hint: str = "",
     ) -> dict[str, Any]:
-        return self.hybrid_retrieve(query, limit=limit, user_context=user_context)
+        return self.hybrid_retrieve(
+            query, limit=limit, user_context=user_context, document_id_hint=document_id_hint
+        )
 
     def hybrid_retrieve(
         self,
         query: str,
         limit: int = RETRIEVAL_FINAL_LIMIT,
         user_context: Optional[UserContext] = None,
+        document_id_hint: str = "",
     ) -> dict[str, Any]:
         """
         Neo4j Graph RAG (all run together for normal queries):
@@ -47,6 +51,11 @@ class HybridRetrieveMixin:
         4. Lexical — phrase CONTAINS + keyword overlap (merged in ranker, not a bypass)
 
         Early exit (no semantic): TOC, PDF page, page visual lookups only.
+
+        `document_id_hint`: the document the current conversation thread was
+        already discussing (see conversation/thread_memory.py) — passed
+        through to every strategy, used only as a fallback when the query
+        has no stronger document signal of its own.
         """
         ctx = user_context or self.user_context
         tenant_id = ctx.tenant_id
@@ -61,7 +70,8 @@ class HybridRetrieveMixin:
         if self._exec.is_box_list_request(query) or self._exec.parse_box_number(query) is not None:
             with self.driver.session() as session:
                 response = get_unstructured("structural_box_list").retrieve(
-                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx
+                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                    document_id_hint=document_id_hint,
                 )
             if response:
                 if tel is not None:
@@ -74,7 +84,8 @@ class HybridRetrieveMixin:
         if self._exec.is_subsection_request(query) and self._exec.parse_section_number(query):
             with self.driver.session() as session:
                 response = get_unstructured("subsection_tree").retrieve(
-                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx
+                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                    document_id_hint=document_id_hint,
                 )
             if response:
                 if tel is not None:
@@ -87,7 +98,8 @@ class HybridRetrieveMixin:
         if is_toc_question(query):
             with self.driver.session() as session:
                 response = get_unstructured("structural_toc").retrieve(
-                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx
+                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                    document_id_hint=document_id_hint,
                 )
             if response:
                 if tel is not None:
@@ -99,7 +111,8 @@ class HybridRetrieveMixin:
         if is_visual_page_question(query) or is_page_question(query):
             with self.driver.session() as session:
                 response = get_unstructured("structural_page").retrieve(
-                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx
+                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                    document_id_hint=document_id_hint,
                 )
             if response:
                 if tel is not None:
@@ -114,7 +127,8 @@ class HybridRetrieveMixin:
         # aren't thread-safe) — `session=None` is passed only for Protocol
         # conformance with the other strategies, which do use it.
         return get_unstructured("graph_rag_hybrid").retrieve(
-            None, query, tenant_id=tenant_id, limit=limit, ctx=ctx
+            None, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+            document_id_hint=document_id_hint,
         )
 
     def close(self) -> None:

@@ -44,9 +44,10 @@ class BoxStrategy:
         tenant_id: str,
         limit: int,
         ctx: UserContext,
+        document_id_hint: str = "",
     ) -> Optional[dict[str, Any]]:
         if self._exec.is_box_list_request(query):
-            items = self._structural_box_headings(session, query, tenant_id)
+            items = self._structural_box_headings(session, query, tenant_id, document_id_hint)
             if not items:
                 return None
             response = self._formatter.format(query, items, ctx=ctx)
@@ -55,11 +56,16 @@ class BoxStrategy:
             response["vector_seeds"] = 0
             response["fulltext_hits"] = 0
             response["graph_expanded"] = len(items)
+            doc_id, doc_title = self._document_resolver.resolve_document_for_query(
+                session, query, tenant_id, document_id_hint=document_id_hint
+            )
+            response["document_id"] = doc_id
+            response["document_title"] = doc_title
             return response
 
         box_n = self._exec.parse_box_number(query)
         if box_n is not None:
-            items = self._structural_box_content(session, query, box_n, tenant_id)
+            items = self._structural_box_content(session, query, box_n, tenant_id, document_id_hint)
             if items:
                 response = self._formatter.format(query, items, ctx=ctx)
                 response["mode"] = "structural_box_content"
@@ -67,15 +73,24 @@ class BoxStrategy:
                 response["vector_seeds"] = 0
                 response["fulltext_hits"] = 0
                 response["graph_expanded"] = len(items)
+                doc_id, doc_title = self._document_resolver.resolve_document_for_query(
+                    session, query, tenant_id, document_id_hint=document_id_hint
+                )
+                response["document_id"] = doc_id
+                response["document_title"] = doc_title
                 return response
         return None
 
-    def _structural_box_headings(self, session: Any, query: str, tenant_id: str = "") -> list[dict]:
+    def _structural_box_headings(
+        self, session: Any, query: str, tenant_id: str = "", document_id_hint: str = ""
+    ) -> list[dict]:
         """
         Enumerate Box headings (e.g. "Box 10") inside a document.
         Generic: works for any document that contains "Box <number>" in titles or text.
         """
-        doc_id, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        doc_id, doc_title = self._document_resolver.resolve_document_for_query(
+            session, query, tenant_id, document_id_hint=document_id_hint
+        )
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
@@ -112,7 +127,7 @@ class BoxStrategy:
                 if num in found:
                     continue
                 # Prefer title if it contains Box, else synthesize a heading.
-                heading = title if re.search(rf"(?i)\\bbox\\s+{num}\\b", title) else f"Box {num}"
+                heading = title if re.search(rf"(?i)\bbox\s+{num}\b", title) else f"Box {num}"
                 snippet = ""
                 if text:
                     # keep a compact preview
@@ -128,13 +143,15 @@ class BoxStrategy:
         return [found[k] for k in sorted(found.keys())]
 
     def _structural_box_content(
-        self, session: Any, query: str, box_n: int, tenant_id: str = ""
+        self, session: Any, query: str, box_n: int, tenant_id: str = "", document_id_hint: str = ""
     ) -> list[dict]:
         """
         Retrieve content for a specific Box N (e.g. Box 5).
         Looks for nodes whose title/text mention the box, then returns the best matches.
         """
-        doc_id, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        doc_id, doc_title = self._document_resolver.resolve_document_for_query(
+            session, query, tenant_id, document_id_hint=document_id_hint
+        )
         box_phrase = f"box {int(box_n)}"
         rows = session.run(
             f"""
@@ -170,11 +187,16 @@ class BoxStrategy:
             text = (r.get("text") or "").strip()
             if not rid or not (title or text):
                 continue
-            # Prefer chunks whose title explicitly contains Box N.
+            # Prefer chunks whose title explicitly contains Box N. (Regex
+            # bug fixed: rf"...\\bbox..." with a doubled backslash matches a
+            # literal backslash character, which never appears in real
+            # text — this check silently always failed, so every candidate
+            # fell through to the default score=1.0 and ranking degraded to
+            # "longest text wins" regardless of which Box it actually was.)
             score = 1.0
-            if re.search(rf"(?i)\\bbox\\s+{box_n}\\b", title):
+            if re.search(rf"(?i)\bbox\s+{box_n}\b", title):
                 score = 1.08
-            elif re.search(rf"(?i)\\bbox\\s+{box_n}\\b", text[:200]):
+            elif re.search(rf"(?i)\bbox\s+{box_n}\b", text[:200]):
                 score = 1.02
             # Keep a larger snippet since user asked "all the data".
             snippet = text[:2500] if text else ""
@@ -191,7 +213,9 @@ class BoxStrategy:
             reverse=True,
         )
         if items and len((items[0].get("text") or "")) < 200:
-            page_items = self._box_content_from_page_text(session, query, box_n, doc_id, tenant_id)
+            page_items = self._box_content_from_page_text(
+                session, query, box_n, doc_id, tenant_id, document_id_hint
+            )
             if page_items:
                 return page_items
         return items[:6]
@@ -203,9 +227,12 @@ class BoxStrategy:
         box_n: int,
         doc_id: Optional[str],
         tenant_id: str = "",
+        document_id_hint: str = "",
     ) -> list[dict]:
         """Fallback when Box sections in Neo4j only store the label (pre-fix ingest)."""
-        _, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        _, doc_title = self._document_resolver.resolve_document_for_query(
+            session, query, tenant_id, document_id_hint=document_id_hint
+        )
         rows = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})

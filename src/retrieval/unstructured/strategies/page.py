@@ -61,9 +61,12 @@ class PageStrategy:
         tenant_id: str,
         limit: int,
         ctx: UserContext,
+        document_id_hint: str = "",
     ) -> Optional[dict[str, Any]]:
         if is_visual_page_question(query):
-            visual_items = self._structural_page_visual_retrieve(session, query, tenant_id)
+            visual_items = self._structural_page_visual_retrieve(
+                session, query, tenant_id, document_id_hint
+            )
             if visual_items:
                 pdf_page, doc_page = parse_page_targets(query)
                 response = self._formatter.format(query, visual_items, ctx=ctx)
@@ -79,10 +82,15 @@ class PageStrategy:
                 response["vector_seeds"] = 0
                 response["fulltext_hits"] = 0
                 response["graph_expanded"] = len(visual_items)
+                doc_id, doc_title = self._document_resolver.resolve_document_for_query(
+                    session, query, tenant_id, document_id_hint=document_id_hint
+                )
+                response["document_id"] = doc_id
+                response["document_title"] = doc_title
                 return response
 
         if is_page_question(query):
-            page_items = self._structural_page_retrieve(session, query, tenant_id)
+            page_items = self._structural_page_retrieve(session, query, tenant_id, document_id_hint)
             if page_items:
                 response = self._formatter.format(query, page_items, ctx=ctx)
                 response["mode"] = "structural_page"
@@ -90,6 +98,11 @@ class PageStrategy:
                 response["vector_seeds"] = 0
                 response["fulltext_hits"] = 0
                 response["graph_expanded"] = len(page_items)
+                doc_id, doc_title = self._document_resolver.resolve_document_for_query(
+                    session, query, tenant_id, document_id_hint=document_id_hint
+                )
+                response["document_id"] = doc_id
+                response["document_title"] = doc_title
                 return response
 
         return None
@@ -119,7 +132,7 @@ class PageStrategy:
         return parse_visual_intent(query).list_all
 
     def _structural_page_visual_retrieve(
-        self, session: Any, query: str, tenant_id: str = ""
+        self, session: Any, query: str, tenant_id: str = "", document_id_hint: str = ""
     ) -> list[dict]:
         """Page figures/diagrams via stored visual_content text (ingest vision enrichment)."""
         pdf_page, doc_page = parse_page_targets(query)
@@ -127,7 +140,9 @@ class PageStrategy:
             return []
 
         list_all_visuals = self._query_wants_all_page_visuals(query)
-        doc_id, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        doc_id, doc_title = self._document_resolver.resolve_document_for_query(
+            session, query, tenant_id, document_id_hint=document_id_hint
+        )
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
@@ -266,7 +281,7 @@ class PageStrategy:
         return chunks
 
     def _structural_page_retrieve(
-        self, session: Any, query: str, tenant_id: str = ""
+        self, session: Any, query: str, tenant_id: str = "", document_id_hint: str = ""
     ) -> list[dict]:
         """
         Fetch Page node content by pdf_page / document_page for a resolved document.
@@ -276,7 +291,9 @@ class PageStrategy:
         if pdf_page is None and not doc_page:
             return []
 
-        doc_id, doc_title = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        doc_id, doc_title = self._document_resolver.resolve_document_for_query(
+            session, query, tenant_id, document_id_hint=document_id_hint
+        )
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})

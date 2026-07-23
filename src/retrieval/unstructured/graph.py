@@ -80,6 +80,7 @@ def _fix_misrouted_structured_answer(answer: str, question: str) -> str:
 def retrieve_node(state: ESGState):
     question = state["question"]
     user_context = state.get("user_context")
+    document_id_hint = state.get("document_id") or ""
 
     limit = max(RETRIEVAL_FINAL_LIMIT, 12) if is_synthesis_question(question) else RETRIEVAL_FINAL_LIMIT
     with pipeline_step("document.graph.retrieve", limit=limit):
@@ -87,6 +88,7 @@ def retrieve_node(state: ESGState):
             query=question,
             limit=limit,
             user_context=user_context,
+            document_id_hint=document_id_hint,
         )
     strategy = context.get("strategy", "graph_rag")
     return {
