@@ -8,7 +8,11 @@ from ...conversation.clarification import format_clarification_answer
 
 
 _SECTION_NUM_RE = re.compile(r"\b(\d+(?:\.\d+){1,3})\b")
-_NOTE_NUM_RE = re.compile(r"\bnote\s+(?:no\.?\s*)?(\d+)\b", re.I)
+# Covers both financial-statement footnotes ("Note 3") and SEC filing items,
+# which use a letter-suffixed numbering convention Note references don't
+# ("Item 9A. Controls and Procedures", "Item 7A", "Item 1B") -- \d+[a-z]?
+# handles both shapes with one pattern.
+_STRUCTURAL_NUM_RE = re.compile(r"\b(note|item)\s+(?:no\.?\s*)?(\d+[a-z]?)\b", re.I)
 _SUBSECTION_CUE_RE = re.compile(r"\b(sub\s*sections?|subsections?|under\s+this\s+section)\b", re.I)
 _BOX_LIST_CUE_RE = re.compile(r"\b(list|show|enumerate|all)\b.{0,20}\bbox(?:es)?\b", re.I)
 _BOX_RE = re.compile(r"\bbox\s+(\d{1,3})\b", re.I)
@@ -30,15 +34,15 @@ class DocumentQueryExecutor:
         # not dotted numeric headings — checked first since a bare "3" here
         # wouldn't match _SECTION_NUM_RE anyway (no dot), but a query could
         # in principle contain both forms.
-        m = _NOTE_NUM_RE.search(query or "")
+        m = _STRUCTURAL_NUM_RE.search(query or "")
         if m:
-            return f"note {m.group(1)}"
+            return f"{m.group(1).lower()} {m.group(2).lower()}"
         m = _SECTION_NUM_RE.search(query or "")
         return m.group(1) if m else None
 
     def is_subsection_request(self, query: str) -> bool:
         q = query or ""
-        if _NOTE_NUM_RE.search(q):
+        if _STRUCTURAL_NUM_RE.search(q):
             return True
         return bool(_SUBSECTION_CUE_RE.search(q)) or ("sub section" in q.lower())
 

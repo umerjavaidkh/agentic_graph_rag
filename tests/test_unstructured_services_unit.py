@@ -192,6 +192,8 @@ def test_doc_name_terms_excludes_structural_references_and_their_glosses():
     resolver = DocumentResolver(GraphSeedService(RankingService()))
     assert resolver.doc_name_terms("What does Note 3 (Commitments and Contingencies) discuss?") == []
     assert resolver.doc_name_terms("What is Box 9 about?") == []
+    # Letter-suffixed SEC item numbering ("Item 9A") must strip the same way.
+    assert resolver.doc_name_terms("What does Item 9A (Controls and Procedures) report?") == []
 
     # A real proper noun alongside a structural reference must still surface.
     terms = resolver.doc_name_terms(

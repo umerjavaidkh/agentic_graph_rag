@@ -36,7 +36,7 @@ from .graph_seeds import GraphSeedService
 # an unrelated document that merely had more occurrences of those generic
 # legal/financial terms.
 _STRUCTURAL_REF_RE = re.compile(
-    r"\b(?:note|box|item|figure|fig\.?|section)\s+(?:no\.?\s*)?\d+(?:\.\d+)*\b", re.I
+    r"\b(?:note|box|item|figure|fig\.?|section)\s+(?:no\.?\s*)?\d+[a-z]?(?:\.\d+)*\b", re.I
 )
 _PAREN_RE = re.compile(r"\([^)]*\)")
 
