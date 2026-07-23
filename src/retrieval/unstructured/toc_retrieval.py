@@ -71,11 +71,20 @@ def score_page_text_as_toc(text: str) -> float:
 
     signal = toc_lines + entry_pairs
     ratio = signal / max(1, len(lines))
+    # Ratio alone rewards a short page with one coincidental hit exactly as
+    # much as a long page with dozens of genuine hits -- a 3-line title
+    # page where a sentence happens to end in a year ("...December 31,
+    # 2025") gets the same 33% ratio as one real entry out of three lines,
+    # which is enough noise to beat a real TOC's 23-entry signal once it's
+    # diluted across a long page. Scale by how much ABSOLUTE signal there
+    # is, not just its share of the page, so a couple of coincidental
+    # matches can't outweigh overwhelming genuine structure.
+    confidence = min(1.0, signal / 3.0)
 
     score = 0.0
     if _TOC_PAGE_HEADING_RE.search(body[:600]):
-        score += 0.45 * min(1.0, ratio * 6)
-    score += min(0.7, ratio * 1.6)
+        score += 0.45 * min(1.0, ratio * 6) * confidence
+    score += min(0.7, ratio * 1.6) * confidence
     # TOC pages are usually short lists, not long prose.
     if len(lines) <= 120 and len(body) < 14000:
         score += 0.05

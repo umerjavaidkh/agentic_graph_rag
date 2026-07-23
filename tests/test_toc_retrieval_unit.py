@@ -87,6 +87,30 @@ def test_running_header_page_loses_to_real_toc_with_no_heading():
     assert real_score > 0.42  # must clear _toc_find_best_page's selection threshold
 
 
+def test_short_page_with_one_coincidental_hit_loses_to_real_toc():
+    """Regression: ratio-based scoring rewards a short page with one
+    coincidental match exactly as much as a long page with dozens of
+    genuine ones. Verified live on Tesla's 10-K: a 3-line title page
+    ("TESLA, INC. / ANNUAL REPORT ... DECEMBER 31, 2025 / INDEX") has a
+    sentence ending in the fiscal year "2025", which the trailing-digits
+    TOC-line pattern reads as a page number -- one coincidental hit out of
+    three lines is a 33% ratio, on par with the real TOC's diluted (but
+    23-entry) signal once spread across a much longer page. This briefly
+    became the "table of contents" answer instead of the real listing,
+    after the running-header decoy fix landed but before this one."""
+    title_page = (
+        "TESLA, INC.\n"
+        "ANNUAL REPORT ON FORM 10-K FOR THE YEAR ENDED DECEMBER 31, 2025\n"
+        "INDEX\n"
+    )
+    real_toc_no_heading = (
+        "Page\nPART I.\nItem 1.\nBusiness\n2\nItem 1A.\nRisk Factors\n12\n"
+        "Item 1B.\nUnresolved Staff Comments\n27\nItem 1C.\nCybersecurity\n27\n"
+        "Item 2.\nProperties\n28\nItem 3.\nLegal Proceedings\n28\n"
+    )
+    assert score_page_text_as_toc(real_toc_no_heading) > score_page_text_as_toc(title_page)
+
+
 def test_outline_filters_boxes():
     assert not include_in_outline_fallback("Box 8", 2, "Section")
     assert include_in_outline_fallback("1. Introduction", 2, "Section")
