@@ -177,6 +177,29 @@ def test_doc_name_terms_excludes_generic_long_words():
     assert terms == []
 
 
+def test_doc_name_terms_excludes_structural_references_and_their_glosses():
+    """Regression: a structural reference like "Note 3 (Commitments and
+    Contingencies)" names a location WITHIN the document already under
+    discussion, not a different document. Standard footnote/item titles are
+    boilerplate shared across most filings in a corpus, so left unstripped
+    the mid-sentence-capitalization scan picked them up as document-naming
+    anchors and resolve_document_for_query_strict's raw-occurrence scoring
+    matched whichever unrelated document merely used those generic terms
+    more. Verified live: this single-handedly overrode a correct
+    conversation document hint on an AMZN 10-Q, resolving to an unrelated
+    JPM 10-K instead purely because JPM's "Note 3" happens to also be
+    titled with common financial/legal vocabulary."""
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    assert resolver.doc_name_terms("What does Note 3 (Commitments and Contingencies) discuss?") == []
+    assert resolver.doc_name_terms("What is Box 9 about?") == []
+
+    # A real proper noun alongside a structural reference must still surface.
+    terms = resolver.doc_name_terms(
+        "What does Note 7 (Segment Information) report about Amazon's business segments?"
+    )
+    assert "amazon" in terms or "amazon's" in terms
+
+
 def test_logical_id_from_node_id_extracts_prefix():
     resolver = DocumentResolver(GraphSeedService(RankingService()))
     assert resolver._logical_id_from_node_id("doc_rag_document:r1::section_1_2") == "doc_rag_document"

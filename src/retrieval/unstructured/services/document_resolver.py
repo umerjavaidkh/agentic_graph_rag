@@ -23,6 +23,22 @@ from ..query_intent import KEYWORD_STOP as _KEYWORD_STOP
 from ..text_utils import _query_anchor_terms
 from .graph_seeds import GraphSeedService
 
+# A structural reference inside a question ("Note 3 (Commitments and
+# Contingencies)", "Box 9", "Item 7") names a location WITHIN whichever
+# document the conversation is already about, not a different document to
+# search for. Standard footnote/item titles like "Commitments and
+# Contingencies" are boilerplate shared across most filings in a corpus, so
+# left unstripped they get picked up by the mid-sentence-capitalization scan
+# below and wrongly treated as document-identifying anchors -- verified
+# live: this single-handedly overrode a correct conversation document hint,
+# resolving "What does Note 3 (Commitments and Contingencies) discuss?" to
+# an unrelated document that merely had more occurrences of those generic
+# legal/financial terms.
+_STRUCTURAL_REF_RE = re.compile(
+    r"\b(?:note|box|item|figure|fig\.?|section)\s+(?:no\.?\s*)?\d+(?:\.\d+)*\b", re.I
+)
+_PAREN_RE = re.compile(r"\([^)]*\)")
+
 
 class DocumentResolver:
     def __init__(self, graph_seeds: GraphSeedService):
@@ -407,10 +423,11 @@ class DocumentResolver:
         Used by the strict document resolver to avoid matching the wrong document
         via common words like "all", "toc", etc.
         """
-        terms: list[str] = list(_query_anchor_terms(query))
+        cleaned = _PAREN_RE.sub(" ", _STRUCTURAL_REF_RE.sub(" ", query or ""))
+        terms: list[str] = list(_query_anchor_terms(cleaned))
 
         # Tokens that are capitalised mid-sentence are likely proper nouns / doc names
-        words = re.findall(r"[A-Za-z][\w'-]*", query or "")
+        words = re.findall(r"[A-Za-z][\w'-]*", cleaned)
         for i, w in enumerate(words):
             t = w.lower()
             if i == 0:
