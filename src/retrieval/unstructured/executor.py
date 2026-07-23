@@ -8,6 +8,7 @@ from ...conversation.clarification import format_clarification_answer
 
 
 _SECTION_NUM_RE = re.compile(r"\b(\d+(?:\.\d+){1,3})\b")
+_NOTE_NUM_RE = re.compile(r"\bnote\s+(?:no\.?\s*)?(\d+)\b", re.I)
 _SUBSECTION_CUE_RE = re.compile(r"\b(sub\s*sections?|subsections?|under\s+this\s+section)\b", re.I)
 _BOX_LIST_CUE_RE = re.compile(r"\b(list|show|enumerate|all)\b.{0,20}\bbox(?:es)?\b", re.I)
 _BOX_RE = re.compile(r"\bbox\s+(\d{1,3})\b", re.I)
@@ -24,11 +25,21 @@ class DocumentQueryExecutor:
     """Generic helpers for document ambiguity + subsection requests."""
 
     def parse_section_number(self, query: str) -> Optional[str]:
+        # Financial-statement footnotes ("Note 3 — Commitments and
+        # Contingencies") are stored as Section nodes titled "Note N — ...",
+        # not dotted numeric headings — checked first since a bare "3" here
+        # wouldn't match _SECTION_NUM_RE anyway (no dot), but a query could
+        # in principle contain both forms.
+        m = _NOTE_NUM_RE.search(query or "")
+        if m:
+            return f"note {m.group(1)}"
         m = _SECTION_NUM_RE.search(query or "")
         return m.group(1) if m else None
 
     def is_subsection_request(self, query: str) -> bool:
         q = query or ""
+        if _NOTE_NUM_RE.search(q):
+            return True
         return bool(_SUBSECTION_CUE_RE.search(q)) or ("sub section" in q.lower())
 
     def is_box_list_request(self, query: str) -> bool:
