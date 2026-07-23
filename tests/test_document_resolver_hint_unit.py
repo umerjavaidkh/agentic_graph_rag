@@ -76,6 +76,7 @@ def test_invalid_hint_falls_through_to_vector():
     resolver = DocumentResolver(GraphSeedService(RankingService()))
     resolver.resolve_document_for_query_strict = MagicMock(return_value=(None, None))
     resolver._validate_document_id = MagicMock(return_value=None)  # hint doesn't exist
+    resolver.document_match_terms = MagicMock(return_value=[])  # no term signal -> pure vector fallback
     resolver.resolve_document_by_vector = MagicMock(return_value=("aapl-10k-2024", "AAPL 10-K"))
 
     doc_id, title = resolver.resolve_document_for_query(
@@ -89,6 +90,7 @@ def test_no_hint_behaves_as_before():
     resolver = DocumentResolver(GraphSeedService(RankingService()))
     resolver.resolve_document_for_query_strict = MagicMock(return_value=(None, None))
     resolver._validate_document_id = MagicMock(side_effect=AssertionError("no hint given, must not be called"))
+    resolver.document_match_terms = MagicMock(return_value=[])  # no term signal -> pure vector fallback
     resolver.resolve_document_by_vector = MagicMock(return_value=("amzn-10q-2016-07-29", "AMZN 10-Q"))
 
     doc_id, title = resolver.resolve_document_for_query(
