@@ -34,7 +34,8 @@ from ..constants import (
     _GRAPH_2HOP_LIMIT,
     _VECTOR_SEED_LIMIT,
 )
-from ..query_intent import is_enumeration_question, is_synthesis_question
+from ..query_intent import is_enumeration_question, is_overview_question, is_synthesis_question
+from ..services.chapter_summary import ChapterSummaryService
 from ..services.document_resolver import DocumentResolver
 from ..services.formatter import ResponseFormatter
 from ..services.graph_seeds import GraphSeedService
@@ -55,6 +56,7 @@ class FullHybridStrategy:
         lexical: LexicalService,
         formatter: ResponseFormatter,
         document_resolver: DocumentResolver,
+        chapter_summaries: Optional[ChapterSummaryService] = None,
     ):
         self._driver = driver
         self._ranking = ranking
@@ -62,6 +64,7 @@ class FullHybridStrategy:
         self._lexical = lexical
         self._formatter = formatter
         self._document_resolver = document_resolver
+        self._chapter_summaries = chapter_summaries or ChapterSummaryService()
         # One process-wide pool, not a fresh ThreadPoolExecutor spun up and
         # torn down on every retrieve() call — this strategy is itself a
         # process-wide singleton (see strategies/registration.py), so the
@@ -87,6 +90,12 @@ class FullHybridStrategy:
     ) -> Optional[dict[str, Any]]:
         synthesis = is_synthesis_question(query)
         enumeration = is_enumeration_question(query)
+        # Deliberately broader than `synthesis` and kept separate from it —
+        # is_overview_question also matches plain "what does this document/
+        # chapter discuss" phrasing that _SYNTHESIS_RE doesn't, without
+        # pulling that phrasing into `synthesis`'s other effects below
+        # (vector/graph/lexical weighting, fetch_limit sizing).
+        wants_overview = synthesis or is_overview_question(query)
         fetch_limit = limit
         if synthesis:
             fetch_limit = max(limit, 16)
@@ -167,11 +176,27 @@ class FullHybridStrategy:
             tenant_id=tenant_id,
             document_id=document_id,
         )
+        # Only fetched for overview-shaped questions ("what does this
+        # document/chapter discuss") — chapter_summary_weight in
+        # _merge_and_rank already de-prioritizes these for everything else,
+        # so skipping the round trip entirely when it can't matter avoids
+        # paying for it on the common case.
+        chapter_summary_future = (
+            pool.submit(
+                self._neo4j_session_call,
+                self._chapter_summaries.fetch_for_document,
+                document_id,
+                tenant_id=tenant_id,
+            )
+            if wants_overview
+            else None
+        )
         phrase_hits = phrase_future.result()
         keyword_hits = keyword_future.result()
         if vector_future is not None:
             vector_hits = vector_future.result()
         fulltext_hits = fulltext_future.result()
+        chapter_summary_hits = chapter_summary_future.result() if chapter_summary_future is not None else []
 
         lexical_hits = self._ranking._merge_retrieval_chunks(phrase_hits, keyword_hits)
         seed_ids = [h["id"] for h in vector_hits if h.get("id")]
@@ -206,7 +231,9 @@ class FullHybridStrategy:
             graph_hits,
             seed_scores,
             lexical_hits=lexical_hits,
+            chapter_summary_hits=chapter_summary_hits,
             synthesis=synthesis,
+            chapter_summary_boost=wants_overview,
             limit=max(1, int(fetch_limit)),
         )
         if lexical_hits:

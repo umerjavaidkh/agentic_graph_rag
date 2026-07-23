@@ -31,7 +31,9 @@ class RankingService:
         limit: int,
         *,
         lexical_hits: Optional[list[dict]] = None,
+        chapter_summary_hits: Optional[list[dict]] = None,
         synthesis: bool = False,
+        chapter_summary_boost: bool = False,
     ) -> list[dict]:
         merged: dict[str, dict] = {}
 
@@ -103,6 +105,18 @@ class RankingService:
         for item in lexical_hits or []:
             src = "phrase" if "phrase_search" in (item.get("related") or []) else "keyword"
             _upsert(item, float(item.get("score", 0.85)) * lexical_weight, src)
+
+        # Chapter rollup summaries only matter for "what does this document/
+        # chapter discuss" style questions (chapter_summary_boost — a
+        # broader, dedicated detector than `synthesis`, see
+        # is_overview_question in query_intent.py) — for everything else a
+        # short paragraph summary is more likely to dilute a specific-fact
+        # answer than help it, so it's barely boosted (still eligible, just
+        # unlikely to outrank an actual on-topic chunk) rather than fully
+        # excluded.
+        chapter_summary_weight = 1.25 if chapter_summary_boost else 0.4
+        for item in chapter_summary_hits or []:
+            _upsert(item, float(item.get("score", 0.9)) * chapter_summary_weight, "chapter_summary")
 
         keywords = self._query_keywords(query)
         for item in merged.values():

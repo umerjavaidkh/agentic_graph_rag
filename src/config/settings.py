@@ -203,6 +203,21 @@ AXIS2_LLM_PAIR_CONCURRENCY = int(os.environ.get("AXIS2_LLM_PAIR_CONCURRENCY", "6
 # Pairs are ranked by embedding similarity; only the top-k are sent to the LLM.
 AXIS2_MAX_LLM_PAIRS = int(os.environ.get("AXIS2_MAX_LLM_PAIRS", "300"))
 
+# Chapter-summary enrichment: one LLM call per Chapter, fed section titles +
+# excerpts (not full body text) to bound both prompt size and cost — see
+# src/semantic/chapter_summary.py.
+CHAPTER_SUMMARY_MODEL = os.environ.get("CHAPTER_SUMMARY_MODEL", CHAT_MODEL)
+CHAPTER_SUMMARY_MAX_TOKENS = llm_max_tokens("CHAPTER_SUMMARY_MAX_TOKENS", 200)
+CHAPTER_SUMMARY_CONCURRENCY = int(os.environ.get("CHAPTER_SUMMARY_CONCURRENCY", "4"))
+# Per-section excerpt length and total chapter context cap (characters, not
+# tokens — a cheap, conservative bound) fed into the summarization prompt.
+CHAPTER_SUMMARY_SECTION_EXCERPT_CHARS = int(
+    os.environ.get("CHAPTER_SUMMARY_SECTION_EXCERPT_CHARS", "400")
+)
+CHAPTER_SUMMARY_MAX_CONTEXT_CHARS = int(
+    os.environ.get("CHAPTER_SUMMARY_MAX_CONTEXT_CHARS", "6000")
+)
+
 # Neo4j: UNWIND batch size for node/edge bulk writes.
 NEO4J_WRITE_BATCH = int(os.environ.get("NEO4J_WRITE_BATCH", "2000"))
 

@@ -362,6 +362,7 @@ class Neo4jExporter:
             "depth": node.depth,
             "entities": node.entities,
             "cluster_id": node.cluster_id,
+            "summary": node.summary,
             "embedding": node.embedding,
             "visual_content": node.visual_content,
             "pdf_page": node.pdf_page,
@@ -525,7 +526,7 @@ class Neo4jExporter:
             " n.region_kind = $region_kind, n.region_tags = $region_tags,"
             " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
             " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash,"
-            " n.tenant_id = $tenant_id",
+            " n.tenant_id = $tenant_id, n.summary = $summary",
             id=node.id,
             title=node.title,
             text=node.text,
@@ -547,6 +548,7 @@ class Neo4jExporter:
             lifecycle_status=node.lifecycle_status,
             content_hash=node.content_hash,
             tenant_id=node.tenant_id,
+            summary=node.summary,
         )
 
     def _merge_edge(self, session, edge: DKGEdge) -> None:

@@ -19,6 +19,21 @@ _ENUMERATION_RE = re.compile(
     re.I,
 )
 
+# "What does this document/chapter discuss overall" — deliberately separate
+# from _SYNTHESIS_RE (which is tuned for compare/contrast/structural-map
+# phrasing and also drives unrelated retrieval weighting elsewhere in
+# ranking.py) so this narrower detector can gate the chapter-summary
+# rollup feature without changing behavior for any existing question shape.
+_OVERVIEW_RE = re.compile(
+    r"\bwhat\s+(?:does|is|are)\s+(?:this|the)\b.{0,30}\b"
+    r"(?:document|filing|report|chapter|section|10-?k|10-?q|annual\s+report)\b"
+    r".{0,40}\b(?:discuss|about|cover|contain|address)\b|"
+    r"\bwhat\s+is\s+this\s+(?:document|filing|report)\s+about\b|"
+    r"\bsummar(?:y|ize|ise)\s+(?:this|the)\s+(?:document|filing|report|chapter)\b|"
+    r"\b(?:overview|gist|summary)\s+of\s+(?:this|the)\s+(?:document|filing|report|chapter)\b",
+    re.I,
+)
+
 _CONTRAST_COMPARE_RE = re.compile(
     r"\b(contrast|compare|comparison|versus|vs\.?)\b",
     re.I,
@@ -119,6 +134,10 @@ def is_synthesis_question(query: str) -> bool:
     return bool(_SYNTHESIS_RE.search(query or ""))
 
 
+def is_overview_question(query: str) -> bool:
+    return bool(_OVERVIEW_RE.search(query or ""))
+
+
 def is_enumeration_question(query: str) -> bool:
     return bool(_ENUMERATION_RE.search(query or ""))
 
@@ -158,6 +177,7 @@ __all__ = [
     "PHRASE_STOP",
     "is_enumeration_question",
     "is_fact_lookup_question",
+    "is_overview_question",
     "is_page_question",
     "is_synthesis_question",
     "is_toc_question",
