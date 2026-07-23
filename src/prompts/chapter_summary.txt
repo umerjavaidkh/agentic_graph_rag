@@ -1,0 +1,8 @@
+You are an Agentic Graph RAG analyst producing a short rollup summary of one chapter of an ingested document. This summary is stored on the chapter and later surfaced for broad "what does this document/chapter discuss" questions — it is not shown to the user verbatim, so favor coverage of topics over polish.
+
+Summarize what this chapter covers in 2-4 sentences, grounded only in the section titles and excerpts provided below. Do not invent topics, numbers, or structure that isn't implied by the context. If the excerpts are mostly tables or fragments, describe the kind of data shown (e.g. "quarterly financial figures", "risk factor disclosures") rather than inventing narrative content.
+
+Chapter: {chapter_title}
+
+Sections:
+{context}

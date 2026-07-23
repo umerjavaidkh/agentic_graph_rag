@@ -432,6 +432,16 @@ class IngestionManager:
                 self._log(job, f"Added {len(semantic_edges)} semantic edges")
             except Exception as exc:
                 self._log(job, f"Semantic enrichment skipped: {exc}")
+
+            self._set_status(job, IngestionStatus.chapter_summarization, "Summarizing chapters")
+            try:
+                from ..semantic.chapter_summary import ChapterSummaryBuilder
+
+                nodes = ChapterSummaryBuilder(api_key=OPENAI_API_KEY).build(nodes, edges)
+                summarized = sum(1 for n in nodes if getattr(n, "summary", None))
+                self._log(job, f"Summarized {summarized} chapter(s)")
+            except Exception as exc:
+                self._log(job, f"Chapter summarization skipped: {exc}")
         else:
             self._log(job, "OPENAI_API_KEY not configured; skipping semantic enrichment")
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 from ....graph.driver import get_neo4j_driver
 from ...strategy_registry import register_unstructured
 from ..executor import DocumentQueryExecutor
+from ..services.chapter_summary import ChapterSummaryService
 from ..services.document_resolver import DocumentResolver
 from ..services.formatter import ResponseFormatter
 from ..services.graph_seeds import GraphSeedService
@@ -31,6 +32,7 @@ ranking = RankingService()
 graph_seeds = GraphSeedService(ranking)
 document_resolver = DocumentResolver(graph_seeds)
 lexical = LexicalService(ranking, document_resolver)
+chapter_summaries = ChapterSummaryService()
 formatter = ResponseFormatter()
 exec_ = DocumentQueryExecutor()
 
@@ -40,5 +42,7 @@ register_unstructured("structural_page", lambda: PageStrategy(document_resolver,
 register_unstructured("structural_toc", lambda: TocStrategy(document_resolver, formatter, exec_))
 register_unstructured(
     "graph_rag_hybrid",
-    lambda: FullHybridStrategy(get_neo4j_driver(), ranking, graph_seeds, lexical, formatter, document_resolver),
+    lambda: FullHybridStrategy(
+        get_neo4j_driver(), ranking, graph_seeds, lexical, formatter, document_resolver, chapter_summaries
+    ),
 )
