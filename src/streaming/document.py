@@ -167,6 +167,8 @@ def iter_document_stream(
             strategy=query_type,
             query_type=query_type,
             presentation=presentation,
+            document_id=retrieved.get("document_id"),
+            document_title=retrieved.get("document_title"),
         )
         return
 
@@ -215,4 +217,6 @@ def iter_document_stream(
         presentation=presentation,
         low_confidence=low_confidence,
         confidence_note=confidence_note,
+        document_id=retrieved.get("document_id"),
+        document_title=retrieved.get("document_title"),
     )
