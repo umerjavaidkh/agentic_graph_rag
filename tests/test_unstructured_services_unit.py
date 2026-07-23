@@ -156,6 +156,30 @@ def test_doc_name_terms_prefers_proper_nouns():
     assert len(terms) <= 6
 
 
+def test_doc_name_terms_strips_trailing_possessive():
+    """Regression: "JPMorgan's" extracted whole (with the apostrophe-s)
+    never matches the document's own text, which says "JPMorgan Chase &
+    Co." or "the Firm", not the possessive form -- CONTAINS scored zero
+    everywhere and the query's one real anchor silently contributed
+    nothing. Verified live: "What does Item 9A report about the
+    effectiveness of JPMorgan's internal controls?" resolved to an
+    unrelated WHO report instead of the JPM 10-K that has that exact
+    section, purely because the possessive form matched nothing."""
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    terms = resolver.doc_name_terms("What does JPMorgan's 10-K say about risk?")
+    assert "jpmorgan" in terms
+    assert "jpmorgan's" not in terms
+
+
+def test_document_match_terms_strips_trailing_possessive():
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    terms = resolver.document_match_terms(
+        "What does Item 9A report about the effectiveness of JPMorgan's internal controls?"
+    )
+    assert "jpmorgan" in terms
+    assert "jpmorgan's" not in terms
+
+
 def test_doc_name_terms_excludes_generic_long_words():
     """Regression: a prior version fell back to "any word >= 6 chars that
     isn't a stopword" as a document-name candidate. In a multi-document

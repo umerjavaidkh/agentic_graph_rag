@@ -39,6 +39,7 @@ _STRUCTURAL_REF_RE = re.compile(
     r"\b(?:note|box|item|figure|fig\.?|section)\s+(?:no\.?\s*)?\d+[a-z]?(?:\.\d+)*\b", re.I
 )
 _PAREN_RE = re.compile(r"\([^)]*\)")
+_POSSESSIVE_RE = re.compile(r"'s?$")
 
 
 class DocumentResolver:
@@ -471,7 +472,16 @@ class DocumentResolver:
 
     def document_match_terms(self, query: str) -> list[str]:
         terms: list[str] = list(_query_anchor_terms(query))
-        for t in re.findall(r"[\w'-]{3,}", (query or "").lower()):
+        for raw in re.findall(r"[\w'-]{3,}", (query or "").lower()):
+            # Strip a trailing possessive ("jpmorgan's" -> "jpmorgan") before
+            # it becomes a CONTAINS search term -- the possessive form almost
+            # never appears verbatim in the document's own prose (which says
+            # "JPMorgan Chase & Co." or "the Firm", not "JPMorgan's"), so an
+            # unstripped possessive scores zero everywhere and silently drops
+            # what should have been the query's strongest anchor.
+            t = _POSSESSIVE_RE.sub("", raw)
+            if len(t) < 3:
+                continue
             if t in _KEYWORD_STOP:
                 continue
             if t in {"table", "contents", "content", "provide", "list", "show", "give", "from", "form", "page", "fetch", "document"}:
@@ -496,10 +506,15 @@ class DocumentResolver:
         # Tokens that are capitalised mid-sentence are likely proper nouns / doc names
         words = re.findall(r"[A-Za-z][\w'-]*", cleaned)
         for i, w in enumerate(words):
-            t = w.lower()
             if i == 0:
                 continue  # skip sentence-start capitalisation
-            if w[0].isupper() and len(t) >= 3 and t not in _KEYWORD_STOP and t not in terms:
+            if not w[0].isupper():
+                continue
+            # See document_match_terms's identical strip -- a possessive
+            # ("JPMorgan's") almost never appears verbatim in the document's
+            # own prose, so leaving it attached silently zeroes out the term.
+            t = _POSSESSIVE_RE.sub("", w.lower())
+            if len(t) >= 3 and t not in _KEYWORD_STOP and t not in terms:
                 terms.append(t)
 
         # Deliberately NOT falling back to "any word >= 6 chars that isn't a
