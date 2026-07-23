@@ -8,6 +8,7 @@ FullHybrid all need "which document is this question about").
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Optional
 
@@ -22,6 +23,23 @@ from ..cypher_scope import _clean_doc_title
 from ..query_intent import KEYWORD_STOP as _KEYWORD_STOP
 from ..text_utils import _query_anchor_terms
 from .graph_seeds import GraphSeedService
+
+# A structural reference inside a question ("Note 3 (Commitments and
+# Contingencies)", "Box 9", "Item 7") names a location WITHIN whichever
+# document the conversation is already about, not a different document to
+# search for. Standard footnote/item titles like "Commitments and
+# Contingencies" are boilerplate shared across most filings in a corpus, so
+# left unstripped they get picked up by the mid-sentence-capitalization scan
+# below and wrongly treated as document-identifying anchors -- verified
+# live: this single-handedly overrode a correct conversation document hint,
+# resolving "What does Note 3 (Commitments and Contingencies) discuss?" to
+# an unrelated document that merely had more occurrences of those generic
+# legal/financial terms.
+_STRUCTURAL_REF_RE = re.compile(
+    r"\b(?:note|box|item|figure|fig\.?|section)\s+(?:no\.?\s*)?\d+[a-z]?(?:\.\d+)*\b", re.I
+)
+_PAREN_RE = re.compile(r"\([^)]*\)")
+_POSSESSIVE_RE = re.compile(r"'s?$")
 
 
 class DocumentResolver:
@@ -97,8 +115,17 @@ class DocumentResolver:
             df = term_doc_freq.get(term, 0)
             if df <= 0:
                 return 0.0
-            # Inverse document frequency: distinctive terms (df=1) weigh most.
-            return float(total_docs) / float(df)
+            # log-IDF, not linear: a term present in most of the corpus
+            # should contribute only a token amount, not a merely-reduced
+            # multiple of a raw count that can still run into the hundreds
+            # in a large document (verified live: linear IDF's ~1.7x
+            # downweight on a term shared by 3 of 5 documents wasn't enough
+            # to stop a 130+ raw count from nearly canceling out a
+            # genuinely distinctive term's contribution). The +0.1 floor
+            # keeps a term appearing in EVERY current document from going
+            # to exactly zero, preserving this tier's documented fallback
+            # of guessing by size when nothing in the query is distinctive.
+            return math.log(float(total_docs) / float(df)) + 0.1
 
         scored: list[tuple[float, str, str]] = []
         for d in docs:
@@ -107,7 +134,16 @@ class DocumentResolver:
                 w = term_weight(h["term"])
                 if h["title_match"]:
                     score += 1000.0 * w  # title/id match dominates
-                score += float(h["cnt"]) * w
+                # log1p, not a raw count: a document that's simply much
+                # larger has proportionally more nodes containing ANY given
+                # term, so raw counts let sheer size dominate even a
+                # correctly-IDF-weighted score (verified live: "note"/
+                # "commitments"/"contingencies" occurring 500+/130+/14+
+                # times in one large filing outweighed a genuinely
+                # distinctive term occurring 34 times in the right, smaller
+                # document). Saturating the count lets distinctiveness
+                # (the weight) decide close calls instead of magnitude.
+                score += math.log1p(float(h["cnt"])) * w
             scored.append((score, str(d["id"]), _clean_doc_title(str(d["title"] or d["id"]))))
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -191,7 +227,9 @@ class DocumentResolver:
         return _clean_doc_title(logical_id)
 
     @staticmethod
-    def _pick_best_by_term_weight(rows, terms: list[str]) -> Optional[tuple[str, str]]:
+    def _pick_best_by_term_weight(
+        rows, terms: list[str], *, require_distinctive: bool = False
+    ) -> Optional[tuple[str, str]]:
         """Shared IDF-weighted scoring for a `collect({term, cnt, title_match})
         per document` result set — same approach as
         resolve_document_for_query_strict, factored out so the generic
@@ -200,7 +238,15 @@ class DocumentResolver:
         content overall regardless of relevance. Unlike the strict
         resolver, does not require a clear lead over the runner-up — this
         tier is already the lower-confidence fallback, so ties are broken
-        by whatever Neo4j returns first rather than declining to guess."""
+        by whatever Neo4j returns first rather than declining to guess.
+
+        require_distinctive: decline (return None) unless at least one
+        matched term is non-universal (0 < df < total docs) — i.e. actually
+        excludes some document in the corpus, not just present-in-all
+        boilerplate. Used by resolve_document_for_query to gate whether
+        this tier is trustworthy enough to run BEFORE vector-majority,
+        which has no defense against corpus-size skew of its own.
+        """
         docs: list[dict] = [dict(r) for r in rows]
         if not docs:
             return None
@@ -212,12 +258,18 @@ class DocumentResolver:
                     term_doc_freq[h["term"]] = term_doc_freq.get(h["term"], 0) + 1
 
         total_docs = len(docs)
+        if require_distinctive and not any(
+            0 < df < total_docs for df in term_doc_freq.values()
+        ):
+            return None
 
         def term_weight(term: str) -> float:
             df = term_doc_freq.get(term, 0)
             if df <= 0:
                 return 0.0
-            return float(total_docs) / float(df)
+            # See resolve_document_for_query_strict's identical formula for
+            # why this is log-IDF with a +0.1 floor, not linear IDF.
+            return math.log(float(total_docs) / float(df)) + 0.1
 
         scored: list[tuple[float, str, str]] = []
         for d in docs:
@@ -226,7 +278,9 @@ class DocumentResolver:
                 w = term_weight(h["term"])
                 if h["title_match"]:
                     score += 1000.0 * w
-                score += float(h["cnt"]) * w
+                # log1p, not a raw count -- see resolve_document_for_query_strict's
+                # identical comment; the same size-bias reaches this tier too.
+                score += math.log1p(float(h["cnt"])) * w
             scored.append((score, str(d["id"]), _clean_doc_title(str(d["title"] or d["id"]))))
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -275,6 +329,15 @@ class DocumentResolver:
         already about is a better default than vector-majority's fallback
         behavior of favoring whichever document has the most content
         overall, regardless of relevance.
+
+        Priority: strict name > hint > confident distinctive term (see
+        require_distinctive on _pick_best_by_term_weight) > vector-majority
+        > any term match (lower bar) > largest-document fallback. The
+        confident-term tier runs before vector-majority specifically
+        because vector-majority has no defense against corpus-size skew —
+        a genuinely distinctive keyword in the query is more trustworthy
+        than embedding-space nearest-neighbor voting, which naturally
+        favors whichever document is simply larger.
         """
         strict_id, strict_title = self.resolve_document_for_query_strict(session, query, tenant_id)
         if strict_id:
@@ -285,13 +348,10 @@ class DocumentResolver:
             if hint_title is not None:
                 return document_id_hint, hint_title
 
-        vector_id, vector_title = self.resolve_document_by_vector(session, query, tenant_id)
-        if vector_id:
-            return vector_id, vector_title
-
         terms = self.document_match_terms(query)
         lc = lifecycle_active("d")
         lc_n = lifecycle_active("n")
+        term_rows: list[dict] = []
         if terms:
             # IDF-weighted, not a flat count() — document_match_terms is
             # deliberately broader/lower-confidence than doc_name_terms (it
@@ -302,30 +362,54 @@ class DocumentResolver:
             # mode already fixed in resolve_document_for_query_strict,
             # reachable here too since this tier runs after that one
             # declines. Mirrors that method's exact scoring approach.
-            rows = session.run(
-                f"""
-                MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]
-                      ->(:{DOC_REVISION_LABEL})-[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})
-                WHERE {lc}
-                  AND {tenant_filter("dl")}
-                  AND {tenant_filter("d")}
-                WITH dl, d
-                UNWIND $terms AS term
-                OPTIONAL MATCH (d)-[:CONTAINS*1..5]->(n)
-                WHERE {lc_n}
-                  AND {tenant_filter("n")}
-                  AND (toLower(coalesce(n.title, '')) CONTAINS term
-                       OR toLower(coalesce(n.text, '')) CONTAINS term)
-                WITH dl, term, count(DISTINCT n) AS cnt,
-                     (toLower(coalesce(dl.title, '')) CONTAINS term
-                      OR toLower(dl.logical_id) CONTAINS term) AS title_match
-                RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title,
-                       collect({{term: term, cnt: cnt, title_match: title_match}}) AS term_hits
-                """,
-                terms=terms,
-                tenant_id=tenant_id,
-            )
-            match = self._pick_best_by_term_weight(rows, terms)
+            term_rows = [
+                dict(r)
+                for r in session.run(
+                    f"""
+                    MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]
+                          ->(:{DOC_REVISION_LABEL})-[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})
+                    WHERE {lc}
+                      AND {tenant_filter("dl")}
+                      AND {tenant_filter("d")}
+                    WITH dl, d
+                    UNWIND $terms AS term
+                    OPTIONAL MATCH (d)-[:CONTAINS*1..5]->(n)
+                    WHERE {lc_n}
+                      AND {tenant_filter("n")}
+                      AND (toLower(coalesce(n.title, '')) CONTAINS term
+                           OR toLower(coalesce(n.text, '')) CONTAINS term)
+                    WITH dl, term, count(DISTINCT n) AS cnt,
+                         (toLower(coalesce(dl.title, '')) CONTAINS term
+                          OR toLower(dl.logical_id) CONTAINS term) AS title_match
+                    RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title,
+                           collect({{term: term, cnt: cnt, title_match: title_match}}) AS term_hits
+                    """,
+                    terms=terms,
+                    tenant_id=tenant_id,
+                )
+            ]
+            # A literal, distinctive keyword match ("amazon") is a more
+            # reliable signal than vector-majority's embedding-space
+            # voting, which has no defense against corpus-size skew (a
+            # bigger document naturally owns more of any top-K nearest-
+            # neighbor result, even for queries dominated by generic shared
+            # vocabulary with only one truly distinctive word) — verified
+            # live: a query mentioning "amazon" alongside standard
+            # financial/legal boilerplate resolved to an unrelated, much
+            # larger filing via vector-majority, despite this same
+            # term-weighted scoring correctly favoring the right document
+            # once tried. require_distinctive=True keeps this from firing
+            # on pure boilerplate overlap with no real signal at all.
+            confident = self._pick_best_by_term_weight(term_rows, terms, require_distinctive=True)
+            if confident:
+                return confident
+
+        vector_id, vector_title = self.resolve_document_by_vector(session, query, tenant_id)
+        if vector_id:
+            return vector_id, vector_title
+
+        if terms:
+            match = self._pick_best_by_term_weight(term_rows, terms)
             if match:
                 return match
 
@@ -388,7 +472,16 @@ class DocumentResolver:
 
     def document_match_terms(self, query: str) -> list[str]:
         terms: list[str] = list(_query_anchor_terms(query))
-        for t in re.findall(r"[\w'-]{3,}", (query or "").lower()):
+        for raw in re.findall(r"[\w'-]{3,}", (query or "").lower()):
+            # Strip a trailing possessive ("jpmorgan's" -> "jpmorgan") before
+            # it becomes a CONTAINS search term -- the possessive form almost
+            # never appears verbatim in the document's own prose (which says
+            # "JPMorgan Chase & Co." or "the Firm", not "JPMorgan's"), so an
+            # unstripped possessive scores zero everywhere and silently drops
+            # what should have been the query's strongest anchor.
+            t = _POSSESSIVE_RE.sub("", raw)
+            if len(t) < 3:
+                continue
             if t in _KEYWORD_STOP:
                 continue
             if t in {"table", "contents", "content", "provide", "list", "show", "give", "from", "form", "page", "fetch", "document"}:
@@ -407,15 +500,21 @@ class DocumentResolver:
         Used by the strict document resolver to avoid matching the wrong document
         via common words like "all", "toc", etc.
         """
-        terms: list[str] = list(_query_anchor_terms(query))
+        cleaned = _PAREN_RE.sub(" ", _STRUCTURAL_REF_RE.sub(" ", query or ""))
+        terms: list[str] = list(_query_anchor_terms(cleaned))
 
         # Tokens that are capitalised mid-sentence are likely proper nouns / doc names
-        words = re.findall(r"[A-Za-z][\w'-]*", query or "")
+        words = re.findall(r"[A-Za-z][\w'-]*", cleaned)
         for i, w in enumerate(words):
-            t = w.lower()
             if i == 0:
                 continue  # skip sentence-start capitalisation
-            if w[0].isupper() and len(t) >= 3 and t not in _KEYWORD_STOP and t not in terms:
+            if not w[0].isupper():
+                continue
+            # See document_match_terms's identical strip -- a possessive
+            # ("JPMorgan's") almost never appears verbatim in the document's
+            # own prose, so leaving it attached silently zeroes out the term.
+            t = _POSSESSIVE_RE.sub("", w.lower())
+            if len(t) >= 3 and t not in _KEYWORD_STOP and t not in terms:
                 terms.append(t)
 
         # Deliberately NOT falling back to "any word >= 6 chars that isn't a

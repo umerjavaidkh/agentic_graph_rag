@@ -131,18 +131,56 @@ class PageStrategy:
     def _query_wants_all_page_visuals(self, query: str) -> bool:
         return parse_visual_intent(query).list_all
 
+    def _resolve_pdf_page_by_figure_number(
+        self, session: Any, doc_id: Optional[str], tenant_id: str, fig_num: str
+    ) -> Optional[int]:
+        """Find the PDF page whose OCR'd text names "Figure N" (no page number given).
+
+        _structural_page_visual_retrieve otherwise requires a page number up
+        front; this lets a bare "what does Figure 1 show" question reach the
+        visual-content pathway instead of falling through to plain-text
+        search, which finds nothing since the figure's actual description
+        lives in visual_content, not in page.text.
+        """
+        if not doc_id:
+            return None
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
+            MATCH (p:Page)
+            WHERE p.id STARTS WITH d.id + '_page_'
+              AND {tenant_filter("p")}
+              AND toLower(coalesce(p.text, '')) CONTAINS 'fig'
+            RETURN p.pdf_page AS pdf_page, p.text AS page_text
+            ORDER BY p.order
+            """,
+            doc_id=doc_id,
+            tenant_id=tenant_id,
+        )
+        pat = re.compile(rf"\b(?:fig\.?|figure)\s*0*{re.escape(fig_num)}\b", re.I)
+        for r in rows:
+            if pat.search(r.get("page_text") or ""):
+                return r.get("pdf_page")
+        return None
+
     def _structural_page_visual_retrieve(
         self, session: Any, query: str, tenant_id: str = "", document_id_hint: str = ""
     ) -> list[dict]:
         """Page figures/diagrams via stored visual_content text (ingest vision enrichment)."""
         pdf_page, doc_page = parse_page_targets(query)
-        if pdf_page is None and not doc_page:
-            return []
-
-        list_all_visuals = self._query_wants_all_page_visuals(query)
         doc_id, doc_title = self._document_resolver.resolve_document_for_query(
             session, query, tenant_id, document_id_hint=document_id_hint
         )
+        if pdf_page is None and not doc_page:
+            want_fig = self._figure_number_from_query(query)
+            if want_fig:
+                pdf_page = self._resolve_pdf_page_by_figure_number(session, doc_id, tenant_id, want_fig)
+            if pdf_page is None:
+                return []
+
+        list_all_visuals = self._query_wants_all_page_visuals(query)
         row = session.run(
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})

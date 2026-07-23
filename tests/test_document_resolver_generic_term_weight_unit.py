@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -101,3 +102,91 @@ def test_title_match_is_a_strong_signal(resolver):
     ]
     result = resolver._pick_best_by_term_weight(rows, ["widget", "godata"])
     assert result[0] == "godata"
+
+
+def test_linear_idf_was_not_enough_log_idf_flips_the_winner(resolver):
+    """Regression: linear IDF weighting (total_docs / doc_freq) correctly
+    downweights a boilerplate term, but a raw count in the hundreds (a much
+    bigger document) still nearly cancels out a genuinely distinctive
+    term's contribution -- verified live with these exact counts: a query
+    mentioning "amazon" alongside standard financial/legal boilerplate
+    ("note", "commitments", "contingencies", "discuss") scored the huge
+    JPM 10-K at 24.5 vs the correct AMZN 10-Q at 24.22 under linear IDF, a
+    coin-flip margin that isn't reliable. log-IDF fixes this by scaling
+    down non-distinctive terms far more aggressively while barely
+    touching the truly distinctive one."""
+    rows = [
+        {
+            "id": "aapl-10k-2024", "title": "AAPL 10-K",
+            "term_hits": [_term_hit("note", 60), _term_hit("commitments", 3), _term_hit("contingencies", 6), _term_hit("discuss", 5)],
+        },
+        {
+            "id": "jpm-10k-2017-02-28", "title": "JPM 10-K",
+            "term_hits": [_term_hit("note", 559), _term_hit("commitments", 131), _term_hit("contingencies", 14), _term_hit("discuss", 249)],
+        },
+        {
+            "id": "amzn-10q-2016-07-29", "title": "AMZN 10-Q",
+            "term_hits": [_term_hit("note", 39), _term_hit("commitments", 16), _term_hit("contingencies", 16), _term_hit("discuss", 8), _term_hit("amazon", 34)],
+        },
+        {
+            "id": "stratec-compliance-policy", "title": "STRATEC Policy",
+            "term_hits": [_term_hit("note", 7), _term_hit("discuss", 4)],
+        },
+        {
+            "id": "godata-annual-report", "title": "Go.Data Report",
+            "term_hits": [_term_hit("note", 9), _term_hit("discuss", 13), _term_hit("amazon", 2)],
+        },
+    ]
+    terms = ["note", "commitments", "contingencies", "discuss", "amazon"]
+    result = resolver._pick_best_by_term_weight(rows, terms)
+    assert result is not None
+    assert result[0] == "amzn-10q-2016-07-29"
+
+
+def test_require_distinctive_declines_when_every_term_is_universal(resolver):
+    rows = [
+        {"id": "doc-a", "title": "Doc A", "term_hits": [_term_hit("annual", 40), _term_hit("report", 55)]},
+        {"id": "doc-b", "title": "Doc B", "term_hits": [_term_hit("annual", 3), _term_hit("report", 4)]},
+    ]
+    result = resolver._pick_best_by_term_weight(rows, ["annual", "report"], require_distinctive=True)
+    assert result is None
+
+
+def test_require_distinctive_accepts_when_one_term_excludes_a_document(resolver):
+    rows = [
+        {"id": "doc-a", "title": "Doc A", "term_hits": [_term_hit("annual", 40), _term_hit("report", 55), _term_hit("amazon", 0)]},
+        {"id": "doc-b", "title": "Doc B", "term_hits": [_term_hit("annual", 3), _term_hit("report", 4), _term_hit("amazon", 34)]},
+    ]
+    result = resolver._pick_best_by_term_weight(rows, ["annual", "report", "amazon"], require_distinctive=True)
+    assert result is not None
+    assert result[0] == "doc-b"
+
+
+def test_resolve_document_for_query_prefers_confident_term_over_vector_majority():
+    """The full priority chain: a confident distinctive-term match must be
+    tried BEFORE vector-majority, not after -- vector-majority has no
+    defense against corpus-size skew of its own, so if it ran first here
+    it would win with its own (wrong) answer before the more reliable
+    term-based tier ever got a chance."""
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    resolver.resolve_document_for_query_strict = MagicMock(return_value=(None, None))
+    resolver.document_match_terms = MagicMock(return_value=["amazon"])
+    resolver.resolve_document_by_vector = MagicMock(
+        side_effect=AssertionError("must not reach vector-majority when a confident term match exists")
+    )
+
+    class _FakeSession:
+        def run(self, cypher, **kwargs):
+            # A third, unrelated document with zero mentions is what makes
+            # "amazon" non-universal (df=2 of 3) -- with only the two
+            # candidates present, the term would trivially appear in
+            # "every" document and require_distinctive would (correctly)
+            # decline, same as it does for genuinely universal boilerplate.
+            return [
+                {"id": "jpm-10k", "title": "JPM 10-K", "term_hits": [_term_hit("amazon", 2)]},
+                {"id": "amzn-10q", "title": "AMZN 10-Q", "term_hits": [_term_hit("amazon", 34)]},
+                {"id": "stratec-policy", "title": "STRATEC Policy", "term_hits": [_term_hit("amazon", 0)]},
+            ]
+
+    doc_id, title = resolver.resolve_document_for_query(_FakeSession(), "what does amazon report say?", tenant_id="default")
+    assert doc_id == "amzn-10q"

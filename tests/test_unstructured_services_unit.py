@@ -156,6 +156,30 @@ def test_doc_name_terms_prefers_proper_nouns():
     assert len(terms) <= 6
 
 
+def test_doc_name_terms_strips_trailing_possessive():
+    """Regression: "JPMorgan's" extracted whole (with the apostrophe-s)
+    never matches the document's own text, which says "JPMorgan Chase &
+    Co." or "the Firm", not the possessive form -- CONTAINS scored zero
+    everywhere and the query's one real anchor silently contributed
+    nothing. Verified live: "What does Item 9A report about the
+    effectiveness of JPMorgan's internal controls?" resolved to an
+    unrelated WHO report instead of the JPM 10-K that has that exact
+    section, purely because the possessive form matched nothing."""
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    terms = resolver.doc_name_terms("What does JPMorgan's 10-K say about risk?")
+    assert "jpmorgan" in terms
+    assert "jpmorgan's" not in terms
+
+
+def test_document_match_terms_strips_trailing_possessive():
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    terms = resolver.document_match_terms(
+        "What does Item 9A report about the effectiveness of JPMorgan's internal controls?"
+    )
+    assert "jpmorgan" in terms
+    assert "jpmorgan's" not in terms
+
+
 def test_doc_name_terms_excludes_generic_long_words():
     """Regression: a prior version fell back to "any word >= 6 chars that
     isn't a stopword" as a document-name candidate. In a multi-document
@@ -175,6 +199,31 @@ def test_doc_name_terms_excludes_generic_long_words():
 
     terms = resolver.doc_name_terms("What is discussed on page 6 of this document?")
     assert terms == []
+
+
+def test_doc_name_terms_excludes_structural_references_and_their_glosses():
+    """Regression: a structural reference like "Note 3 (Commitments and
+    Contingencies)" names a location WITHIN the document already under
+    discussion, not a different document. Standard footnote/item titles are
+    boilerplate shared across most filings in a corpus, so left unstripped
+    the mid-sentence-capitalization scan picked them up as document-naming
+    anchors and resolve_document_for_query_strict's raw-occurrence scoring
+    matched whichever unrelated document merely used those generic terms
+    more. Verified live: this single-handedly overrode a correct
+    conversation document hint on an AMZN 10-Q, resolving to an unrelated
+    JPM 10-K instead purely because JPM's "Note 3" happens to also be
+    titled with common financial/legal vocabulary."""
+    resolver = DocumentResolver(GraphSeedService(RankingService()))
+    assert resolver.doc_name_terms("What does Note 3 (Commitments and Contingencies) discuss?") == []
+    assert resolver.doc_name_terms("What is Box 9 about?") == []
+    # Letter-suffixed SEC item numbering ("Item 9A") must strip the same way.
+    assert resolver.doc_name_terms("What does Item 9A (Controls and Procedures) report?") == []
+
+    # A real proper noun alongside a structural reference must still surface.
+    terms = resolver.doc_name_terms(
+        "What does Note 7 (Segment Information) report about Amazon's business segments?"
+    )
+    assert "amazon" in terms or "amazon's" in terms
 
 
 def test_logical_id_from_node_id_extracts_prefix():
