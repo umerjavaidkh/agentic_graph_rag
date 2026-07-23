@@ -93,8 +93,11 @@ _PAGE_QUERY_RE = re.compile(
     re.I,
 )
 
+_FIG_NUMBER_RE = re.compile(r"\b(?:fig\.?|figure)\s*\d+(?:\.\d+)?\b", re.I)
+
 _VISUAL_PAGE_RE = re.compile(
     r"\bvisual\s+content\b|"
+    r"\b(?:fig\.?|figure)\s*\d+(?:\.\d+)?\b|"
     r"\b(?:all\s+)?(?:the\s+)?(?:images?|figures?|figs?\.?|diagrams?|charts?|photos?|pictures?|visuals?)\b.{0,40}\bpage\b|"
     r"\bpage\b.{0,40}\b(?:images?|figures?|visual|diagram)\b|"
     r"\b(?:tell\s+me|describe|explain).{0,60}\b(?:image|figure|diagram)\b|"
@@ -163,6 +166,11 @@ def is_visual_page_question(query: str) -> bool:
         return False
     pdf_page, doc_page = parse_page_number_from_query(query)
     if pdf_page is not None or doc_page:
+        return True
+    # A bare "what does Figure 1 show" has no page number to give, but a
+    # named figure is still resolvable — the page gets found by figure
+    # number instead (see PageStrategy._resolve_pdf_page_by_figure_number).
+    if _FIG_NUMBER_RE.search(query or ""):
         return True
     intent = parse_visual_intent(query)
     return intent.wants_image or intent.pdf_page is not None
