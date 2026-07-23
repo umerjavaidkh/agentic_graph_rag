@@ -80,6 +80,10 @@ def _enrich_and_persist(
         "strategy": final.get("strategy", ""),
         "query_type": final.get("query_type"),
         "presentation": final.get("presentation"),
+        "retrieved_context": {
+            "document_id": final.get("document_id"),
+            "document_title": final.get("document_title"),
+        },
         "_route_tool": tool_name,
         "_route_method": route_method,
         "_access_level": ctx.role.value,
