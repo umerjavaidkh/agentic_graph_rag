@@ -6,35 +6,39 @@
   <title>Agentic Graph RAG</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&family=PT+Serif:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
+    /* Theme: warm-paper editorial (after tdd.cat's "The Daily Diff" masthead) --
+       cream newsprint ground, oxblood rubric accent, Playfair Display for the
+       masthead/display type, PT Serif for running text and UI labels. */
     :root{
-      --bg0:#080d18;
-      --bg1:#0c1424;
-      --surface:#111827;
-      --surface-elevated:#151f33;
-      --card: rgba(255,255,255,0.04);
-      --border: rgba(255,255,255,0.10);
-      --border-strong: rgba(255,255,255,0.16);
-      --text:#f1f5f9;
-      --text-secondary:#94a3b8;
-      --text-muted:#64748b;
-      --accent:#3b82f6;
-      --accent-soft:rgba(59,130,246,0.15);
-      --accent-glow:rgba(59,130,246,0.35);
-      --success:#10b981;
-      --danger:#f87171;
-      --shadow: 0 4px 24px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.04) inset;
-      --shadow-lg: 0 24px 48px rgba(0,0,0,0.45);
-      --radius: 14px;
-      --radius-sm: 10px;
-      --radius-lg: 18px;
+      --bg0:#f2ecdd;
+      --bg1:#ece4d1;
+      --surface:#faf6ea;
+      --surface-elevated:#f5efdf;
+      --card: rgba(38,28,16,0.035);
+      --border: rgba(38,28,16,0.14);
+      --border-strong: rgba(38,28,16,0.26);
+      --text:#241c14;
+      --text-secondary:#6b5c48;
+      --text-muted:#8c7b64;
+      --accent:#8a2a20;
+      --accent-soft:rgba(138,42,32,0.12);
+      --accent-glow:rgba(138,42,32,0.28);
+      --success:#3f6b3f;
+      --danger:#a3311f;
+      --shadow: 0 2px 10px rgba(38,28,16,0.08), 0 1px 0 rgba(255,255,255,0.5) inset;
+      --shadow-lg: 0 10px 30px rgba(38,28,16,0.12);
+      --radius: 3px;
+      --radius-sm: 2px;
+      --radius-lg: 4px;
       --font-size: 15px;
       --font-size-sm: 13px;
       --font-size-xs: 11.5px;
       --line: 1.6;
       --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      --sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      --sans: "PT Serif", Georgia, "Times New Roman", serif;
+      --font-display: "Playfair Display", Georgia, serif;
       --msg-max:  min(720px, 88%);
     }
     *{ box-sizing:border-box; }
@@ -46,8 +50,7 @@
       line-height: var(--line);
       color: var(--text);
       background:
-        radial-gradient(ellipse 80% 50% at 20% -10%, rgba(59,130,246,0.12), transparent),
-        radial-gradient(ellipse 60% 40% at 90% 10%, rgba(16,185,129,0.08), transparent),
+        repeating-linear-gradient(180deg, rgba(38,28,16,0.015) 0px, rgba(38,28,16,0.015) 1px, transparent 1px, transparent 3px),
         linear-gradient(165deg, var(--bg0) 0%, var(--bg1) 100%);
       min-height:100vh;
       display:flex;
@@ -77,8 +80,8 @@
     }
     .panel.sidebar{ min-height: 0; }
     .panel-header{
-      padding: 18px 20px 16px;
-      border-bottom: 1px solid var(--border);
+      padding: 18px 20px 14px;
+      border-bottom: 3px double var(--border-strong);
       background: var(--surface-elevated);
       flex-shrink: 0;
     }
@@ -95,29 +98,32 @@
       display:flex;
       align-items:center;
       gap: 10px;
-      font-weight: 600;
-      font-size: 0.9375rem;
-      letter-spacing: -0.02em;
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 1.125rem;
+      letter-spacing: -0.01em;
       color: var(--text);
     }
     .dot{
-      width:8px;height:8px;border-radius:50%;
+      width:7px;height:7px;border-radius:50%;
       background: var(--accent);
-      box-shadow: 0 0 12px var(--accent-glow);
+      box-shadow: 0 0 0 3px var(--accent-soft);
     }
     .badge{
       font-size: var(--font-size-xs);
-      font-weight: 500;
-      padding: 4px 10px;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      background: rgba(255,255,255,0.04);
+      font-weight: 700;
+      padding: 3px 10px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
       color: var(--text-secondary);
       white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
-    .badge.status-ready{ color: var(--success); border-color: rgba(16,185,129,0.35); }
-    .badge.status-busy{ color: var(--accent); border-color: rgba(59,130,246,0.4); }
-    .badge.status-error{ color: var(--danger); border-color: rgba(248,113,113,0.35); }
+    .badge.status-ready{ color: var(--success); border-color: var(--success); }
+    .badge.status-busy{ color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+    .badge.status-error{ color: #fff; background: var(--danger); border-color: var(--danger); }
     .content{
       padding: 18px 20px 20px;
       overflow-y: auto;
@@ -136,8 +142,8 @@
       width:100%;
       padding: 10px 12px;
       border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
       color: var(--text);
       font-family: var(--sans);
       font-size: var(--font-size-sm);
@@ -152,7 +158,7 @@
       margin-top: 14px;
       padding: 12px;
       border-radius: var(--radius-sm);
-      background: rgba(255,255,255,0.03);
+      background: var(--card);
       border: 1px solid var(--border);
       color: var(--text-secondary);
       font-size: var(--font-size-sm);
@@ -162,7 +168,7 @@
       font-family: var(--mono);
       font-size: 0.85em;
       color: var(--text);
-      background: rgba(0,0,0,0.3);
+      background: rgba(38,28,16,0.08);
       padding: 1px 5px;
       border-radius: 4px;
     }
@@ -171,30 +177,31 @@
     }
     button{
       appearance:none;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
       color: var(--text);
       padding: 9px 14px;
       border-radius: var(--radius-sm);
       cursor:pointer;
       font-family: var(--sans);
       font-size: var(--font-size-sm);
-      font-weight: 500;
+      font-weight: 700;
       transition: background 0.15s, border-color 0.15s;
     }
     button:hover:not(:disabled){
-      background: rgba(255,255,255,0.1);
-      border-color: var(--border-strong);
+      background: var(--accent-soft);
+      border-color: var(--accent);
     }
     button.primary{
-      border-color: transparent;
+      border-color: var(--accent);
       background: var(--accent);
-      color: #fff;
-      font-weight: 600;
+      color: #fdf8ec;
+      font-weight: 700;
     }
     button.primary:hover:not(:disabled){
-      background: #2563eb;
-      filter: brightness(1.05);
+      background: #6e2118;
+      border-color: #6e2118;
+      filter: none;
     }
     button:disabled{
       opacity: 0.5;
@@ -212,12 +219,16 @@
       padding: 20px 24px;
       flex: 1;
       overflow-y: auto;
-      scroll-behavior: smooth;
+      /* No scroll-behavior:smooth here on purpose -- streamed tokens can
+         arrive many times a second, and an animated scroll gets retargeted
+         (interrupted mid-flight) on every one, which is what produced the
+         jerky up/down motion. Instant, rAF-throttled jumps (see JS) read as
+         smoother than an animation that never finishes. */
     }
     .chat-body::-webkit-scrollbar{ width: 8px; }
     .chat-body::-webkit-scrollbar-track{ background: transparent; }
     .chat-body::-webkit-scrollbar-thumb{
-      background: rgba(255,255,255,0.12);
+      background: rgba(38,28,16,0.18);
       border-radius: 4px;
     }
     .welcome-card{
@@ -226,14 +237,15 @@
       padding: 20px 22px;
       border-radius: var(--radius-lg);
       border: 1px solid var(--border);
-      background: linear-gradient(145deg, rgba(59,130,246,0.08), rgba(255,255,255,0.02));
+      background: var(--surface);
       text-align: center;
     }
     .welcome-card h3{
       margin: 0 0 8px;
-      font-size: 1.125rem;
-      font-weight: 600;
-      letter-spacing: -0.02em;
+      font-family: var(--font-display);
+      font-size: 1.375rem;
+      font-weight: 800;
+      letter-spacing: -0.01em;
     }
     .welcome-card p{
       margin: 0;
@@ -252,8 +264,8 @@
       font-size: var(--font-size-xs);
       padding: 6px 12px;
       border-radius: 999px;
-      border: 1px solid var(--border);
-      background: rgba(0,0,0,0.2);
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
       color: var(--text-secondary);
       cursor: pointer;
       transition: all 0.15s;
@@ -286,12 +298,12 @@
     .msg.assistant .msg-avatar{
       background: var(--accent-soft);
       color: var(--accent);
-      border: 1px solid rgba(59,130,246,0.25);
+      border: 1px solid var(--accent);
     }
     .msg.user .msg-avatar{
-      background: rgba(255,255,255,0.08);
+      background: var(--surface);
       color: var(--text-secondary);
-      border: 1px solid var(--border);
+      border: 1px solid var(--border-strong);
     }
     .msg-inner{
       max-width: var(--msg-max);
@@ -317,8 +329,8 @@
       box-shadow: var(--shadow);
     }
     .msg.user .bubble{
-      background: linear-gradient(160deg, rgba(59,130,246,0.22), rgba(59,130,246,0.08));
-      border-color: rgba(59,130,246,0.35);
+      background: var(--accent-soft);
+      border-color: var(--accent);
     }
     .bubble.plain-text{
       white-space: pre-wrap;
@@ -394,8 +406,8 @@
       text-align: left;
     }
     table.pres-table th{
-      background: rgba(59,130,246,0.12);
-      font-weight: 600;
+      background: var(--accent-soft);
+      font-weight: 700;
       font-size: var(--font-size-xs);
       text-transform: uppercase;
       letter-spacing: 0.03em;
@@ -406,8 +418,8 @@
       cursor: pointer;
       user-select: none;
     }
-    table.pres-table.interactive th:hover{ background: rgba(59,130,246,0.2); }
-    table.pres-table.interactive tbody tr:hover{ background: rgba(255,255,255,0.04); }
+    table.pres-table.interactive th:hover{ background: rgba(138,42,32,0.22); }
+    table.pres-table.interactive tbody tr:hover{ background: var(--card); }
     table.pres-table tr.row-highlight{ background: var(--accent-soft); }
     /* Wider assistant column when showing charts/tables */
     .msg-inner.has-rich-ui{
@@ -419,7 +431,7 @@
       padding: 8px 10px 4px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      background: rgba(0,0,0,0.2);
+      background: var(--card);
       width: 100%;
       height: var(--chart-h, 280px);
       min-height: var(--chart-h, 280px);
@@ -441,7 +453,7 @@
       padding: 14px 14px 12px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      background: rgba(0,0,0,0.2);
+      background: var(--card);
       overflow-x: auto;
       overflow-y: hidden;
       box-sizing: border-box;
@@ -472,7 +484,7 @@
       font-size: var(--font-size-sm);
       color: var(--muted);
       padding: 8px 10px;
-      background: rgba(255,255,255,0.04);
+      background: var(--card);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       margin-top: 8px;
@@ -562,13 +574,13 @@
       font-weight: 500;
       padding: 3px 8px;
       border-radius: 6px;
-      background: rgba(255,255,255,0.06);
+      background: var(--card);
       border: 1px solid var(--border);
       color: var(--text-secondary);
     }
     .meta-chip.accent{
       color: var(--accent);
-      border-color: rgba(59,130,246,0.35);
+      border-color: var(--accent);
       background: var(--accent-soft);
     }
     .feedback-bar{
@@ -588,28 +600,28 @@
       font-size: var(--font-size-xs);
       border-radius: 6px;
       border: 1px solid var(--border);
-      background: rgba(255,255,255,0.05);
+      background: var(--surface);
       cursor: pointer;
       line-height: 1.3;
     }
-    .feedback-btn:hover:not(:disabled){ background: rgba(255,255,255,0.1); }
+    .feedback-btn:hover:not(:disabled){ background: var(--card); }
     .feedback-btn:disabled{ opacity: 0.45; cursor: default; }
     .feedback-btn.selected-pass{
-      border-color: rgba(74, 222, 128, 0.5);
-      background: rgba(74, 222, 128, 0.12);
-      color: #86efac;
+      border-color: var(--success);
+      background: rgba(63,107,63,0.12);
+      color: var(--success);
     }
     .feedback-btn.selected-fail{
-      border-color: rgba(248, 113, 113, 0.5);
-      background: rgba(248, 113, 113, 0.12);
-      color: #fca5a5;
+      border-color: var(--danger);
+      background: rgba(163,49,31,0.12);
+      color: var(--danger);
     }
     .feedback-thanks{ color: var(--text-secondary); font-size: var(--font-size-xs); }
     details.sources-panel{
       margin-top: 12px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      background: rgba(0,0,0,0.2);
+      background: var(--card);
       overflow: hidden;
     }
     details.sources-panel summary{
@@ -660,8 +672,8 @@
       font-size: 0.95em;
       padding: 1px 5px;
       border-radius: 4px;
-      border: 1px solid var(--border);
-      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border-strong);
+      background: var(--card);
     }
     .input-row{
       display:flex;
@@ -675,8 +687,8 @@
       resize: vertical;
       padding: 12px 14px;
       border-radius: var(--radius);
-      border: 1px solid var(--border);
-      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
       color: var(--text);
       outline:none;
       line-height: 1.5;
@@ -696,9 +708,9 @@
     }
     .error{
       font-size: var(--font-size-sm);
-      color: #fecaca;
-      background: rgba(248,113,113,0.12);
-      border: 1px solid rgba(248,113,113,0.3);
+      color: var(--danger);
+      background: rgba(163,49,31,0.1);
+      border: 1px solid var(--danger);
       padding: 12px 16px;
       border-radius: var(--radius-sm);
       margin: 0 20px;
@@ -778,6 +790,18 @@
   <script>
     const chatBody = document.getElementById('chat_body');
     const q = document.getElementById('q');
+    // ChatGPT-style auto-follow: keep pinning to the bottom while the user
+    // hasn't scrolled away, but stop yanking them back down the moment they
+    // scroll up to read something. Without this, every streamed token
+    // (many per second) forced an unconditional scrollTop=scrollHeight
+    // snap, which is what produced the jerky up/down motion.
+    const SCROLL_BOTTOM_THRESHOLD = 80;
+    let autoScroll = true;
+    let scrollRaf = null;
+    chatBody.addEventListener('scroll', () => {
+      const distanceFromBottom = chatBody.scrollHeight - chatBody.scrollTop - chatBody.clientHeight;
+      autoScroll = distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD;
+    });
     const sendBtn = document.getElementById('send');
     const statusBadge = document.getElementById('status');
     const errBox = document.getElementById('err');
@@ -874,7 +898,7 @@
         </div>`;
       chatBody.appendChild(wrap);
       thinkingEl = wrap;
-      scrollToBottom();
+      scrollToBottom(true);
     }
 
     function showError(text) {
@@ -886,8 +910,14 @@
       errBox.textContent = '';
     }
 
-    function scrollToBottom() {
-      chatBody.scrollTop = chatBody.scrollHeight;
+    function scrollToBottom(force) {
+      if (force) autoScroll = true;
+      if (!autoScroll) return;
+      if (scrollRaf) return; // a frame is already scheduled; let it pick up the latest height
+      scrollRaf = requestAnimationFrame(() => {
+        chatBody.scrollTop = chatBody.scrollHeight;
+        scrollRaf = null;
+      });
     }
 
     function addMessage(kind, text) {
@@ -916,7 +946,7 @@
       wrap.appendChild(avatar);
       wrap.appendChild(inner);
       chatBody.appendChild(wrap);
-      scrollToBottom();
+      scrollToBottom(true);
       return bubble;
     }
 
@@ -1119,7 +1149,7 @@
           legend: {
             display: isPie,
             position: 'bottom',
-            labels: { color: '#94a3b8', boxWidth: 12, padding: 10 },
+            labels: { color: '#6b5c48', boxWidth: 12, padding: 10 },
           },
           tooltip: {
             callbacks: {
@@ -1138,15 +1168,15 @@
       if (!isPie) {
         options.scales = {
           x: {
-            ticks: { color: '#94a3b8', maxRotation: 45, minRotation: 0 },
-            grid: { color: 'rgba(255,255,255,0.06)' },
+            ticks: { color: '#6b5c48', maxRotation: 45, minRotation: 0 },
+            grid: { color: 'rgba(38,28,16,0.08)' },
           },
           y: {
             ticks: {
-              color: '#94a3b8',
+              color: '#6b5c48',
               callback: (v) => formatChartValue(v, block),
             },
-            grid: { color: 'rgba(255,255,255,0.06)' },
+            grid: { color: 'rgba(38,28,16,0.08)' },
             beginAtZero: true,
           },
         };
