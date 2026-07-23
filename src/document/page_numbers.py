@@ -11,14 +11,32 @@ from typing import Optional
 
 from ..models import DKGNode, NodeType
 
-# Footer / header line patterns (order matters — specific first)
-_PAGE_LABEL_PATTERNS = [
-    re.compile(r"(?:^|\s)(?:page|p\.?|pg\.?)\s*[:.]?\s*([a-zA-Z0-9ivxlcdm\-]+)\s*$", re.I),
+# Footer / header line patterns, in priority order. Each is either "strong"
+# (self-describing — the text itself signals "this is a page number", via
+# a page/p./pg. keyword or an "N / M" divisor) or "weak" (a bare digit,
+# roman numeral, or letter with no such signal). See
+# detect_document_page_label for why they use different search windows.
+#
+# The "p."/"pg." abbreviations require a mandatory period: an optional
+# period let a bare "p" match the start of any unrelated word ending a
+# candidate line — e.g. a repeated running header "COMPLIANCE POLICY" has
+# " P" (space then "P") immediately before "OLICY", which the old
+# optional-period version greedily captured whole as if "OLICY" were a
+# page label.
+_STRONG_PAGE_LABEL_PATTERNS = [
+    re.compile(r"(?:^|\s)(?:page|p\.|pg\.)\s*[:.]?\s*([a-zA-Z0-9ivxlcdm\-]+)\s*$", re.I),
+    # "6 / 12" / "6 of 12" — a page-N-of-M footer with no leading word,
+    # common enough (short reports, policies) to warrant its own pattern
+    # rather than relying on the word-prefixed one above.
+    re.compile(r"^\s*(\d{1,4})\s*(?:/|of)\s*\d{1,4}\s*$", re.I),
+]
+_WEAK_PAGE_LABEL_PATTERNS = [
     re.compile(r"^\s*([ivxlcdm]+)\s*$", re.I),
     re.compile(r"^\s*([a-z])\s*$", re.I),
     re.compile(r"^\s*(\d{1,4})\s*$"),
     re.compile(r"[-|]\s*(\d{1,4})\s*[-|]\s*$"),
 ]
+_PAGE_LABEL_PATTERNS = _STRONG_PAGE_LABEL_PATTERNS + _WEAK_PAGE_LABEL_PATTERNS
 
 _ROMAN_VALUES = {
     "i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8,
@@ -39,22 +57,33 @@ def detect_document_page_label(page_text: str) -> Optional[str]:
     if not lines:
         return None
 
-    candidates = lines[-4:] + lines[:2]
-    seen: set[str] = set()
-    for line in candidates:
-        if line in seen:
-            continue
-        seen.add(line)
-        label = _label_from_line(line)
-        if label:
-            return label
-    return None
+    # Strong patterns (self-describing — "page"/"p."/"pg." keyword, or an
+    # "N / M" divisor) get a wider window: some layouts put the printed
+    # label a few lines after a multi-line repeated running header (title
+    # line + document-name line, then the "N / M" label, then body) — a
+    # narrow window misses it. Weak patterns (a bare digit, roman numeral,
+    # or letter, with no self-describing signal) keep the original narrow
+    # edge window — widening it too would pull in unrelated bare numbers
+    # from body content that only coincidentally sits near the top/bottom
+    # (confirmed: a financial table's "2016" fiscal-year column header
+    # landed inside a widened window and got mistaken for a page label).
+    wide = list(dict.fromkeys(lines[:6] + lines[-6:]))
+    narrow = list(dict.fromkeys(lines[-4:] + lines[:2]))
 
+    for pat in _STRONG_PAGE_LABEL_PATTERNS:
+        for line in wide:
+            m = pat.search(line)
+            if not m:
+                continue
+            raw = m.group(1).strip()
+            if raw and len(raw) <= 12:
+                return raw
 
-def _label_from_line(line: str) -> Optional[str]:
-    for pat in _PAGE_LABEL_PATTERNS:
-        m = pat.search(line.strip())
-        if m:
+    for pat in _WEAK_PAGE_LABEL_PATTERNS:
+        for line in narrow:
+            m = pat.search(line)
+            if not m:
+                continue
             raw = m.group(1).strip()
             if raw and len(raw) <= 12:
                 return raw
