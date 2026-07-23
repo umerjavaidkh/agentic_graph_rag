@@ -311,7 +311,6 @@ class DocumentResolver:
         Used by the strict document resolver to avoid matching the wrong document
         via common words like "all", "toc", etc.
         """
-        q_lower = (query or "").lower()
         terms: list[str] = list(_query_anchor_terms(query))
 
         # Tokens that are capitalised mid-sentence are likely proper nouns / doc names
@@ -323,22 +322,22 @@ class DocumentResolver:
             if w[0].isupper() and len(t) >= 3 and t not in _KEYWORD_STOP and t not in terms:
                 terms.append(t)
 
-        # Long tokens (≥6 chars) that survived stop-word filtering are also good candidates
-        _generic = {
-            "table", "contents", "content", "provide", "list", "show", "give",
-            "from", "form", "page", "fetch", "document", "summary", "about",
-            "please", "could", "would", "should", "entire", "complete", "whole",
-            "languages", "language", "online", "training", "course", "translated",
-            "translation", "international", "regional", "national", "network",
-            "networks", "epidemiology", "distinct", "explicitly", "mentioned",
-            "partners", "collaborators", "document", "report", "annual",
-        }
-        for t in re.findall(r"[\w'-]{6,}", q_lower):
-            if t in _KEYWORD_STOP or t in _generic:
-                continue
-            if t not in terms:
-                terms.append(t)
-
+        # Deliberately NOT falling back to "any word >= 6 chars that isn't a
+        # stopword" here (a prior version of this method did, guarded only
+        # by a small hardcoded exclusion list). That treated ordinary
+        # content vocabulary — "employees", "conflicts", "benefits",
+        # "discussed" — as document-identifying anchor terms, and this
+        # method's own per-document scoring counts RAW occurrences: in a
+        # corpus with one much larger document, generic words that are
+        # merely common (not distinctive) reliably favor whichever document
+        # has the most content, regardless of which document the question
+        # is actually about (verified: a 638-section 10-K wrongly won over
+        # an 83-section unrelated policy document on the strength of
+        # "employees"/"conflicts"/"benefits" alone). document_match_terms()
+        # already exists as the deliberately broader, lower-confidence
+        # sibling for exactly this kind of generic-keyword matching —
+        # resolve_document_for_query() falls back to it (and to vector
+        # similarity) after this strict resolver declines to guess.
         return terms[:6]
 
     def resolve_document_id(self, session, name: str, tenant_id: str = "") -> Optional[str]:
