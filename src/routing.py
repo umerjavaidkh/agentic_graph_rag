@@ -140,6 +140,31 @@ TOOL_TO_AGENT: dict[str, str] = {
     "query_hybrid": "hybrid",
 }
 
+# Explicit retrieval-mode override (UI dropdown / API `retrieval_mode`).
+# Every query picks one agent up front — there is no "auto" LLM router mode:
+# structured and unstructured retrieval are driven independently and
+# deterministically. An omitted, empty, or unrecognized value (including a
+# stale "auto") falls back to DEFAULT_RETRIEVAL_MODE rather than routing.
+MODE_TO_TOOL: dict[str, str] = {
+    "structured": "query_data",
+    "unstructured": "search_documents",
+    "hybrid": "query_hybrid",
+}
+
+DEFAULT_RETRIEVAL_MODE = "unstructured"
+
+
+def resolve_mode_override(retrieval_mode: Optional[str]) -> str:
+    """
+    Map a retrieval_mode to the MCP tool that must handle the query.
+
+    Always returns a concrete tool. Unknown/empty values (and any legacy
+    "auto") resolve to DEFAULT_RETRIEVAL_MODE — the baseline LLM router is
+    never consulted for a user query.
+    """
+    key = (retrieval_mode or "").strip().lower()
+    return MODE_TO_TOOL.get(key, MODE_TO_TOOL[DEFAULT_RETRIEVAL_MODE])
+
 _DATA_ROUTE = re.compile(
     r"\b(?:products?|orders?|customers?|suppliers?|categories?|category|sales|"
     r"revenue|profit|sold|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|"
