@@ -39,6 +39,39 @@ _CONTRAST_COMPARE_RE = re.compile(
     re.I,
 )
 
+# A question about a company's OWN firmwide financial metric (net earnings,
+# revenue, EPS, ROE, book value, total assets, …) that names no specific
+# business segment or geographic region. The authoritative figure lives in a
+# summary section (Executive/Financial Overview, Financial Highlights,
+# Consolidated Statements), but that long narrative loses vector-cosine
+# ranking to short, focused segment tables that literally repeat the metric
+# name as a row label — so a plain "net earnings for 2025" drifts to a
+# *segment's* net earnings. full_hybrid.py uses this to pull the firmwide
+# summary section into the candidate pool and pin it (see
+# FinancialSummaryService and RankingService._pin_firmwide_summary_chunks).
+_FIRMWIDE_METRIC_RE = re.compile(
+    r"\b(net\s+earnings|net\s+income|net\s+revenues?|total\s+(?:net\s+)?revenues?|"
+    r"earnings\s+per\s+(?:common\s+)?share|diluted\s+eps|\beps\b|"
+    r"return\s+on\s+(?:average\s+)?(?:common\s+)?equity|\broe\b|"
+    r"return\s+on\s+(?:average\s+)?assets|\broa\b|"
+    r"book\s+value(?:\s+per\s+(?:common\s+)?share)?|"
+    r"total\s+assets|provision\s+for\s+credit\s+losses|"
+    r"effective\s+(?:income\s+)?tax\s+rate)\b",
+    re.I,
+)
+
+# If any of these appear, the question is explicitly scoped to a segment,
+# business line, or geography — the firmwide summary is NOT what it wants, so
+# the boost must not fire. Segment names are Goldman-flavored but the generic
+# "by segment / by region / operating segment" phrasing is issuer-agnostic.
+_SEGMENT_SCOPE_RE = re.compile(
+    r"\b(global\s+banking|asset\s*&?\s*(?:and\s+)?wealth|platform\s+solutions|"
+    r"consumer\s+banking|by\s+(?:geographic\s+)?region|geographic|"
+    r"per\s+segment|by\s+segment|each\s+segment|which\s+segment|"
+    r"operating\s+segment|business\s+segment)\b",
+    re.I,
+)
+
 _KEYWORD_STOP = frozenset({
     # Original project-specific additions.
     "what", "which", "where", "when", "that", "this", "with", "from", "into",
@@ -139,6 +172,12 @@ def is_synthesis_question(query: str) -> bool:
 
 def is_overview_question(query: str) -> bool:
     return bool(_OVERVIEW_RE.search(query or ""))
+
+
+def is_firmwide_financial_metric_question(query: str) -> bool:
+    """A firmwide financial-metric question that names no segment/region."""
+    q = query or ""
+    return bool(_FIRMWIDE_METRIC_RE.search(q)) and not _SEGMENT_SCOPE_RE.search(q)
 
 
 def is_enumeration_question(query: str) -> bool:
