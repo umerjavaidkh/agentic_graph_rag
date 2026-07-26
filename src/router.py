@@ -33,8 +33,10 @@ def _rbac_check() -> GraphRBAC:
     return _rbac
 from .conversation import get_turn, resolve_follow_up, save_turn
 from .routing import (
+    TOOL_TO_AGENT,
     is_structured_data_question,
     make_structured_access_denied_result,
+    resolve_mode_override,
     run_via_mcp_tool,
     try_document_fallback,
 )
@@ -247,6 +249,7 @@ def ask(
     user_context: Optional[UserContext] = None,
     thread_id: str = "default",
     request_id: Optional[str] = None,
+    retrieval_mode: Optional[str] = None,
 ) -> dict:
     start_telemetry()
     tel = get_telemetry()
@@ -254,7 +257,12 @@ def ask(
         tel.route["request_id"] = request_id
 
     try:
-        tool_name, _resolved = resolve_query_tool(question, thread_id)
+        forced_tool = resolve_mode_override(retrieval_mode)
+        if tel is not None:
+            tel.route["retrieval_mode"] = TOOL_TO_AGENT.get(forced_tool, forced_tool)
+        tool_name, _resolved = resolve_query_tool(
+            question, thread_id, forced_tool=forced_tool
+        )
 
         ctx = user_context or DEFAULT_PUBLIC_CONTEXT
         if (

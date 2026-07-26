@@ -747,6 +747,13 @@
 
           <label>Department</label>
           <input id="department" type="text" placeholder="Optional" />
+
+          <label>Retrieval</label>
+          <select id="retrieval_mode" title="Which retrieval path answers the query">
+            <option value="unstructured">Documents only</option>
+            <option value="structured">Structured data only</option>
+            <option value="hybrid">Hybrid (both)</option>
+          </select>
         </div>
 
         <label class="stream-toggle">
@@ -1609,6 +1616,7 @@
         role: document.getElementById('role').value,
         user_id: document.getElementById('user_id').value,
         department: document.getElementById('department').value || null,
+        retrieval_mode: document.getElementById('retrieval_mode').value,
         thread_id: buildThreadId()
       };
     }
@@ -1652,6 +1660,7 @@
           role: ctx.role,
           user_id: ctx.user_id,
           department: ctx.department,
+          retrieval_mode: ctx.retrieval_mode,
           thread_id: ctx.thread_id
         })
       });
@@ -1808,6 +1817,7 @@
           role: ctx.role,
           user_id: ctx.user_id,
           department: ctx.department,
+          retrieval_mode: ctx.retrieval_mode,
           thread_id: ctx.thread_id
         })
       });
