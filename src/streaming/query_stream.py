@@ -10,8 +10,10 @@ from ..feedback_loop import maybe_record_retrieval_feedback, resolve_query_tool
 from ..presentation import build_presentation
 from ..router import _rbac_check
 from ..routing import (
+    TOOL_TO_AGENT,
     is_structured_data_question,
     make_structured_access_denied_result,
+    resolve_mode_override,
     try_document_fallback,
 )
 from ..telemetry import clear_telemetry, get_telemetry, pipeline_step, start_telemetry
@@ -45,8 +47,10 @@ from .events import stream_event
 from .structured import _viz_blocks_only, iter_structured_stream
 
 
-def _resolve_tool(question: str, thread_id: str) -> tuple[str, dict]:
-    return resolve_query_tool(question, thread_id)
+def _resolve_tool(
+    question: str, thread_id: str, forced_tool: Optional[str] = None
+) -> tuple[str, dict]:
+    return resolve_query_tool(question, thread_id, forced_tool=forced_tool)
 
 
 def _enrich_and_persist(
@@ -236,6 +240,7 @@ def iter_query_stream(
     user_context: Optional[UserContext] = None,
     thread_id: str = "default",
     request_id: Optional[str] = None,
+    retrieval_mode: Optional[str] = None,
 ) -> Iterator[str]:
     """Yield NDJSON lines: status → presentation (optional) → token* → done."""
     start_telemetry()
@@ -246,7 +251,10 @@ def iter_query_stream(
     yield stream_event(type="status", phase="routing", request_id=request_id)
 
     try:
-        tool_name, resolved = _resolve_tool(question, thread_id)
+        forced_tool = resolve_mode_override(retrieval_mode)
+        if tel is not None:
+            tel.route["retrieval_mode"] = TOOL_TO_AGENT.get(forced_tool, forced_tool)
+        tool_name, resolved = _resolve_tool(question, thread_id, forced_tool=forced_tool)
         ctx = user_context or DEFAULT_PUBLIC_CONTEXT
         yield stream_event(type="status", phase="routed", route_tool=tool_name)
 

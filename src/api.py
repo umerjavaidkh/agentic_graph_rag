@@ -231,6 +231,15 @@ class QueryRequest(BaseModel):
     tenant_id:   Optional[str] = Field(default=None, description="Dev only when AUTH_ALLOW_BODY_FALLBACK")
     department:  Optional[str] = Field(default=None, description="User department")
     thread_id:   Optional[str] = Field(default="default")
+    retrieval_mode: Optional[str] = Field(
+        default="unstructured",
+        description=(
+            "Which retrieval path handles the query (no auto-routing): "
+            "'unstructured' (documents only, default), 'structured' "
+            "(graph/data only), or 'hybrid' (both). Unknown/omitted values "
+            "fall back to 'unstructured'."
+        ),
+    )
 
 
 class ClearThreadRequest(BaseModel):
@@ -293,6 +302,7 @@ async def query(
                 user_context=context,
                 thread_id=thread_id,
                 request_id=request_id,
+                retrieval_mode=request.retrieval_mode,
             ),
         )
 
@@ -389,6 +399,7 @@ async def query_stream(
                 user_context=context,
                 thread_id=thread_id,
                 request_id=request_id,
+                retrieval_mode=request.retrieval_mode,
             )
         except Exception:
             logger.exception("query stream failed request_id=%s", request_id)
