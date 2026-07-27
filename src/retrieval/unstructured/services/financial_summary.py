@@ -93,3 +93,59 @@ class FinancialSummaryService:
                 "related": ["via:financial_summary"],
             })
         return items
+
+    def fetch_quarterly_for_document(
+        self, session, document_id: str, tenant_id: str = ""
+    ) -> list[dict]:
+        """Fetch the "Selected Quarterly Financial Data (Unaudited)" table.
+
+        Unlike the firmwide-summary sections above, this table's *wrapping*
+        section title is a generic "Supplementary information" — the
+        identifying phrase lives in its TEXT, not its title — so this
+        matches on content instead. Same size floor as fetch_for_document
+        and for the same reason: the filing's own Table of Contents entry
+        for this section is a short cross-reference fragment that contains
+        the identical phrase and would otherwise title/text-match too.
+        """
+        if not document_id:
+            return []
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
+            MATCH (n)
+            WHERE (n:Section OR n:Chapter)
+              AND coalesce(n.text, '') <> ''
+              AND size(n.text) > 200
+              AND toLower(n.text) CONTAINS 'quarterly financial data'
+              AND (
+                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
+                OR n.id STARTS WITH d.id + '_'
+              )
+            RETURN
+              coalesce(n.id, '') AS id,
+              coalesce(n.title, '') AS title,
+              n.text AS text,
+              n.page_start AS page_start,
+              coalesce(n.order, 0) AS order
+            ORDER BY order ASC
+            LIMIT 5
+            """,
+            doc_id=document_id,
+            tenant_id=tenant_id,
+        )
+        items: list[dict] = []
+        for r in rows:
+            if not r.get("id") or not r.get("text"):
+                continue
+            title = r.get("title") or r["id"]
+            items.append({
+                "id": r["id"],
+                "title": title,
+                "text": r["text"],
+                "page_start": r.get("page_start"),
+                "score": 1.0,
+                "related": ["via:quarterly_financial_data"],
+            })
+        return items

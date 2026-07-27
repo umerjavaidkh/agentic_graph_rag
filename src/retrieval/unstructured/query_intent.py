@@ -77,6 +77,27 @@ _FIRMWIDE_METRIC_RE = re.compile(
     re.I,
 )
 
+# A quarter-by-quarter metric question (net income/revenue/EPS Q1-Q4). The
+# authoritative figures live in the "Selected Quarterly Financial Data
+# (Unaudited)" table — a standardized 10-K disclosure (former Reg S-K Item
+# 302) — but it's a terse, number-dense table with a generic wrapping
+# section title ("Supplementary information"), so it loses vector-cosine
+# ranking to narrative annual-summary sections that merely mention the same
+# metric name once. full_hybrid.py uses this to pull that table into the
+# candidate pool and pin it (see FinancialSummaryService.
+# fetch_quarterly_for_document and the shared _pin_firmwide_summary_chunks
+# pinner, reused as-is since its mechanics aren't firmwide-specific).
+_QUARTERLY_METRIC_RE = re.compile(
+    r"\b(net\s+earnings|net\s+income|net\s+revenues?|total\s+(?:net\s+)?revenues?|"
+    r"earnings\s+per\s+(?:common\s+)?share|diluted\s+eps|\beps\b|earnings)\b",
+    re.I,
+)
+_QUARTERLY_PERIOD_RE = re.compile(
+    r"\bquarter(?:ly)?\b|\bq[1-4]\b|"
+    r"\b(?:first|second|third|fourth)\s+quarter\b",
+    re.I,
+)
+
 # If any of these appear, the question is explicitly scoped to a segment,
 # business line, or geography — the firmwide summary is NOT what it wants, so
 # the boost must not fire. Segment names are Goldman-flavored but the generic
@@ -199,6 +220,12 @@ def is_firmwide_financial_metric_question(query: str) -> bool:
     """A firmwide financial-metric question that names no segment/region."""
     q = query or ""
     return bool(_FIRMWIDE_METRIC_RE.search(q)) and not _SEGMENT_SCOPE_RE.search(q)
+
+
+def is_quarterly_breakdown_question(query: str) -> bool:
+    """A quarter-by-quarter metric question (net income/revenue/EPS Q1-Q4)."""
+    q = query or ""
+    return bool(_QUARTERLY_PERIOD_RE.search(q)) and bool(_QUARTERLY_METRIC_RE.search(q))
 
 
 def is_enumeration_question(query: str) -> bool:
