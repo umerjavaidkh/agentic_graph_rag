@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import mimetypes
 import os
 import re
 import shutil
@@ -31,10 +32,12 @@ from ..config.settings import (
     STORE_INGESTION_ARTIFACTS,
 )
 from ..document.versioning import (
+    DocumentRevisionPlan,
     apply_revision_to_graph,
     build_revision_plan,
     file_content_sha256,
     resolve_logical_id,
+    source_file_blob_key,
 )
 from ..document.parser_base import DocumentParser
 from ..document.parser_registry import get_parser, supported_extensions
@@ -275,6 +278,28 @@ class IngestionManager:
         finally:
             rbac.close()
 
+    def _persist_source_file(self, job: IngestionJob, plan: DocumentRevisionPlan) -> None:
+        """Save the original uploaded file to blob storage so it survives
+        _cleanup_job_inputs' unlink() — powers the document-viewer side panel
+        (GET /documents/{id}/file). Best-effort: a failure here must not fail
+        the ingestion job, since the graph load already succeeded by the time
+        this runs.
+        """
+        if not job.input_path or not job.input_path.exists():
+            return
+        try:
+            content_type = mimetypes.guess_type(str(job.input_path))[0] or "application/octet-stream"
+            key = source_file_blob_key(
+                tenant_id=plan.tenant_id,
+                logical_id=plan.logical_id,
+                revision_id=plan.revision_id,
+                source_filename=plan.source_filename,
+            )
+            self.blob_store.put_bytes(key, job.input_path.read_bytes(), content_type=content_type)
+            self._log(job, f"Saved original source file to blob storage: {key}")
+        except Exception as exc:
+            self._log(job, f"Source file persist skipped: {exc}")
+
     def _cleanup_job_inputs(self, job: IngestionJob) -> None:
         if not job or not job.owns_input_path:
             return
@@ -478,6 +503,7 @@ class IngestionManager:
                             f"Graph loaded (revision {plan.revision_id})"
                         )
                         self._log(job, job.neo4j_load_message)
+                        self._persist_source_file(job, plan)
                 except Exception as exc:
                     job.neo4j_load_status = "failed"
                     job.neo4j_load_message = str(exc)

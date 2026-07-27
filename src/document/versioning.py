@@ -67,6 +67,22 @@ class DocumentRevisionPlan:
     tenant_id: str
 
 
+def source_file_blob_key(
+    *, tenant_id: str, logical_id: str, revision_id: str, source_filename: str
+) -> str:
+    """Deterministic BlobStore key for a revision's original uploaded file.
+
+    Takes plain fields (not a DocumentRevisionPlan) so both callers can use
+    it: the ingestion write path (ingestion/service.py, which has a live
+    plan) and the document-viewer read path (api.py's GET
+    /documents/{id}/file, which only has values re-queried from Neo4j
+    metadata written by revision_metadata_nodes) always agree on where a
+    revision's source bytes live.
+    """
+    suffix = Path(source_filename or "").suffix.lower() or ".bin"
+    return f"documents/{tenant_id}/{logical_id}/{revision_id}/source{suffix}"
+
+
 def build_revision_plan(
     file_path: Path,
     *,

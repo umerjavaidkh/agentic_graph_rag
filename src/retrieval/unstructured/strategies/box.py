@@ -109,7 +109,8 @@ class BoxStrategy:
             RETURN
               coalesce(n.id,'') AS id,
               coalesce(n.title,'') AS title,
-              coalesce(n.text,'') AS text
+              coalesce(n.text,'') AS text,
+              n.page_start AS page_start
             LIMIT 250
             """,
             doc_id=doc_id,
@@ -136,6 +137,7 @@ class BoxStrategy:
                     "id": rid or f"box_{num}",
                     "title": heading,
                     "text": snippet,
+                    "page_start": r.get("page_start"),
                     "score": 1.0,
                     "related": [f"doc:{doc_title}" if doc_title else "doc:unknown", "via:box_scan"],
                 }
@@ -171,7 +173,8 @@ class BoxStrategy:
             RETURN
               coalesce(n.id,'') AS id,
               coalesce(n.title,'') AS title,
-              coalesce(n.text,'') AS text
+              coalesce(n.text,'') AS text,
+              n.page_start AS page_start
             LIMIT 20
             """,
             doc_id=doc_id,
@@ -204,6 +207,7 @@ class BoxStrategy:
                 "id": rid,
                 "title": title or f"Box {box_n}",
                 "text": snippet,
+                "page_start": r.get("page_start"),
                 "score": score,
                 "related": [f"doc:{doc_title}" if doc_title else "doc:unknown", "via:box_content"],
             })

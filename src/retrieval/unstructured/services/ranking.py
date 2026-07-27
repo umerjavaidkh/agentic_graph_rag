@@ -53,6 +53,7 @@ class RankingService:
                     "id": cid,
                     "title": item.get("title") or cid,
                     "text": item.get("text") or "",
+                    "page_start": item.get("page_start"),
                     "score": score,
                     "related": list(rel),
                     "sources": {source},
@@ -223,6 +224,7 @@ class RankingService:
                     "id": cid,
                     "title": hit.get("title") or cid,
                     "text": hit.get("text") or "",
+                    "page_start": hit.get("page_start"),
                     "score": float(hit.get("score", 1.5)) + 0.55,
                     "related": list(
                         dict.fromkeys([*(hit.get("related") or []), "via:precision_pin"])
@@ -282,6 +284,7 @@ class RankingService:
                     "id": cid,
                     "title": hit.get("title") or cid,
                     "text": hit.get("text") or "",
+                    "page_start": hit.get("page_start"),
                     "score": float(hit.get("score", 1.5)) + 0.5,
                     "related": list(
                         dict.fromkeys([*(hit.get("related") or []), "via:contrast_pin"])
@@ -338,6 +341,7 @@ class RankingService:
                     "id": cid,
                     "title": hit.get("title") or cid,
                     "text": hit.get("text") or "",
+                    "page_start": hit.get("page_start"),
                     "score": float(hit.get("score", 1.0)) + 10.0,
                     "related": list(
                         dict.fromkeys(

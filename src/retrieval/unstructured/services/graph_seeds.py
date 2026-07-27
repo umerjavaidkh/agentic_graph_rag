@@ -68,6 +68,7 @@ class GraphSeedService:
                   coalesce(n.title, '') AS title,
                   coalesce(n.text, '') AS text,
                   coalesce(labels(n)[0], '') AS node_label,
+                  n.page_start AS page_start,
                   score
                 ORDER BY score DESC
                 LIMIT $limit
@@ -84,6 +85,7 @@ class GraphSeedService:
                     "title": r["title"] or r["id"],
                     "text": r["text"],
                     "node_label": r.get("node_label") or "",
+                    "page_start": r.get("page_start"),
                     "score": float(r["score"] or 0.0),
                     "related": [],
                 }
@@ -123,7 +125,8 @@ class GraphSeedService:
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
                   coalesce(n.text, '') AS text,
-                  coalesce(labels(n)[0], '') AS node_label
+                  coalesce(labels(n)[0], '') AS node_label,
+                  n.page_start AS page_start
                 """,
                 ids=list(scores.keys()),
                 tenant_id=tenant_id,
@@ -135,6 +138,7 @@ class GraphSeedService:
                     "title": row["title"] or id,
                     "text": row["text"],
                     "node_label": row.get("node_label") or "",
+                    "page_start": row.get("page_start"),
                     "score": float(scores.get(id, 0.0)),
                     "related": [],
                 }
@@ -170,6 +174,7 @@ class GraphSeedService:
                   coalesce(n.title, '') AS title,
                   coalesce(n.text, '') AS text,
                   coalesce(labels(n)[0], '') AS node_label,
+                  n.page_start AS page_start,
                   score
                 ORDER BY score DESC
                 LIMIT $limit
@@ -187,6 +192,7 @@ class GraphSeedService:
                     "title": r["title"] or r["id"],
                     "text": r["text"],
                     "node_label": r.get("node_label") or "",
+                    "page_start": r.get("page_start"),
                     "score": float(r["score"] or 0.0),
                     "related": [],
                 }
@@ -224,6 +230,7 @@ class GraphSeedService:
                   coalesce(related.title, '') AS title,
                   coalesce(related.text, '') AS text,
                   coalesce(labels(related)[0], '') AS node_label,
+                  related.page_start AS page_start,
                   type(r) AS rel_type,
                   coalesce(r.weight, 0.75) AS edge_weight,
                   sid AS seed_id,
@@ -250,6 +257,7 @@ class GraphSeedService:
                   coalesce(related.title, '') AS title,
                   coalesce(related.text, '') AS text,
                   coalesce(labels(related)[0], '') AS node_label,
+                  related.page_start AS page_start,
                   type(r1) + '->' + type(r2) AS rel_type,
                   coalesce(r2.weight, 0.75) AS edge_weight,
                   sid AS seed_id,
@@ -272,6 +280,7 @@ class GraphSeedService:
                     "title": r["title"] or r["id"],
                     "text": r["text"],
                     "node_label": r.get("node_label") or "",
+                    "page_start": r.get("page_start"),
                     "rel_type": r["rel_type"],
                     "edge_weight": float(r["edge_weight"] or 0.75),
                     "seed_id": r["seed_id"],

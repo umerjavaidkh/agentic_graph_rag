@@ -36,7 +36,7 @@ def access_denied_response(rbac: GraphRBAC, query: str, ctx: UserContext) -> Opt
 
 
 class ResponseFormatter:
-    _PASSTHROUGH = ("pdf_page", "document_page", "region_kind", "visual_content")
+    _PASSTHROUGH = ("pdf_page", "document_page", "page_start", "region_kind", "visual_content")
 
     def format(
         self,
