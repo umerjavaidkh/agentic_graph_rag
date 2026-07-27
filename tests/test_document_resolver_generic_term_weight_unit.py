@@ -162,6 +162,52 @@ def test_require_distinctive_accepts_when_one_term_excludes_a_document(resolver)
     assert result[0] == "doc-b"
 
 
+def test_bare_year_title_match_does_not_drown_out_a_distinctive_company_term(resolver):
+    """Regression: logical_ids are systematically date-suffixed
+    (ticker_form_YYYY-MM-DD), so a query mentioning any year ("as of
+    December 31, 2025") used to "title-match" (via CONTAINS on the id
+    string) every filing merely filed in that year -- completely
+    unrelated to whether the document is actually about the query's
+    subject. That 1000x title-match bonus let an unrelated document
+    whose id happened to contain "2025" outscore Chevron's own 10-K
+    (which mentions "chevron" 222 times) purely on id-substring luck.
+
+    document_resolver.py's Cypher now gates title_match on
+    `NOT term =~ '\\d{4}'`, so a bare-year term must never carry
+    title_match=True even when the id/title literally contains it --
+    verified live with these exact counts (Chevron question, 13-doc
+    corpus): Costco's 10-K id contains "2025" and won at score ~270.9
+    pre-fix; post-fix (title_match forced False for "2025") it must
+    lose to Chevron's own 10-K, which wins purely on content (score
+    ~15.6 vs ~9.7)."""
+    rows = [
+        {
+            "id": "cost-10k-2025-10-08", "title": "COST 10-K",
+            # Pre-fix the Cypher set title_match=True here (id contains
+            # "2025"); post-fix it must be False -- this test encodes the
+            # correct, post-fix shape and asserts the scoring it produces.
+            "term_hits": [
+                _term_hit("chevron", 0),
+                _term_hit("2025", 10, title_match=False),
+                _term_hit("employees", 12),
+            ],
+        },
+        {
+            "id": "doc_cvx_10_k_2026_02_24", "title": "CVX 10-K",
+            "term_hits": [
+                _term_hit("chevron", 222),
+                _term_hit("2025", 207, title_match=False),
+                _term_hit("employees", 40),
+            ],
+        },
+    ]
+    result = resolver._pick_best_by_term_weight(
+        rows, ["chevron", "2025", "employees"], require_distinctive=True
+    )
+    assert result is not None
+    assert result[0] == "doc_cvx_10_k_2026_02_24"
+
+
 def test_resolve_document_for_query_prefers_confident_term_over_vector_majority():
     """The full priority chain: a confident distinctive-term match must be
     tried BEFORE vector-majority, not after -- vector-majority has no

@@ -22,6 +22,26 @@ def file_content_sha256(path: str | Path, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+# SEC EDGAR sample corpus filenames follow TICKER_FORM_YYYY-MM-DD.ext, where
+# the date comes from EDGAR's own `filingDate` field (see
+# scripts/fetch_sec_edgar_corpus.py) — the actual submission date, distinct
+# from the period-end date the filing covers. That real filing date is
+# usually NOT printed anywhere in the PDF body (EDGAR's "Filed:" stamp lives
+# in the filing's HTML/index wrapper, not the document itself), so no amount
+# of retrieval tuning can make synthesis find it in the text — the document
+# genuinely doesn't say it. Extracting it from the filename (already stored
+# as DocRevision.source_filename) sidesteps that entirely.
+_FILING_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?:\.[A-Za-z0-9]+)?$")
+
+
+def extract_filing_date_from_filename(filename: str) -> str | None:
+    """Pull a trailing YYYY-MM-DD from a filename, or None if it doesn't match."""
+    if not filename:
+        return None
+    m = _FILING_DATE_RE.search(Path(filename).name)
+    return m.group(1) if m else None
+
+
 def slug_logical_key(stem: str) -> str:
     safe = re.sub(r"[^a-zA-Z0-9]+", "_", (stem or "document").lower()).strip("_")
     return safe[:120] or "document"

@@ -16,6 +16,7 @@ from ....telemetry.context import TelemetryEvent, get_telemetry
 from ...strategy_registry import get_unstructured
 from ..executor import DocumentQueryExecutor
 from ..query_intent import (
+    is_filing_date_question,
     is_page_question,
     is_toc_question,
     is_visual_page_question,
@@ -98,6 +99,21 @@ class HybridRetrieveMixin:
         if is_toc_question(query):
             with self.driver.session() as session:
                 response = get_unstructured("structural_toc").retrieve(
+                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                    document_id_hint=document_id_hint,
+                )
+            if response:
+                if tel is not None:
+                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
+                return response
+
+        # Filing-date request — answered from ingestion metadata
+        # (DocRevision.source_filename), not document text; see
+        # strategies/filing_date.py for why guessing from prose can't work
+        # here (the real filing date usually isn't in the PDF body at all).
+        if is_filing_date_question(query):
+            with self.driver.session() as session:
+                response = get_unstructured("structural_filing_date").retrieve(
                     session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
                     document_id_hint=document_id_hint,
                 )
