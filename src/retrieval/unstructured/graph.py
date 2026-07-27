@@ -46,6 +46,7 @@ _STRUCTURAL_FAST_MODES = frozenset({
     "structural_box_content",
     "subsection_tree",
     "section_detail",
+    "structural_filing_date",
     "needs_clarification",
 })
 

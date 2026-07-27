@@ -39,6 +39,23 @@ _CONTRAST_COMPARE_RE = re.compile(
     re.I,
 )
 
+# When was this filing actually SUBMITTED to the SEC — distinct from the
+# period-end date the filing covers ("for the quarter ended March 29,
+# 2026"). The real filing/submission date is usually not printed anywhere
+# in the PDF body at all (EDGAR's "Filed:" stamp lives in the filing's
+# HTML/index wrapper, not the document itself) — retrieval was pulling
+# whichever date-heavy MD&A chunk ranked highest and the LLM picked the most
+# prominent date in it (almost always the period-end date), not the actual
+# answer. See strategies/filing_date.py, which answers this from
+# DocRevision.source_filename instead of guessing from prose. Deliberately
+# narrow: "period ended"/"quarter ended" phrasing must NOT match here, since
+# that's a different, legitimately-in-the-text question.
+_FILING_DATE_RE = re.compile(
+    r"\bfiling\s+date\b|\bdate\s+(?:of\s+)?filing\b|\bdate\s+filed\b|"
+    r"\bfiled\s+on\b|\bwhen\s+(?:was|is)\s+(?:this|it|the)\b[^.?]{0,30}\bfiled\b",
+    re.I,
+)
+
 # A question about a company's OWN firmwide financial metric (net earnings,
 # revenue, EPS, ROE, book value, total assets, …) that names no specific
 # business segment or geographic region. The authoritative figure lives in a
@@ -172,6 +189,10 @@ def is_synthesis_question(query: str) -> bool:
 
 def is_overview_question(query: str) -> bool:
     return bool(_OVERVIEW_RE.search(query or ""))
+
+
+def is_filing_date_question(query: str) -> bool:
+    return bool(_FILING_DATE_RE.search(query or ""))
 
 
 def is_firmwide_financial_metric_question(query: str) -> bool:
