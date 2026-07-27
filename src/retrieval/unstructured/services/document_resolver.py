@@ -88,8 +88,18 @@ class DocumentResolver:
               AND (toLower(coalesce(n.title, '')) CONTAINS term
                    OR toLower(coalesce(n.text, '')) CONTAINS term)
             WITH dl, term, count(DISTINCT n) AS cnt,
-                 (toLower(coalesce(dl.title, '')) CONTAINS term
-                  OR toLower(dl.logical_id) CONTAINS term) AS title_match
+                 // Bare 4-digit years never count as a title match: our own
+                 // logical_ids are systematically date-suffixed (ticker_form_
+                 // YYYY-MM-DD), so a query mentioning any year ("as of
+                 // December 31, 2025") spuriously "title-matches" every
+                 // filing from that year via id substring alone, handing it
+                 // the 1000x identity bonus meant for real name matches
+                 // (verified live: this let an unrelated Costco 10-K outrank
+                 // Chevron's own 10-K, whose id doesn't happen to contain
+                 // the query's year).
+                 (NOT term =~ '\\d{{4}}'
+                  AND (toLower(coalesce(dl.title, '')) CONTAINS term
+                       OR toLower(dl.logical_id) CONTAINS term)) AS title_match
             RETURN dl.logical_id AS id,
                    coalesce(dl.title, dl.logical_id) AS title,
                    collect({{term: term, cnt: cnt, title_match: title_match}}) AS term_hits
@@ -379,8 +389,9 @@ class DocumentResolver:
                       AND (toLower(coalesce(n.title, '')) CONTAINS term
                            OR toLower(coalesce(n.text, '')) CONTAINS term)
                     WITH dl, term, count(DISTINCT n) AS cnt,
-                         (toLower(coalesce(dl.title, '')) CONTAINS term
-                          OR toLower(dl.logical_id) CONTAINS term) AS title_match
+                         (NOT term =~ '\\d{{4}}'
+                          AND (toLower(coalesce(dl.title, '')) CONTAINS term
+                               OR toLower(dl.logical_id) CONTAINS term)) AS title_match
                     RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title,
                            collect({{term: term, cnt: cnt, title_match: title_match}}) AS term_hits
                     """,
