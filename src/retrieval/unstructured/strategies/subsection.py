@@ -135,7 +135,8 @@ class SubsectionStrategy:
               s.id AS sid,
               s.title AS stitle,
               coalesce(s.text,'') AS stext,
-              collect({{id: c.id, title: c.title, text: coalesce(c.text,'')}}) AS children
+              s.page_start AS spage_start,
+              collect({{id: c.id, title: c.title, text: coalesce(c.text,''), page_start: c.page_start}}) AS children
             LIMIT 1
             """,
             doc_id=doc_id,
@@ -149,6 +150,7 @@ class SubsectionStrategy:
             "id": row.get("sid") or "",
             "title": (row.get("stitle") or "").strip(),
             "text": (row.get("stext") or "").strip(),
+            "page_start": row.get("spage_start"),
             "score": 1.0,
             "related": ["via:section_lookup"],
         }
@@ -162,6 +164,7 @@ class SubsectionStrategy:
                 "id": c["id"],
                 "title": c["title"],
                 "text": (c.get("text") or "").strip(),
+                "page_start": c.get("page_start"),
                 "score": 1.0,
                 "related": ["via:subsections"],
             })

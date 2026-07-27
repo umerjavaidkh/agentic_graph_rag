@@ -53,6 +53,7 @@ class RankingService:
                     "id": cid,
                     "title": item.get("title") or cid,
                     "text": item.get("text") or "",
+                    "page_start": item.get("page_start"),
                     "score": score,
                     "related": list(rel),
                     "sources": {source},
@@ -223,6 +224,7 @@ class RankingService:
                     "id": cid,
                     "title": hit.get("title") or cid,
                     "text": hit.get("text") or "",
+                    "page_start": hit.get("page_start"),
                     "score": float(hit.get("score", 1.5)) + 0.55,
                     "related": list(
                         dict.fromkeys([*(hit.get("related") or []), "via:precision_pin"])
@@ -282,9 +284,69 @@ class RankingService:
                     "id": cid,
                     "title": hit.get("title") or cid,
                     "text": hit.get("text") or "",
+                    "page_start": hit.get("page_start"),
                     "score": float(hit.get("score", 1.5)) + 0.5,
                     "related": list(
                         dict.fromkeys([*(hit.get("related") or []), "via:contrast_pin"])
+                    ),
+                }
+            )
+
+        for item in items:
+            cid = item.get("id")
+            if cid and cid not in seen:
+                out.append(item)
+            if len(out) >= limit:
+                break
+        return out[:limit]
+
+    def _pin_firmwide_summary_chunks(
+        self,
+        items: list[dict],
+        financial_summary_hits: list[dict],
+        *,
+        limit: int,
+    ) -> list[dict]:
+        """
+        Pin a document's firmwide financial-summary section(s) to the top.
+
+        For a firmwide financial-metric question (gated by the caller via
+        is_firmwide_financial_metric_question) the authoritative figure lives
+        in a summary section that vector cosine buries under short segment
+        tables repeating the metric name. Pinning forces it into context so
+        synthesis answers the firm total, not a segment's. Sections that hold
+        actual figures ('$'/digits) and are not flagged low-confidence rank
+        first; a note is preferred over a bloated near-duplicate.
+        """
+        if not financial_summary_hits:
+            return items
+
+        def _rank_key(h: dict) -> tuple:
+            text = (h.get("text") or "")
+            low_conf = "[low confidence extract]" in text.lower()
+            has_figures = ("$" in text) or any(ch.isdigit() for ch in text)
+            return (low_conf, not has_figures, len(text))
+
+        pinned = sorted(financial_summary_hits, key=_rank_key)
+
+        seen: set[str] = set()
+        out: list[dict] = []
+        for hit in pinned[:2]:
+            cid = hit.get("id")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            out.append(
+                {
+                    "id": cid,
+                    "title": hit.get("title") or cid,
+                    "text": hit.get("text") or "",
+                    "page_start": hit.get("page_start"),
+                    "score": float(hit.get("score", 1.0)) + 10.0,
+                    "related": list(
+                        dict.fromkeys(
+                            [*(hit.get("related") or []), "via:financial_summary_pin"]
+                        )
                     ),
                 }
             )

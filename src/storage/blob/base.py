@@ -22,6 +22,14 @@ class BlobStore(ABC):
         """Return content for key, or None if it doesn't exist."""
 
     @abstractmethod
+    def put_bytes(self, key: str, content: bytes, *, content_type: str = "application/octet-stream") -> str:
+        """Write binary content (e.g. an original source PDF) under key."""
+
+    @abstractmethod
+    def get_bytes(self, key: str) -> Optional[bytes]:
+        """Return binary content for key, or None if it doesn't exist."""
+
+    @abstractmethod
     def delete(self, key: str) -> None:
         """Remove content for key. No-op if key doesn't exist."""
 

@@ -34,8 +34,14 @@ from ..constants import (
     _GRAPH_2HOP_LIMIT,
     _VECTOR_SEED_LIMIT,
 )
-from ..query_intent import is_enumeration_question, is_overview_question, is_synthesis_question
+from ..query_intent import (
+    is_enumeration_question,
+    is_firmwide_financial_metric_question,
+    is_overview_question,
+    is_synthesis_question,
+)
 from ..services.chapter_summary import ChapterSummaryService
+from ..services.financial_summary import FinancialSummaryService
 from ..services.document_resolver import DocumentResolver
 from ..services.formatter import ResponseFormatter
 from ..services.graph_seeds import GraphSeedService
@@ -57,6 +63,7 @@ class FullHybridStrategy:
         formatter: ResponseFormatter,
         document_resolver: DocumentResolver,
         chapter_summaries: Optional[ChapterSummaryService] = None,
+        financial_summaries: Optional[FinancialSummaryService] = None,
     ):
         self._driver = driver
         self._ranking = ranking
@@ -65,6 +72,7 @@ class FullHybridStrategy:
         self._formatter = formatter
         self._document_resolver = document_resolver
         self._chapter_summaries = chapter_summaries or ChapterSummaryService()
+        self._financial_summaries = financial_summaries or FinancialSummaryService()
         # One process-wide pool, not a fresh ThreadPoolExecutor spun up and
         # torn down on every retrieve() call — this strategy is itself a
         # process-wide singleton (see strategies/registration.py), so the
@@ -97,6 +105,7 @@ class FullHybridStrategy:
         # pulling that phrasing into `synthesis`'s other effects below
         # (vector/graph/lexical weighting, fetch_limit sizing).
         wants_overview = synthesis or is_overview_question(query)
+        wants_firmwide = is_firmwide_financial_metric_question(query)
         fetch_limit = limit
         if synthesis:
             fetch_limit = max(limit, 16)
@@ -194,12 +203,29 @@ class FullHybridStrategy:
             if wants_overview
             else None
         )
+        # Only for firmwide financial-metric questions, and only once a single
+        # document is resolved — otherwise the authoritative summary section
+        # can't be attributed to the right issuer. Pinned below so the firm
+        # total wins over segment tables (see _pin_firmwide_summary_chunks).
+        financial_summary_future = (
+            pool.submit(
+                self._neo4j_session_call,
+                self._financial_summaries.fetch_for_document,
+                document_id,
+                tenant_id=tenant_id,
+            )
+            if wants_firmwide and document_id
+            else None
+        )
         phrase_hits = phrase_future.result()
         keyword_hits = keyword_future.result()
         if vector_future is not None:
             vector_hits = vector_future.result()
         fulltext_hits = fulltext_future.result()
         chapter_summary_hits = chapter_summary_future.result() if chapter_summary_future is not None else []
+        financial_summary_hits = (
+            financial_summary_future.result() if financial_summary_future is not None else []
+        )
 
         lexical_hits = self._ranking._merge_retrieval_chunks(phrase_hits, keyword_hits)
         seed_ids = [h["id"] for h in vector_hits if h.get("id")]
@@ -246,6 +272,10 @@ class FullHybridStrategy:
         if synthesis and lexical_hits:
             items = self._ranking._pin_contrast_lexical_chunks(
                 query, items, lexical_hits, limit=max(1, int(fetch_limit))
+            )
+        if financial_summary_hits:
+            items = self._ranking._pin_firmwide_summary_chunks(
+                items, financial_summary_hits, limit=max(1, int(fetch_limit))
             )
 
         response = self._formatter.format(query, items, ctx=ctx)

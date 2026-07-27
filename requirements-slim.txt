@@ -34,3 +34,6 @@ rq>=1.16.0
 
 # ── OIDC / JWT auth (Google default; corporate IdP via OIDC_* env) ────────
 PyJWT[crypto]>=2.8.0
+
+# ── Blob storage (optional — degrades to zero-dep local disk if BLOB_STORE_BACKEND unset) ──
+minio>=7.2.0

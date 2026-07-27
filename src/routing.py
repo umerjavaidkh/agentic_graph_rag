@@ -300,6 +300,11 @@ _DOC_ROUTE = re.compile(
     r"\b(?:policy|policies|document|documents|pdf|manual|protocol|section\s+\d|"
     r"procedure|page\s+\d+|figure|table|workshop|"
     r"toc|annex|appendix|acknowledgement|preface|chapter|"
+    # 10-K/10-Q Item references (Item 1A, Item 7, Item 9, ...) — a document
+    # structure cue in the same family as "section \d"/"page \d", added
+    # after "What does Item 1A say about ...?" tripped the LLM's own
+    # structured-data redirect line with no document cue to override it.
+    r"item\s+\d+[a-c]?\b|"
     r"report|reports|annual\s+report|"
     r"identify\s+all|list\s+all|enumerate)\b",
     re.I,
