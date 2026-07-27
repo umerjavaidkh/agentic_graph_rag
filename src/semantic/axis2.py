@@ -26,7 +26,9 @@ import numpy as np
 from ..config.settings import (
     AXIS2_LLM_PAIR_CONCURRENCY,
     AXIS2_MAX_LLM_PAIRS,
+    AXIS2_MAX_SIMILARITY_EDGES_PER_NODE,
     AXIS2_MODEL,
+    AXIS2_NER_BATCH_SIZE,
     AXIS2_NER_CONCURRENCY,
     AXIS2_NER_MAX_TOKENS,
     AXIS2_RELATION_MAX_TOKENS,
@@ -48,6 +50,63 @@ SAME_CATEGORY_CONFIDENCE = 0.5
 # Node types to include in semantic analysis (skip PAGE for perf)
 SEMANTIC_NODE_TYPES    = {NodeType.CHAPTER, NodeType.SECTION}
 CONCEPT_NODE_TYPES     = {NodeType.SECTION, NodeType.PAGE}
+
+
+def _cap_edges_by_degree(
+    candidates: list[Tuple[int, int, float]], k: int
+) -> list[Tuple[int, int, float]]:
+    """
+    Greedily select from `candidates` (deduped (i, j, score) triples, i<j)
+    highest-score first, skipping any pair where either endpoint has
+    already reached degree k. This is the only approach that actually
+    bounds *every* node's final degree at k.
+
+    An earlier version had each node independently pick its own top-k
+    candidates, which does NOT bound degree: a node that happens to be
+    "everyone's favorite neighbor" (e.g. near-duplicate/tied embeddings, or
+    an entity that appears in most of the corpus) gets chosen by many other
+    nodes' independent top-k picks regardless of its own choices — verified
+    directly: 100 nodes all sharing 2 identical entities produced 20 nodes
+    with degree 99 under the per-node-picks-its-own-top-k approach, because
+    ties meant every node's "top 20" was a different arbitrary subset whose
+    union covered nearly the whole graph. Global greedy selection with a
+    live degree check on both endpoints closes that gap.
+    """
+    if k <= 0:
+        return []
+    candidates = sorted(candidates, key=lambda c: c[2], reverse=True)
+    degree: dict[int, int] = {}
+    out: list[Tuple[int, int, float]] = []
+    for i, j, score in candidates:
+        if degree.get(i, 0) >= k or degree.get(j, 0) >= k:
+            continue
+        degree[i] = degree.get(i, 0) + 1
+        degree[j] = degree.get(j, 0) + 1
+        out.append((i, j, score))
+    return out
+
+
+def _topk_edge_pairs(
+    sim: np.ndarray, k: int, threshold: Optional[float] = None
+) -> list[Tuple[int, int, float]]:
+    """
+    Bound edges to a per-node degree of k instead of every pair above a
+    flat threshold — a plain threshold filter over a full similarity
+    matrix is O(n^2) in edge count with no per-node cap at all, which is
+    exactly what let a 7,165-node document produce 2.17M edges. `sim` must
+    already have its diagonal excluded (e.g. set to -1) so a node never
+    picks itself.
+    """
+    n = sim.shape[0]
+    if n < 2 or k <= 0:
+        return []
+    iu, ju = np.triu_indices(n, k=1)
+    scores = sim[iu, ju]
+    if threshold is not None:
+        mask = scores >= threshold
+        iu, ju, scores = iu[mask], ju[mask], scores[mask]
+    candidates = [(int(i), int(j), float(s)) for i, j, s in zip(iu, ju, scores)]
+    return _cap_edges_by_degree(candidates, k)
 
 
 # ─────────────────────────────────────────
@@ -126,8 +185,12 @@ class Axis2Builder:
     # ─────────────────────────────────────────
     def _extract_entities(self, nodes: list[DKGNode]) -> list[DKGNode]:
         """
-        Uses LLM for NER in parallel (bounded by AXIS2_NER_CONCURRENCY).
-        Returns top-10 entities per node to keep it manageable.
+        Uses LLM for NER in parallel (bounded by AXIS2_NER_CONCURRENCY),
+        batching AXIS2_NER_BATCH_SIZE nodes per call instead of one call per
+        node — a large document has thousands of Section/Page nodes, and
+        one-call-per-node burns API request quota proportional to node
+        count with no way to bound it. Returns top-10 entities per node to
+        keep it manageable.
         """
         if not self.client:
             return nodes
@@ -136,7 +199,16 @@ class Axis2Builder:
         if not targets:
             return nodes
 
-        def _ner_one(node: DKGNode) -> Tuple[str, list]:
+        batch_size = max(1, AXIS2_NER_BATCH_SIZE)
+        batches = [targets[i:i + batch_size] for i in range(0, len(targets), batch_size)]
+
+        def _ner_batch(batch: list[DKGNode]) -> dict[str, list]:
+            # Excerpts are keyed by a short local index ("0", "1", ...), not
+            # the node's own (long) id -- cheaper in tokens and avoids the
+            # model mangling a complex id string as a JSON key. Mapped back
+            # to node.id below, after parsing.
+            parts = [f"[{i}]\n{node.text[:1200]}" for i, node in enumerate(batch)]
+            user_content = "\n\n---\n\n".join(parts)
             try:
                 resp = self.client.chat_completion(
                     model=AXIS2_MODEL,
@@ -145,33 +217,44 @@ class Axis2Builder:
                         {
                             "role": "system",
                             "content": (
-                                "Extract the top 10 named entities (people, organizations, "
-                                "concepts, theories, technical terms) from the text. "
-                                "Return ONLY a JSON array of strings. No explanation."
+                                "You will be given several numbered text excerpts, "
+                                "each marked [N]. For EACH excerpt, extract its top "
+                                "10 named entities (people, organizations, concepts, "
+                                "theories, technical terms). Return ONLY a JSON "
+                                "object mapping each excerpt's number (as a string) "
+                                "to its array of entity strings, e.g. "
+                                '{"0": [...], "1": [...]}. Include every excerpt '
+                                "number, even if its array is empty. No explanation."
                             ),
                         },
-                        {"role": "user", "content": node.text[:3000]},
+                        {"role": "user", "content": user_content},
                     ],
-                    max_tokens=AXIS2_NER_MAX_TOKENS,
+                    max_tokens=AXIS2_NER_MAX_TOKENS * len(batch),
                 )
                 raw = resp.choices[0].message.content.strip()
                 raw = raw.replace("```json", "").replace("```", "").strip()
-                return node.id, json.loads(raw)
+                parsed = json.loads(raw)
             except Exception:
-                return node.id, []
+                parsed = {}
 
-        # Build id→node lookup for result assignment
+            result: dict[str, list] = {}
+            for i, node in enumerate(batch):
+                entities = parsed.get(str(i)) if isinstance(parsed, dict) else None
+                result[node.id] = entities if isinstance(entities, list) else []
+            return result
+
         id_to_node = {n.id: n for n in targets}
 
         with ThreadPoolExecutor(max_workers=AXIS2_NER_CONCURRENCY, thread_name_prefix="axis2_ner") as pool:
-            futures = {pool.submit(_ner_one, node): node.id for node in targets}
+            futures = [pool.submit(_ner_batch, batch) for batch in batches]
             for fut in as_completed(futures):
                 try:
-                    node_id, entities = fut.result()
+                    batch_result = fut.result()
+                except Exception:
+                    continue
+                for node_id, entities in batch_result.items():
                     if node_id in id_to_node:
                         id_to_node[node_id].entities = entities
-                except Exception:
-                    pass
 
         return nodes
 
@@ -189,21 +272,22 @@ class Axis2Builder:
         norms = np.linalg.norm(vecs, axis=1, keepdims=True)
         vecs  = vecs / (norms + 1e-10)
         sim   = vecs @ vecs.T  # cosine similarity matrix
+        np.fill_diagonal(sim, -1.0)  # a node is never its own neighbor
 
-        for i, j in itertools.combinations(range(len(embedded)), 2):
-            score = float(sim[i, j])
-            if score >= SIMILARITY_THRESHOLD:
-                a, b = embedded[i], embedded[j]
-                edges.append(DKGEdge(
-                    source_id  = a.id,
-                    target_id  = b.id,
-                    rel_type   = RelType.SEMANTICALLY_SIMILAR,
-                    weight     = round(score, 4),
-                    axis       = 2,
-                    properties = {"score": round(score, 4)},
-                    confidence = round(score, 4),
-                    confidence_tier = EdgeConfidenceTier.INFERRED,
-                ))
+        for i, j, score in _topk_edge_pairs(
+            sim, AXIS2_MAX_SIMILARITY_EDGES_PER_NODE, SIMILARITY_THRESHOLD
+        ):
+            a, b = embedded[i], embedded[j]
+            edges.append(DKGEdge(
+                source_id  = a.id,
+                target_id  = b.id,
+                rel_type   = RelType.SEMANTICALLY_SIMILAR,
+                weight     = round(score, 4),
+                axis       = 2,
+                properties = {"score": round(score, 4)},
+                confidence = round(score, 4),
+                confidence_tier = EdgeConfidenceTier.INFERRED,
+            ))
 
         return edges
 
@@ -211,22 +295,49 @@ class Axis2Builder:
     # 4. SHARES_ENTITY
     # ─────────────────────────────────────────
     def _build_entity_edges(self, nodes: list[DKGNode]) -> list[DKGEdge]:
+        """
+        Same unbounded-pairwise bug as SEMANTICALLY_SIMILAR had (every pair
+        with ANY shared entity got an edge, no per-node cap) — a document
+        whose entities repeat often (e.g. "Newton", "force", "energy"
+        throughout a physics textbook) hits the identical O(n^2) blowup.
+        Fixed the same way: a global degree-capped greedy selection (see
+        _cap_edges_by_degree) over candidate pairs ranked by shared-entity
+        count. Uses an inverted index (entity -> node indices) to build
+        candidates rather than scanning every pair, so nodes that share
+        nothing are never compared at all — cheaper AND bounded, instead of
+        just bounded.
+        """
         edges: list[DKGEdge] = []
         entity_nodes = [n for n in nodes if n.entities]
+        if len(entity_nodes) < 2:
+            return edges
 
-        for i, j in itertools.combinations(range(len(entity_nodes)), 2):
+        entity_to_nodes: dict[str, list[int]] = {}
+        node_entity_sets: list[set] = []
+        for idx, node in enumerate(entity_nodes):
+            ents = set(e.lower() for e in node.entities)
+            node_entity_sets.append(ents)
+            for e in ents:
+                entity_to_nodes.setdefault(e, []).append(idx)
+
+        pair_counts: dict[Tuple[int, int], int] = {}
+        for idx_list in entity_to_nodes.values():
+            for a, b in itertools.combinations(sorted(idx_list), 2):
+                pair_counts[(a, b)] = pair_counts.get((a, b), 0) + 1
+
+        candidates = [(i, j, float(c)) for (i, j), c in pair_counts.items()]
+        cap = AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
+        for i, j, _count in _cap_edges_by_degree(candidates, cap):
             a, b = entity_nodes[i], entity_nodes[j]
-            shared = set(e.lower() for e in a.entities) & \
-                     set(e.lower() for e in b.entities)
-            if shared:
-                edges.append(DKGEdge(
-                    source_id  = a.id,
-                    target_id  = b.id,
-                    rel_type   = RelType.SHARES_ENTITY,
-                    weight     = len(shared),
-                    axis       = 2,
-                    properties = {"shared_entities": list(shared)},
-                ))
+            shared = node_entity_sets[i] & node_entity_sets[j]
+            edges.append(DKGEdge(
+                source_id  = a.id,
+                target_id  = b.id,
+                rel_type   = RelType.SHARES_ENTITY,
+                weight     = len(shared),
+                axis       = 2,
+                properties = {"shared_entities": list(shared)},
+            ))
 
         return edges
 
@@ -253,13 +364,38 @@ class Axis2Builder:
         for node, label in zip(embedded, labels):
             node.cluster_id = int(label)
 
-        # Build SAME_CATEGORY edges within each cluster
-        clusters: dict[int, list[DKGNode]] = {}
-        for node in embedded:
-            clusters.setdefault(node.cluster_id, []).append(node)
+        # Cluster count is capped at 10 regardless of corpus size (above),
+        # so cluster SIZE grows with the corpus instead of staying flat --
+        # connecting every pair within a cluster (the previous behavior)
+        # then grows quadratically with cluster size. This is what actually
+        # produced 2.17M edges for a 7,165-node document: 10 clusters ->
+        # ~716 members each -> C(716,2) * 10 ≈ 2.56M, dwarfing the other two
+        # edge builders combined. Fixed the same way as SEMANTICALLY_SIMILAR:
+        # cap each node to its top-k most-similar members of its OWN
+        # cluster, computed on a per-cluster similarity submatrix (cheap --
+        # clusters are far smaller than the full corpus).
+        clusters: dict[int, list[int]] = {}  # cluster_id -> indices into embedded
+        for idx, node in enumerate(embedded):
+            clusters.setdefault(node.cluster_id, []).append(idx)
 
-        for cluster_id, members in clusters.items():
-            for a, b in itertools.combinations(members, 2):
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        unit_vecs = vecs / (norms + 1e-10)
+        cap = AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
+        seen: set[Tuple[int, int]] = set()
+
+        for cluster_id, member_idx in clusters.items():
+            if len(member_idx) < 2:
+                continue
+            sub = unit_vecs[member_idx]
+            sub_sim = sub @ sub.T
+            np.fill_diagonal(sub_sim, -1.0)
+            for li, lj, _score in _topk_edge_pairs(sub_sim, cap):
+                gi, gj = member_idx[li], member_idx[lj]
+                pair = (gi, gj) if gi < gj else (gj, gi)
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                a, b = embedded[pair[0]], embedded[pair[1]]
                 edges.append(DKGEdge(
                     source_id  = a.id,
                     target_id  = b.id,
