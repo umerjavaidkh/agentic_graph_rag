@@ -16,7 +16,6 @@ from .config.prompts import load_prompt
 from .config.settings import (
     DEFAULT_TENANT_ID,
     FAST_ROUTE_QUERIES,
-    MODEL_PROVIDER,
     OPENAI_API_KEY,
     ROUTING_MODEL,
     estimate_route_max_tokens,
@@ -26,7 +25,7 @@ from .graph.constants import (
     DOCUMENT_LOGICAL_LABEL,
     INDEXED_NODE_CYPHER,
 )
-from .model_providers.factory import get_model_provider
+from .model_providers.factory import get_chat_provider
 from .telemetry import get_telemetry, pipeline_step
 
 logger = logging.getLogger(__name__)
@@ -340,12 +339,20 @@ def _fast_route_tool(question: str) -> Optional[str]:
 def select_mcp_tool(
     question: str,
     *,
-    provider_name: str = MODEL_PROVIDER,
-    api_key: str = OPENAI_API_KEY,
     model: str = ROUTING_MODEL,
 ) -> str:
     """
     Ask the LLM which MCP tool to invoke. Returns tool name (e.g. search_documents).
+
+    Note: this is the old LLM-based auto-router, kept only for its
+    keyword-based fast-path checks below — its only caller
+    (feedback_loop.resolver.resolve_query_tool) never reaches the LLM call
+    itself anymore, since the explicit retrieval_mode selector (router.py's
+    ask()) always resolves a concrete forced_tool now that "auto" routing
+    was removed, and resolve_query_tool returns before this function's tool
+    call could ever run. Left OpenAI-tool-calling-shaped (tools=/tool_choice=,
+    a schema Anthropic/Gemini don't share) rather than building an unused
+    cross-provider function-calling adapter for genuinely dead code.
     """
     routed = _fast_route_tool(question)
     if routed:
@@ -359,10 +366,10 @@ def select_mcp_tool(
     if _DOC_ROUTE.search(question) and not is_structured_data_question(question):
         return "search_documents"
 
-    if not api_key:
+    if not OPENAI_API_KEY:
         return "search_documents"
 
-    provider = get_model_provider(provider_name, api_key)
+    provider = get_chat_provider()
     system_prompt = load_prompt("route_query", structured_entities=structured_entity_summary())
 
     try:

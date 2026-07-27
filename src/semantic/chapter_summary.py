@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
 
 from ..config.prompts import load_prompt
 from ..config.settings import (
@@ -28,10 +27,8 @@ from ..config.settings import (
     CHAPTER_SUMMARY_MAX_TOKENS,
     CHAPTER_SUMMARY_MODEL,
     CHAPTER_SUMMARY_SECTION_EXCERPT_CHARS,
-    MODEL_PROVIDER,
-    OPENAI_API_KEY,
 )
-from ..model_providers.factory import get_model_provider
+from ..model_providers.factory import get_chat_provider
 from ..models import DKGEdge, DKGNode, NodeType, RelType
 
 
@@ -46,13 +43,12 @@ def _rel(edge: DKGEdge) -> str:
 class ChapterSummaryBuilder:
     """
     Usage:
-        builder = ChapterSummaryBuilder(api_key="sk-...")
+        builder = ChapterSummaryBuilder()
         nodes = builder.build(nodes, edges)
     """
 
-    def __init__(self, api_key: Optional[str] = None):
-        key = api_key or OPENAI_API_KEY
-        self.client = get_model_provider(MODEL_PROVIDER, key)
+    def __init__(self):
+        self.client = get_chat_provider()
 
     def build(self, nodes: list[DKGNode], edges: list[DKGEdge]) -> list[DKGNode]:
         if not self.client:

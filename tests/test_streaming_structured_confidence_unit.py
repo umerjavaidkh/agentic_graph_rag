@@ -125,7 +125,7 @@ def test_fast_path_flags_low_confidence_on_rule_mismatch(monkeypatch):
         lambda state: {"retrieved_context": {"chunks": chunks, "strategy": "text2cypher"}, "strategy": "text2cypher"},
     )
     monkeypatch.setattr(structured_stream_mod, "_should_fast_structured_answer", lambda chunks, strategy: True)
-    monkeypatch.setattr(structured_stream_mod, "get_model_provider", lambda: MagicMock())
+    monkeypatch.setattr(structured_stream_mod, "get_chat_provider", lambda: MagicMock())
     # This test is about the confidence flag itself, not the document
     # fallback it now triggers — stub it out so low_confidence=True doesn't
     # pull in the real unstructured retrieval stack.
@@ -150,7 +150,7 @@ def test_fast_path_clean_query_is_high_confidence(monkeypatch):
         lambda state: {"retrieved_context": {"chunks": chunks, "strategy": "text2cypher"}, "strategy": "text2cypher"},
     )
     monkeypatch.setattr(structured_stream_mod, "_should_fast_structured_answer", lambda chunks, strategy: True)
-    monkeypatch.setattr(structured_stream_mod, "get_model_provider", lambda: MagicMock())
+    monkeypatch.setattr(structured_stream_mod, "get_chat_provider", lambda: MagicMock())
 
     lines = list(
         iter_structured_stream(
@@ -174,7 +174,7 @@ def test_llm_synthesis_path_carries_confidence(monkeypatch):
 
     fake_provider = MagicMock()
     fake_provider.chat_completion_stream = lambda **kwargs: iter(["Here ", "you go."])
-    monkeypatch.setattr(structured_stream_mod, "get_model_provider", lambda: fake_provider)
+    monkeypatch.setattr(structured_stream_mod, "get_chat_provider", lambda: fake_provider)
 
     lines = list(
         iter_structured_stream("list customers", user_context=None, resolved_question="list customers")

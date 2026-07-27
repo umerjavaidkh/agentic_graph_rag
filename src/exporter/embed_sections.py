@@ -1,12 +1,12 @@
-from ..config.settings import EMBEDDING_MODEL, MODEL_PROVIDER, OPENAI_API_KEY
+from ..config.settings import EMBEDDING_MODEL
 from ..graph.driver import get_neo4j_driver
-from ..model_providers.factory import get_model_provider
+from ..model_providers.factory import get_embedding_provider
 from ..storage.vector.factory import get_vector_store
 
 
 def get_embedding(text: str) -> list[float]:
-    """Generate an embedding for text via the configured ModelProvider."""
-    provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+    """Generate an embedding for text — always OpenAI, independent of MODEL_PROVIDER."""
+    provider = get_embedding_provider()
     response = provider.embeddings(model=EMBEDDING_MODEL, input=text[:8000])
     return response.data[0].embedding
 

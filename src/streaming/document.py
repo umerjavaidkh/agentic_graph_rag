@@ -10,7 +10,7 @@ from ..config.settings import (
     DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS,
     DOCUMENT_SYNTHESIS_MAX_TOKENS,
 )
-from ..model_providers.factory import get_model_provider
+from ..model_providers.factory import get_chat_provider
 from ..presentation import build_presentation
 from ..retrieval.unstructured.graph import (
     _STRUCTURAL_FAST_MODES,
@@ -185,7 +185,7 @@ def iter_document_stream(
         question=question,
         structured_entities=structured_entity_summary(),
     )
-    provider = get_model_provider()
+    provider = get_chat_provider()
 
     yield stream_event(type="status", phase="synthesis", agent="unstructured")
     parts: list[str] = []

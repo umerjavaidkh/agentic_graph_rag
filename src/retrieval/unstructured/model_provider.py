@@ -1,7 +1,11 @@
-"""Shared LLM/embedding provider for unstructured retrieval."""
+"""Shared LLM provider for unstructured retrieval synthesis (chat only).
+
+Embeddings do NOT come from this module — they always go through
+model_providers.factory.get_embedding_provider() (OpenAI-backed) regardless
+of MODEL_PROVIDER; see graph_seeds.py's get_embedding().
+"""
 from __future__ import annotations
 
-from ...config.settings import MODEL_PROVIDER, OPENAI_API_KEY
-from ...model_providers.factory import get_model_provider
+from ...model_providers.factory import get_chat_provider
 
-provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+provider = get_chat_provider()

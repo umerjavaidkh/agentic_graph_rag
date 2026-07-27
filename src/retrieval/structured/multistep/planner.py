@@ -9,8 +9,6 @@ from pydantic import ValidationError
 from ....config.prompts import load_prompt
 from ....config.settings import (
     CHAT_MODEL,
-    MODEL_PROVIDER,
-    OPENAI_API_KEY,
     STRUCTURED_MODEL,
     STRUCTURED_PLAN_MAX_TOKENS,
     STRUCTURED_PLAN_QUERY_LARGE_CHARS,
@@ -21,12 +19,12 @@ from ....config.settings import (
     STRUCTURED_PLAN_TOKENS_MEDIUM,
     STRUCTURED_PLAN_TOKENS_SMALL,
 )
-from ....model_providers.factory import get_model_provider
+from ....model_providers.factory import get_chat_provider
 from .context import extract_json
 from .models import MultiStepPlan
 
 LLM_MODEL = STRUCTURED_MODEL or CHAT_MODEL
-_provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+_provider = get_chat_provider()
 
 
 def multistep_plan_token_budget(query: str, schema: str) -> int:

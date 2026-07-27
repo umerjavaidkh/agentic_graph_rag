@@ -7,10 +7,47 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parents[1]  # src/
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+# openai | anthropic (alias: claude) | gemini (alias: google) — see
+# model_providers/factory.py's get_chat_provider(). Only affects chat/
+# completion; embeddings always use OpenAI regardless (Anthropic has no
+# embeddings API, and Neo4j's vector index has a hardcoded dimension).
 MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "openai").lower()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
-CHAT_MODEL = os.environ.get("CHAT_MODEL", "gpt-4o-mini")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")  # always OpenAI, see above
+
+# CHAT_MODEL's default depends on MODEL_PROVIDER so switching providers
+# alone (without also remembering to override every *_MODEL var) doesn't
+# silently try to call e.g. Anthropic with an OpenAI model name. An
+# explicit CHAT_MODEL env var always wins over this default either way.
+_DEFAULT_CHAT_MODEL_BY_PROVIDER = {
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-sonnet-5",
+    "gemini": "gemini-2.5-flash",
+}
+CHAT_MODEL = os.environ.get("CHAT_MODEL") or _DEFAULT_CHAT_MODEL_BY_PROVIDER.get(
+    MODEL_PROVIDER, "gpt-4o-mini"
+)
+
+# Resolved API key for whichever provider MODEL_PROVIDER actually names —
+# for cheap early-exit gates ("is chat enrichment even configured?") that
+# need a plain boolean/string check before constructing any provider
+# object. Kept in sync with model_providers.factory.get_chat_provider()'s
+# own resolution, duplicated here (not imported from factory) to avoid a
+# settings <-> model_providers import cycle.
+_CANONICAL_PROVIDER = {
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "claude": "anthropic",
+    "gemini": "gemini",
+    "google": "gemini",
+}.get(MODEL_PROVIDER, "openai")
+CHAT_PROVIDER_API_KEY = {
+    "openai": OPENAI_API_KEY,
+    "anthropic": ANTHROPIC_API_KEY,
+    "gemini": GOOGLE_API_KEY,
+}[_CANONICAL_PROVIDER]
 # Per-pipeline overrides (each defaults to CHAT_MODEL when unset).
 STRUCTURED_MODEL = os.environ.get("STRUCTURED_MODEL", CHAT_MODEL)  # Text-to-Cypher + structured synthesis
 ROUTING_MODEL = os.environ.get("ROUTING_MODEL", CHAT_MODEL)  # MCP tool selection (search_documents vs query_data)

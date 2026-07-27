@@ -30,7 +30,7 @@ from ..config.settings import (
     STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS,
     STRUCTURED_SYNTHESIS_MAX_TOKENS,
 )
-from ..model_providers.factory import get_model_provider
+from ..model_providers.factory import get_chat_provider
 from ..retrieval.structured.graph import (
     _build_fast_structured_answer,
     _should_fast_structured_answer,
@@ -131,7 +131,7 @@ def iter_hybrid_stream(
     if viz:
         yield stream_event(type="presentation", partial=True, agent="hybrid", blocks=viz["blocks"])
 
-    provider = get_model_provider()
+    provider = get_chat_provider()
     doc_answer = ""
     doc_mode = (doc_retrieved.get("mode") or "").strip()
     if doc_mode in _STRUCTURAL_FAST_MODES:

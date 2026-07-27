@@ -16,12 +16,12 @@ from ...config.settings import (
     STRUCTURED_SYNTHESIS_MAX_TOKENS,
 )
 from .query_intent import estimate_structured_synthesis_max_tokens
-from ...model_providers.factory import get_model_provider
+from ...model_providers.factory import get_chat_provider
 from .query_intent import analytics_result_limit
 from .state import StructuredState
 from .verification import _COUNT_WORDS, compute_confidence
 
-provider = get_model_provider()
+provider = get_chat_provider()
 retriever = StructuredRetriever()
 LLM_MODEL = STRUCTURED_MODEL
 

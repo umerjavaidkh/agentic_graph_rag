@@ -10,7 +10,7 @@ Agentic GraphRAG keeps **structured business data** and **unstructured documents
 
 It brings **your own** Neo4j schema and **your own** documents: the query router reads the live graph schema at runtime rather than hardcoding a demo domain, so it isn't tied to the bundled Northwind + Go.Data sample data used below.
 
-Built with **Neo4j · FastAPI · LangGraph · OpenAI**.
+Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, Anthropic (Claude), or Gemini** — pick with `MODEL_PROVIDER`; embeddings always use OpenAI.
 
 ## Demo
 
@@ -43,7 +43,8 @@ Most RAG repos hardcode one parser, one embedding provider, and one retrieval pa
 | **Parsing** | `DocumentParser` Protocol — [`src/document/parser_base.py`](src/document/parser_base.py) | `LightPdfParser` (`.pdf:light`), `TableAwarePdfParser` (`.pdf:table-aware`) — [`src/document/parser_registry.py`](src/document/parser_registry.py) | Implement `parse(source) -> (nodes, edges)`, call `register_parser(".pdf:yourname", YourParser)` |
 | **Retrieval (unstructured)** | `UnstructuredStrategy` Protocol — [`src/retrieval/unstructured/strategies/base.py`](src/retrieval/unstructured/strategies/base.py) | `structural_box_list`, `subsection_tree`, `structural_toc`, `structural_page`, `graph_rag_hybrid` | Implement `retrieve(...)`, call `register_unstructured("yourname", factory)` |
 | **Retrieval (structured)** | `StructuredStrategy` Protocol — [`src/retrieval/structured/strategies/base.py`](src/retrieval/structured/strategies/base.py) | `text2cypher`, `multistep` | Implement `retrieve(...)`, call `register_structured("yourname", factory)` |
-| **LLM / embeddings** | `ModelProvider` ABC — [`src/model_providers/base.py`](src/model_providers/base.py) | `OpenAIProvider` — [`src/model_providers/factory.py`](src/model_providers/factory.py) | Implement `chat_completion`/`embeddings`, add it to `get_model_provider()` |
+| **LLM (chat/synthesis)** | `ModelProvider` ABC — [`src/model_providers/base.py`](src/model_providers/base.py) | `OpenAIProvider`, `AnthropicProvider`, `GeminiProvider` — pick with `MODEL_PROVIDER` (`get_chat_provider()` in [`src/model_providers/factory.py`](src/model_providers/factory.py)) | Implement `chat_completion`/`chat_completion_stream`, register in `get_model_provider()` |
+| **Embeddings** | same `ModelProvider` ABC | `OpenAIProvider` only — always used regardless of `MODEL_PROVIDER` (Anthropic has no embeddings API; Neo4j's vector index has a fixed dimension) — see `get_embedding_provider()` | Swapping embedding provider/dimension needs a matching vector-index rebuild; not currently wired up |
 | **Blob storage** | `BlobStore` ABC — [`src/storage/blob/base.py`](src/storage/blob/base.py) | Local filesystem, MinIO | Implement `put`/`get`/`delete`/`exists`, wire into `get_blob_store()` |
 | **Vector storage** | `VectorStore` ABC — [`src/storage/vector/base.py`](src/storage/vector/base.py) | In-memory, Qdrant | Implement `upsert`/`query`/`delete`, wire into `get_vector_store()` |
 
@@ -79,7 +80,9 @@ Full write-up (query path, ingestion pipeline, multi-tenancy, audit log, project
 ```bash
 git clone https://github.com/umerjavaidkh/agentic_graph_rag.git
 cd agentic_graph_rag
-cp .env.example .env          # add OPENAI_API_KEY
+cp .env.example .env          # add OPENAI_API_KEY (always required — embeddings)
+# Optional: MODEL_PROVIDER=anthropic|gemini for chat/synthesis + the matching
+# ANTHROPIC_API_KEY/GOOGLE_API_KEY — defaults to openai for chat too if unset.
 docker compose up --build
 ```
 
@@ -111,7 +114,8 @@ Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstruc
 | Graph database | Neo4j 5.x |
 | AI orchestration | LangGraph |
 | API | FastAPI + Uvicorn |
-| LLM / Embeddings | OpenAI (gpt-4o-mini, text-embedding-3-small) |
+| LLM (chat/synthesis) | OpenAI, Anthropic, or Gemini (`MODEL_PROVIDER`; default gpt-4o-mini) |
+| Embeddings | OpenAI only, always (text-embedding-3-small) |
 | PDF parsing | PyMuPDF + pdfplumber |
 | Job queue | Redis + RQ *(optional — in-process fallback when unset)* |
 | Containers | Docker / Docker Compose |
