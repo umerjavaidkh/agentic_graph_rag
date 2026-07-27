@@ -316,7 +316,19 @@ class RankingService:
         tables repeating the metric name. Pinning forces it into context so
         synthesis answers the firm total, not a segment's. Sections that hold
         actual figures ('$'/digits) and are not flagged low-confidence rank
-        first; a note is preferred over a bloated near-duplicate.
+        first.
+
+        Pins the whole candidate set (already small and precise — at most 5,
+        title-matched to a fixed list of summary-section headings by
+        FinancialSummaryService, not a broad search) rather than truncating
+        to the top couple: different summary sections cover different
+        metrics (e.g. "Selected Financial Data" has EPS/assets while ROE
+        only appears in "Executive Overview"), so keeping just the
+        shortest/most-figure-dense ones by a text-length heuristic can
+        silently drop the one section that actually answers the question —
+        verified live on a "return on equity" question that needed the
+        longer Executive Overview section, not the shorter tables ranked
+        above it under the old top-2 cap.
         """
         if not financial_summary_hits:
             return items
@@ -331,7 +343,7 @@ class RankingService:
 
         seen: set[str] = set()
         out: list[dict] = []
-        for hit in pinned[:2]:
+        for hit in pinned:
             cid = hit.get("id")
             if not cid or cid in seen:
                 continue
