@@ -1806,30 +1806,42 @@
     }
 
     async function send() {
-      const question = q.value.trim();
-      if (!question) return;
+      const raw = q.value;
+      if (!raw.trim()) return;
       clearError();
-
-      addMessage('user', question);
       q.value = '';
-      setStatus('Thinking…');
+
+      // Bulk mode: each non-blank line is its own question, answered one at a
+      // time in order (not in parallel — keeps thread continuity coherent
+      // and avoids hammering the RAG pipeline with N concurrent LLM calls).
+      // A single-line paste behaves exactly as before.
+      const questions = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+      if (questions.length === 0) return;
+
       sendBtn.disabled = true;
-      showThinking();
-
-      const ctx = getCtx();
-      const useStream = document.getElementById('use_stream').checked;
-
       try {
-        if (useStream) {
-          await sendStreaming(question, ctx);
-        } else {
-          await sendClassic(question, ctx);
+        for (let i = 0; i < questions.length; i++) {
+          const question = questions[i];
+          const suffix = questions.length > 1 ? ` (${i + 1}/${questions.length})` : '';
+          addMessage('user', question);
+          setStatus(`Thinking…${suffix}`);
+          showThinking();
+
+          const ctx = getCtx();
+          const useStream = document.getElementById('use_stream').checked;
+          try {
+            if (useStream) {
+              await sendStreaming(question, ctx);
+            } else {
+              await sendClassic(question, ctx);
+            }
+          } catch (e) {
+            removeThinking();
+            showError(e.message || String(e));
+            // keep going — one bad question shouldn't abort the rest of the queue
+          }
         }
         setStatus('Ready');
-      } catch (e) {
-        removeThinking();
-        showError(e.message || String(e));
-        setStatus('Error');
       } finally {
         sendBtn.disabled = false;
       }
