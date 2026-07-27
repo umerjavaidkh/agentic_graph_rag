@@ -52,6 +52,16 @@ class FinancialSummaryService:
             MATCH (n)
             WHERE (n:Section OR n:Chapter)
               AND coalesce(n.text, '') <> ''
+              // A genuine Executive Overview/Financial Highlights section
+              // runs to thousands of characters; a Table of Contents entry
+              // that merely lists Executive Overview as a cross-reference
+              // (page number, title, page number, next title, all on
+              // separate lines) is under 100 chars. Without this floor, the
+              // TOC fragment title-matches too and, being short, wins
+              // _pin_firmwide_summary_chunks' prefer-compact tiebreak over
+              // the real section, so the answer sees page numbers instead
+              // of the actual overview text.
+              AND size(n.text) > 200
               AND ({title_pred})
               AND (
                 EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
