@@ -38,6 +38,7 @@ from ..query_intent import (
     is_enumeration_question,
     is_firmwide_financial_metric_question,
     is_overview_question,
+    is_quarterly_breakdown_question,
     is_synthesis_question,
 )
 from ..services.chapter_summary import ChapterSummaryService
@@ -106,6 +107,7 @@ class FullHybridStrategy:
         # (vector/graph/lexical weighting, fetch_limit sizing).
         wants_overview = synthesis or is_overview_question(query)
         wants_firmwide = is_firmwide_financial_metric_question(query)
+        wants_quarterly = is_quarterly_breakdown_question(query)
         fetch_limit = limit
         if synthesis:
             fetch_limit = max(limit, 16)
@@ -217,6 +219,20 @@ class FullHybridStrategy:
             if wants_firmwide and document_id
             else None
         )
+        # Same pin-worthy-authoritative-section idea as financial_summary_future,
+        # for quarter-by-quarter questions instead of firmwide-vs-segment ones —
+        # see fetch_quarterly_for_document's docstring for why this table needs
+        # its own fetch rather than reusing the title-matched one above.
+        quarterly_summary_future = (
+            pool.submit(
+                self._neo4j_session_call,
+                self._financial_summaries.fetch_quarterly_for_document,
+                document_id,
+                tenant_id=tenant_id,
+            )
+            if wants_quarterly and document_id
+            else None
+        )
         phrase_hits = phrase_future.result()
         keyword_hits = keyword_future.result()
         if vector_future is not None:
@@ -225,6 +241,9 @@ class FullHybridStrategy:
         chapter_summary_hits = chapter_summary_future.result() if chapter_summary_future is not None else []
         financial_summary_hits = (
             financial_summary_future.result() if financial_summary_future is not None else []
+        )
+        quarterly_summary_hits = (
+            quarterly_summary_future.result() if quarterly_summary_future is not None else []
         )
 
         lexical_hits = self._ranking._merge_retrieval_chunks(phrase_hits, keyword_hits)
@@ -273,9 +292,10 @@ class FullHybridStrategy:
             items = self._ranking._pin_contrast_lexical_chunks(
                 query, items, lexical_hits, limit=max(1, int(fetch_limit))
             )
-        if financial_summary_hits:
+        pin_summary_hits = financial_summary_hits + quarterly_summary_hits
+        if pin_summary_hits:
             items = self._ranking._pin_firmwide_summary_chunks(
-                items, financial_summary_hits, limit=max(1, int(fetch_limit))
+                items, pin_summary_hits, limit=max(1, int(fetch_limit))
             )
 
         response = self._formatter.format(query, items, ctx=ctx)
