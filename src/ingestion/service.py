@@ -16,6 +16,7 @@ from neo4j.exceptions import ClientError
 
 from ..config.settings import (
     AUTO_LOAD_TO_NEO4J,
+    CHAT_PROVIDER_API_KEY,
     CLEANUP_TMP_INGEST,
     CORPUS_MAX_FILES,
     CORPUS_MAX_PDF_PAGES,
@@ -23,7 +24,6 @@ from ..config.settings import (
     DEFAULT_TENANT_ID,
     DOC_SKIP_DUPLICATE_HASH,
     ENABLE_PAGE_VISION,
-    MODEL_PROVIDER,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
@@ -42,7 +42,7 @@ from ..document.versioning import (
 from ..document.parser_base import DocumentParser
 from ..document.parser_registry import get_parser, supported_extensions
 from ..model_providers.base import ModelProvider
-from ..model_providers.factory import get_model_provider
+from ..model_providers.factory import get_chat_provider
 from ..models import NodeType
 from ..exporter.exporter import Neo4jExporter
 from ..models import DKGEdge, DKGNode
@@ -123,7 +123,7 @@ class IngestionManager:
     ):
         self.store: JobStore = store if store is not None else get_job_store()
         self.parser_factory = parser_factory
-        self.model_provider = model_provider or get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+        self.model_provider = model_provider or get_chat_provider()
         self.blob_store = blob_store or get_blob_store()
         self.vector_store = vector_store or get_vector_store()
         self.exporter_factory = exporter_factory
@@ -446,12 +446,12 @@ class IngestionManager:
             except Exception as exc:
                 self._log(job, f"Vision enrichment skipped: {exc}")
 
-        if OPENAI_API_KEY:
+        if CHAT_PROVIDER_API_KEY:
             self._set_status(job, IngestionStatus.semantic_enrichment, "Running semantic enrichment (Axis 2)")
             try:
                 from ..semantic.axis2 import Axis2Builder
 
-                builder = Axis2Builder(api_key=OPENAI_API_KEY)
+                builder = Axis2Builder()
                 nodes, semantic_edges = builder.build(nodes, run_llm_pass=True)
                 edges += semantic_edges
                 self._log(job, f"Added {len(semantic_edges)} semantic edges")
@@ -462,13 +462,13 @@ class IngestionManager:
             try:
                 from ..semantic.chapter_summary import ChapterSummaryBuilder
 
-                nodes = ChapterSummaryBuilder(api_key=OPENAI_API_KEY).build(nodes, edges)
+                nodes = ChapterSummaryBuilder().build(nodes, edges)
                 summarized = sum(1 for n in nodes if getattr(n, "summary", None))
                 self._log(job, f"Summarized {summarized} chapter(s)")
             except Exception as exc:
                 self._log(job, f"Chapter summarization skipped: {exc}")
         else:
-            self._log(job, "OPENAI_API_KEY not configured; skipping semantic enrichment")
+            self._log(job, "No chat provider API key configured; skipping semantic enrichment")
 
         if STORE_INGESTION_ARTIFACTS and job.output_dir:
             self._set_status(job, IngestionStatus.exporting, "Exporting Neo4j import artifacts")

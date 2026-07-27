@@ -31,10 +31,8 @@ from ..config.settings import (
     AXIS2_NER_MAX_TOKENS,
     AXIS2_RELATION_MAX_TOKENS,
     EMBEDDING_MODEL,
-    MODEL_PROVIDER,
-    OPENAI_API_KEY,
 )
-from ..model_providers.factory import get_model_provider
+from ..model_providers.factory import get_chat_provider, get_embedding_provider
 from ..models import DKGNode, DKGEdge, EdgeConfidenceTier, NodeType, RelType
 
 
@@ -61,13 +59,15 @@ class Axis2Builder:
     all Axis 2 semantic edges.
 
     Usage:
-        builder = Axis2Builder(api_key="sk-...")
+        builder = Axis2Builder()
         nodes, new_edges = builder.build(nodes)
     """
 
-    def __init__(self, api_key: Optional[str] = None):
-        key = api_key or OPENAI_API_KEY
-        self.client = get_model_provider(MODEL_PROVIDER, key)
+    def __init__(self):
+        self.client = get_chat_provider()
+        # Embeddings always go through OpenAI regardless of MODEL_PROVIDER —
+        # see model_providers.factory.get_embedding_provider().
+        self.embedding_client = get_embedding_provider()
 
     def build(
         self,
@@ -113,7 +113,7 @@ class Axis2Builder:
         # Batch in groups of 100 (OpenAI limit)
         for batch_start in range(0, len(texts), 100):
             batch = texts[batch_start:batch_start + 100]
-            response = self.client.embeddings(
+            response = self.embedding_client.embeddings(
                 model=EMBEDDING_MODEL, input=batch
             )
             for i, emb_obj in enumerate(response.data):

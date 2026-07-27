@@ -12,7 +12,6 @@ from pathlib import Path
 import fitz  # PyMuPDF
 
 from ..config.settings import (
-    MODEL_PROVIDER,
     OPENAI_API_KEY,
     VISION_DPI,
     VISION_IMAGE_DETAIL,
@@ -22,7 +21,7 @@ from ..config.settings import (
     VISION_MODEL,
     VISION_SELECTIVE,
 )
-from ..model_providers.factory import get_model_provider
+from ..model_providers.openai_provider import OpenAIProvider
 from ..models import DKGNode, NodeType
 
 VISION_SYSTEM = """You are a document page analyst. Describe ONLY what is visible on the page image.
@@ -153,7 +152,14 @@ VISUAL_PAGE_HINTS = re.compile(
 
 class PageVisionEnricher:
     def __init__(self, api_key: str | None = None):
-        self.provider = get_model_provider(MODEL_PROVIDER, api_key or OPENAI_API_KEY)
+        # Deliberately always OpenAI, independent of MODEL_PROVIDER — this
+        # sends base64 page images via OpenAI's multimodal message shape
+        # (image_url content blocks), which Anthropic/Gemini don't share;
+        # no image-content adapter exists for the other providers, and this
+        # feature is opt-in/disabled by default (ENABLE_PAGE_VISION), so it
+        # isn't worth building one for. Same pattern as embeddings staying
+        # OpenAI-only — see model_providers.factory.get_embedding_provider().
+        self.provider = OpenAIProvider(api_key=api_key or OPENAI_API_KEY)
 
     def enrich_document(
         self,

@@ -129,7 +129,7 @@ def test_llm_synthesis_done_event_carries_document_id(monkeypatch):
     )
     fake_provider = MagicMock()
     fake_provider.chat_completion_stream = lambda **kwargs: iter(["Here ", "you go."])
-    monkeypatch.setattr(document_stream_mod, "get_model_provider", lambda: fake_provider)
+    monkeypatch.setattr(document_stream_mod, "get_chat_provider", lambda: fake_provider)
 
     lines = list(
         document_stream_mod.iter_document_stream(

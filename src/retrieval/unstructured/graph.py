@@ -23,13 +23,13 @@ from ...config.settings import (
     DOCUMENT_SYNTHESIS_MAX_TOKENS,
     RETRIEVAL_FINAL_LIMIT,
 )
-from ...model_providers.factory import get_model_provider
+from ...model_providers.factory import get_chat_provider
 from ...telemetry import pipeline_step
 from .state import ESGState
 from .verification import compute_confidence
 
 retriever = DocumentRAGRetriever()
-provider = get_model_provider()
+provider = get_chat_provider()
 
 _STRUCTURED_MISROUTE = re.compile(
     r"not in the document corpus|use structured data access",

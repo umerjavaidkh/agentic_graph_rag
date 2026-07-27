@@ -11,7 +11,7 @@ from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
 from ....storage.vector.factory import get_vector_store
 from ..constants import _GRAPH_REL_TYPES, _TEXT_NODE_LABELS
-from ..model_provider import provider
+from ....model_providers.factory import get_embedding_provider
 from .ranking import RankingService
 
 
@@ -294,7 +294,7 @@ class GraphSeedService:
             return []
 
     def get_embedding(self, text: str) -> list[float]:
-        resp = provider.embeddings(model=EMBEDDING_MODEL, input=(text or "")[:8000])
+        resp = get_embedding_provider().embeddings(model=EMBEDDING_MODEL, input=(text or "")[:8000])
         return list(resp.data[0].embedding)
 
     @staticmethod

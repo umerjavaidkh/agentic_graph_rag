@@ -11,7 +11,7 @@ from ..config.settings import (
     STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS,
     STRUCTURED_SYNTHESIS_MAX_TOKENS,
 )
-from ..model_providers.factory import get_model_provider
+from ..model_providers.factory import get_chat_provider
 from ..presentation import build_presentation
 from ..presentation.structured_planner import build_structured_presentation
 from ..retrieval.structured.graph import (
@@ -163,7 +163,7 @@ def iter_structured_stream(
         )
         return
 
-    provider = get_model_provider()
+    provider = get_chat_provider()
     low_confidence, confidence_note = compute_confidence(
         question, chunks, provider=provider, model=STRUCTURED_MODEL
     )

@@ -6,16 +6,14 @@ from typing import Optional, Protocol
 from ....config.prompts import load_prompt
 from ....config.settings import (
     CHAT_MODEL,
-    MODEL_PROVIDER,
-    OPENAI_API_KEY,
     STRUCTURED_MODEL,
     STRUCTURED_TEXT2CYPHER_MAX_TOKENS,
 )
-from ....model_providers.factory import get_model_provider
+from ....model_providers.factory import get_chat_provider
 from ..query_intent import analytics_result_limit
 
 LLM_MODEL = STRUCTURED_MODEL or CHAT_MODEL
-_provider = get_model_provider(MODEL_PROVIDER, OPENAI_API_KEY)
+_provider = get_chat_provider()
 
 
 class CypherGenerator(Protocol):
