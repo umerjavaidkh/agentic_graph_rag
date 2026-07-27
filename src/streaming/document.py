@@ -87,29 +87,6 @@ def iter_document_stream(
     if prior_context:
         state["prior_context"] = prior_context
 
-    # Skipped when called as the structured path's own low-confidence
-    # fallback (structured.py's _try_document_fallback_stream) — bouncing
-    # back to structured there would just recreate the low-confidence
-    # answer we're trying to improve on. Mirrors the non-streaming
-    # skip_structured_guard on ESGState (retrieval/unstructured/graph.py).
-    if not skip_structured_guard and (guard := document_agent_structured_guard(question, user_context)):
-        if guard.get("_autofix_agent") == "structured":
-            yield stream_event(type="status", phase="reroute", agent="structured", reason="misroute_autofix")
-            yield from iter_structured_stream(
-                question,
-                user_context=user_context,
-                resolved_question=resolved_question,
-            )
-            return
-        yield stream_event(
-            type="done",
-            agent="unstructured",
-            answer=guard.get("answer", ""),
-            sources=[],
-            strategy="graph_rag",
-        )
-        return
-
     yield stream_event(type="status", phase="retrieval", agent="unstructured")
     partial = retrieve_node(state)
     retrieved = partial.get("retrieved_context") or {}
@@ -126,6 +103,34 @@ def iter_document_stream(
     )
 
     if not chunks:
+        # Misroute guard: structured-graph question sent to document agent →
+        # autofix or generic hint. Gated on retrieval having found NOTHING
+        # here (not on the question's wording alone) — see the matching
+        # comment in retrieval/unstructured/graph.py's _generate_document_answer
+        # and [[repo_keyword_routing_scaling_risk]] for why a pre-retrieval
+        # keyword check wrongly discarded real document content. Skipped
+        # entirely when called as the structured path's own low-confidence
+        # fallback (structured.py's _try_document_fallback_stream) — bouncing
+        # back to structured there would just recreate the low-confidence
+        # answer we're trying to improve on.
+        if not skip_structured_guard and (guard := document_agent_structured_guard(question, user_context)):
+            if guard.get("_autofix_agent") == "structured":
+                yield stream_event(type="status", phase="reroute", agent="structured", reason="misroute_autofix")
+                yield from iter_structured_stream(
+                    question,
+                    user_context=user_context,
+                    resolved_question=resolved_question,
+                )
+                return
+            yield stream_event(
+                type="done",
+                agent="unstructured",
+                answer=guard.get("answer", ""),
+                sources=[],
+                strategy="graph_rag",
+            )
+            return
+
         answer = "I could not find relevant information in the ingested documents."
         low_confidence, confidence_note = compute_confidence(
             question, answer, chunks, "", provider=None, model=CHAT_MODEL
