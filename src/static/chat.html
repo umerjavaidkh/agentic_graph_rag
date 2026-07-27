@@ -583,6 +583,110 @@
       border-color: var(--accent);
       background: var(--accent-soft);
     }
+    .meta-chip.doc-link{
+      cursor: pointer;
+      font: inherit;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .meta-chip.doc-link:hover{
+      background: var(--accent);
+      color: #fff;
+    }
+    .source-open-link{
+      display: inline-block;
+      margin-top: 6px;
+      font-size: var(--font-size-xs);
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+      background: none;
+      border: none;
+      padding: 0;
+      font-family: inherit;
+    }
+    .doc-panel-backdrop{
+      position: fixed;
+      inset: 0;
+      background: rgba(38,28,16,0.35);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+      z-index: 40;
+    }
+    .doc-panel-backdrop.open{
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .doc-panel{
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(55vw, 760px);
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+      z-index: 41;
+    }
+    .doc-panel.open{
+      transform: translateX(0);
+    }
+    .doc-panel-header{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .doc-panel-title{
+      font-weight: 600;
+      font-size: var(--font-size-sm);
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .doc-panel-close{
+      flex-shrink: 0;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      border-radius: var(--radius-sm);
+      width: 30px;
+      height: 30px;
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .doc-panel-close:hover{
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .doc-panel-body{
+      flex: 1;
+      position: relative;
+    }
+    .doc-panel-body iframe{
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+    .doc-panel-empty{
+      padding: 20px;
+      color: var(--text-muted);
+      font-size: var(--font-size-sm);
+    }
+    @media (max-width: 980px){
+      .doc-panel{ width: 100vw; }
+    }
     .feedback-bar{
       margin-top: 10px;
       padding-top: 10px;
@@ -793,6 +897,15 @@
     </div>
   </div>
 
+  <div id="doc_panel_backdrop" class="doc-panel-backdrop"></div>
+  <div id="doc_panel" class="doc-panel" role="dialog" aria-label="Source document viewer">
+    <div class="doc-panel-header">
+      <span class="doc-panel-title" id="doc_panel_title">Document</span>
+      <button class="doc-panel-close" id="doc_panel_close" type="button" title="Close">&times;</button>
+    </div>
+    <div class="doc-panel-body" id="doc_panel_body"></div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
   <script>
     const chatBody = document.getElementById('chat_body');
@@ -863,6 +976,55 @@
     function authHeaders(extra) {
       return Object.assign({ 'Content-Type': 'application/json' }, extra || {});
     }
+
+    // ── Source document viewer (side panel) ──────────────────────────────
+    function openDocPanel(documentId, title, page) {
+      if (!documentId) return;
+      const ctx = getCtx();
+      const params = new URLSearchParams({ role: ctx.role, user_id: ctx.user_id });
+      let url = `/documents/${encodeURIComponent(documentId)}/file?${params.toString()}`;
+      if (page) url += `#page=${encodeURIComponent(page)}`;
+
+      document.getElementById('doc_panel_title').textContent = title || documentId;
+      const body = document.getElementById('doc_panel_body');
+      body.innerHTML = '';
+      const iframe = document.createElement('iframe');
+      iframe.src = url;
+      iframe.title = title || documentId;
+      body.appendChild(iframe);
+
+      document.getElementById('doc_panel').classList.add('open');
+      document.getElementById('doc_panel_backdrop').classList.add('open');
+    }
+
+    function firstSourcePage(sources) {
+      const s = sources && sources[0];
+      return s && (s.pdf_page || s.document_page || s.page_start);
+    }
+
+    function appendSourceOpenLink(container, source, documentId, documentTitle) {
+      if (!documentId) return;
+      const page = source && (source.pdf_page || source.document_page || source.page_start);
+      const link = document.createElement('button');
+      link.type = 'button';
+      link.className = 'source-open-link';
+      link.textContent = page ? `Open page ${page} in document` : 'Open in document';
+      link.addEventListener('click', () => openDocPanel(documentId, documentTitle, page));
+      container.appendChild(link);
+    }
+
+    function closeDocPanel() {
+      document.getElementById('doc_panel').classList.remove('open');
+      document.getElementById('doc_panel_backdrop').classList.remove('open');
+      // Drop the iframe so a background PDF load can't keep running/holding memory.
+      document.getElementById('doc_panel_body').innerHTML = '';
+    }
+
+    document.getElementById('doc_panel_close').addEventListener('click', closeDocPanel);
+    document.getElementById('doc_panel_backdrop').addEventListener('click', closeDocPanel);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeDocPanel();
+    });
 
     async function loadAuthConfig() {
       try {
@@ -977,7 +1139,7 @@
       chatBody.appendChild(card);
     }
 
-    function buildMetaChips(accessLevel, agent, strategy, routeTool, queryType, presentationKind, followUp) {
+    function buildMetaChips(accessLevel, agent, strategy, routeTool, queryType, presentationKind, followUp, documentTitle, documentId, documentPage) {
       const chips = [];
       if (followUp) chips.push({ label: '↳ ' + followUp.replace(/_/g, ' '), accent: true });
       if (agent) chips.push({ label: agent, accent: true });
@@ -986,13 +1148,31 @@
       if (presentationKind) chips.push({ label: 'ui: ' + presentationKind });
       if (accessLevel) chips.push({ label: accessLevel });
       if (routeTool) chips.push({ label: routeTool });
+      // Transparency: which ingested document this answer was actually
+      // grounded in, so a conversation drifting to a different document
+      // (e.g. after a tangent question) is visible instead of silent.
+      // Clickable (when documentId is known) to open the real source PDF —
+      // jumps straight to the page the top source chunk came from, not page 1.
+      if (documentTitle) {
+        chips.push({
+          label: 'doc: ' + documentTitle,
+          accent: true,
+          title: documentId ? `Open ${documentTitle}` : documentTitle,
+          onClick: documentId ? () => openDocPanel(documentId, documentTitle, documentPage) : null,
+        });
+      }
       const row = document.createElement('div');
       row.className = 'meta-row';
       chips.forEach(c => {
-        const span = document.createElement('span');
-        span.className = 'meta-chip' + (c.accent ? ' accent' : '');
-        span.textContent = c.label;
-        row.appendChild(span);
+        const el = document.createElement(c.onClick ? 'button' : 'span');
+        el.className = 'meta-chip' + (c.accent ? ' accent' : '') + (c.onClick ? ' doc-link' : '');
+        el.textContent = c.label;
+        if (c.title) el.title = c.title;
+        if (c.onClick) {
+          el.type = 'button';
+          el.addEventListener('click', c.onClick);
+        }
+        row.appendChild(el);
       });
       return row;
     }
@@ -1515,7 +1695,7 @@
       if (bar) inner.appendChild(bar);
     }
 
-    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType, followUp, telemetry, requestId) {
+    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType, followUp, telemetry, requestId, documentTitle, documentId) {
       removeThinking();
       const wrap = document.createElement('div');
       wrap.className = 'msg assistant';
@@ -1550,7 +1730,10 @@
       const metaRow = buildMetaChips(
         accessLevel, agent, strategy, routeTool, queryType,
         presentation && presentation.kind,
-        followUp
+        followUp,
+        documentTitle,
+        documentId,
+        firstSourcePage(sources)
       );
       const telChip = formatTelemetryChip(telemetry);
       const tries = extractTries(telemetry);
@@ -1581,6 +1764,7 @@
           const pre = document.createElement('div');
           pre.className = 'source';
           pre.textContent = JSON.stringify(s, null, 2);
+          appendSourceOpenLink(pre, s, documentId, documentTitle);
           details.appendChild(pre);
         });
         if (sources.length > 10) {
@@ -1681,7 +1865,9 @@
         payload.query_type,
         payload.follow_up,
         payload.telemetry,
-        payload.request_id
+        payload.request_id,
+        payload.document_title,
+        payload.document_id
       );
     }
 
@@ -1771,7 +1957,10 @@
         event.route_tool,
         event.query_type,
         presentation && presentation.kind,
-        event.follow_up
+        event.follow_up,
+        event.document_title,
+        event.document_id,
+        firstSourcePage(sources)
       );
       const telChip = formatTelemetryChip(telemetry);
       if (telChip) {
@@ -1794,6 +1983,7 @@
           const pre = document.createElement('div');
           pre.className = 'source';
           pre.textContent = JSON.stringify(s, null, 2);
+          appendSourceOpenLink(pre, s, event.document_id, event.document_title);
           details.appendChild(pre);
         });
         if (sources.length > 10) {

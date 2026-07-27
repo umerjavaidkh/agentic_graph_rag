@@ -61,6 +61,7 @@ class FinancialSummaryService:
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
               n.text AS text,
+              n.page_start AS page_start,
               coalesce(n.order, 0) AS order
             ORDER BY order ASC
             LIMIT 5
@@ -77,6 +78,7 @@ class FinancialSummaryService:
                 "id": r["id"],
                 "title": title,
                 "text": r["text"],
+                "page_start": r.get("page_start"),
                 "score": 1.0,
                 "related": ["via:financial_summary"],
             })

@@ -128,6 +128,7 @@ class LexicalService:
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
               coalesce(n.text, '') AS text,
+              n.page_start AS page_start,
               matched,
               w
             ORDER BY w DESC, size(coalesce(n.text, '')) ASC
@@ -152,6 +153,7 @@ class LexicalService:
                 "id": r["id"],
                 "title": title,
                 "text": self.enrich_chunk_text_for_facts(title, r.get("text") or ""),
+                "page_start": r.get("page_start"),
                 "score": 0.88 + 0.06 * min(len(matched), 4) + 0.01 * min(w, 20),
                 "related": ["via:keyword_search"],
             })
@@ -201,6 +203,7 @@ class LexicalService:
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
               coalesce(n.text, '') AS text,
+              n.page_start AS page_start,
               phrase_hits,
               coalesce(d.title, d.id) AS doc_title
             ORDER BY phrase_hits DESC, size(coalesce(n.text, '')) ASC
@@ -228,6 +231,7 @@ class LexicalService:
                 "id": r["id"],
                 "title": title,
                 "text": text,
+                "page_start": r.get("page_start"),
                 "score": score,
                 "related": ["via:phrase_search"],
             })

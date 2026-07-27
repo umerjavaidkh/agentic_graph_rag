@@ -31,6 +31,18 @@ class LocalFsBlobStore(BlobStore):
             return None
         return path.read_text(encoding="utf-8")
 
+    def put_bytes(self, key: str, content: bytes, *, content_type: str = "application/octet-stream") -> str:
+        path = self._path_for(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return key
+
+    def get_bytes(self, key: str) -> Optional[bytes]:
+        path = self._path_for(key)
+        if not path.exists():
+            return None
+        return path.read_bytes()
+
     def delete(self, key: str) -> None:
         path = self._path_for(key)
         if path.exists():

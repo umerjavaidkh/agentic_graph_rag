@@ -1,15 +1,20 @@
 import asyncio
 import json
 import logging
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from .graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
 from .graph.driver import close_neo4j_driver, get_neo4j_driver
+from .graph.tenancy import tenant_filter
+from .document.versioning import source_file_blob_key
+from .storage.blob.factory import get_blob_store
 from pydantic import BaseModel, Field
 
 from .audit import AuditEventType, get_audit_store, record_audit_event
@@ -266,6 +271,8 @@ class QueryResponse(BaseModel):
     request_id:   Optional[str] = None   # correlates with feedback / logs
     low_confidence:  bool = False        # structured-path answer verification signal
     confidence_note: Optional[str] = None  # reason when low_confidence is True
+    document_id:    Optional[str] = None  # logical doc id the answer was grounded in (document paths only)
+    document_title: Optional[str] = None  # UI transparency: "answering from <document>"
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -324,6 +331,8 @@ async def query(
             result=result,
         )
 
+        retrieved_context = result.get("retrieved_context") or {}
+
         return QueryResponse(
             answer       = result.get("answer", "No answer generated."),
             sources      = result.get("sources", []),
@@ -341,6 +350,8 @@ async def query(
             request_id   = request_id,
             low_confidence  = bool(result.get("low_confidence")),
             confidence_note = result.get("confidence_note"),
+            document_id     = result.get("document_id") or retrieved_context.get("document_id"),
+            document_title  = result.get("document_title") or retrieved_context.get("document_title"),
         )
     except ValueError as ve:
         logger.warning(
@@ -827,6 +838,90 @@ async def get_ingestion_quality_report(
     if not report.get("found"):
         raise HTTPException(status_code=404, detail=f"No ingested document found for {logical_doc_id!r}")
     return report
+
+
+def _active_revision_source_meta_sync(driver, logical_doc_id: str, tenant_id: str) -> Optional[dict]:
+    """Look up the ACTIVE revision's tenant/revision/source-filename/title —
+    everything needed to derive the same blob key ingestion wrote to
+    (source_file_blob_key) without re-deriving it from a fresh ingestion plan.
+    """
+    with driver.session() as session:
+        row = session.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $lid}})-[:ACTIVE_REVISION]->(rev:{DOC_REVISION_LABEL})
+            WHERE {tenant_filter("rev")}
+            RETURN rev.tenant_id AS tenant_id, rev.revision_id AS revision_id,
+                   rev.source_filename AS source_filename, coalesce(dl.title, dl.logical_id) AS title
+            LIMIT 1
+            """,
+            lid=logical_doc_id,
+            tenant_id=tenant_id,
+        ).single()
+        return dict(row) if row else None
+
+
+@app.get("/documents/{logical_doc_id}/file")
+async def get_document_source_file(
+    logical_doc_id: str,
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+):
+    """
+    Stream the original uploaded file for a document's ACTIVE revision, for
+    the chat UI's "view source" side panel. Same auth as /query (any
+    authenticated user, tenant-scoped) — not admin-only, since this exposes
+    nothing beyond what the document agent already returns in chat answers.
+    Only available for documents ingested after the source-file-persistence
+    fix (or backfilled); older revisions 404 with a clear reason.
+    """
+    session = resolve_user_context(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+        body_tenant_id=tenant_id,
+    )
+    context = session.user
+    driver = get_neo4j_driver()
+    loop = asyncio.get_running_loop()
+    meta = await loop.run_in_executor(
+        _query_executor,
+        _active_revision_source_meta_sync,
+        driver,
+        logical_doc_id,
+        context.tenant_id,
+    )
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"No document found for {logical_doc_id!r}")
+
+    key = source_file_blob_key(
+        tenant_id=meta["tenant_id"] or context.tenant_id,
+        logical_id=logical_doc_id,
+        revision_id=meta["revision_id"],
+        source_filename=meta["source_filename"] or "",
+    )
+    blob_store = get_blob_store()
+    data = await loop.run_in_executor(_query_executor, blob_store.get_bytes, key)
+    if data is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Original source file not available for this document (ingested before the "
+            "document-viewer feature, or not yet backfilled).",
+        )
+
+    suffix = Path(meta["source_filename"] or "").suffix.lower() or ".pdf"
+    content_type = {".pdf": "application/pdf"}.get(suffix, "application/octet-stream")
+    # Title is document metadata, not directly attacker-controlled at request
+    # time, but still strip header-unsafe characters before it lands in
+    # Content-Disposition (defense in depth against injection/malformed headers).
+    safe_title = re.sub(r'[\r\n"]+', "_", meta["title"] or logical_doc_id)
+    download_name = f"{safe_title}{suffix}"
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{download_name}"'},
+    )
 
 
 @app.get("/ingest/queue/status")

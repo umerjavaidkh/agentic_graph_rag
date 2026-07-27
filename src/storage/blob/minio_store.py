@@ -49,6 +49,27 @@ class MinioBlobStore(BlobStore):
                 return None
             raise
 
+    def put_bytes(self, key: str, content: bytes, *, content_type: str = "application/octet-stream") -> str:
+        self._client.put_object(
+            self.bucket, key, io.BytesIO(content), length=len(content), content_type=content_type
+        )
+        return key
+
+    def get_bytes(self, key: str) -> Optional[bytes]:
+        from minio.error import S3Error
+
+        try:
+            response = self._client.get_object(self.bucket, key)
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
+        except S3Error as exc:
+            if exc.code == "NoSuchKey":
+                return None
+            raise
+
     def delete(self, key: str) -> None:
         self._client.remove_object(self.bucket, key)
 
