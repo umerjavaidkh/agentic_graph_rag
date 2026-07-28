@@ -4,23 +4,23 @@
 
 **One Neo4j graph. Two knowledge modes. Answers that flat RAG cannot reliably give.**
 
-**Every layer is a plug-in point, not a fixed pipeline.** Parsing, ingestion, and retrieval are each built behind a real interface — `DocumentParser`, `ModelProvider`/`BlobStore`/`VectorStore`, `StructuredStrategy`/`UnstructuredStrategy` — so you can bring your own PDF parser, embedding/LLM provider, storage backend, or retrieval strategy and register it, without forking or touching existing code. Retrieval alone already ships 5 unstructured + 2 structured strategies resolved by name at runtime; parsing ships 2 (a fast default and a table-aware variant that fixes real over-segmentation bugs found on live SEC filings). See [Pluggable by design](#pluggable-by-design) below for the exact seams and how to add your own.
+**Every layer is a plug-in point, not a fixed pipeline.** Parsing, ingestion, and retrieval are each built behind a real interface — `DocumentParser`, `ModelProvider`/`BlobStore`/`VectorStore`, `StructuredStrategy`/`UnstructuredStrategy` — so you can bring your own PDF parser, embedding/LLM provider, storage backend, or retrieval strategy and register it, without forking or touching existing code. Retrieval alone already ships 6 unstructured + 2 structured strategies resolved by name at runtime; parsing ships 2 (a fast default and a table-aware variant that fixes real over-segmentation bugs found on live SEC filings). See [Pluggable by design](#pluggable-by-design) below for the exact seams and how to add your own.
 
-Agentic GraphRAG keeps **structured business data** and **unstructured documents** in the same graph database, then routes each question to the right retrieval strategy — or combines both. SQL-grade analytics *and* multi-hop reasoning over PDFs/DOCX, without separate vector DBs, ETL pipelines, or ad-hoc orchestration glue.
+Agentic GraphRAG keeps **structured business data** and **unstructured documents** in the same graph database, with an explicit retrieval-mode switch — structured, unstructured, or hybrid — instead of an LLM guessing which one you meant. SQL-grade analytics *and* multi-hop reasoning over PDFs/DOCX, without separate vector DBs, ETL pipelines, or ad-hoc orchestration glue, and without a misrouted question silently producing the wrong kind of answer.
 
 It brings **your own** Neo4j schema and **your own** documents: the query router reads the live graph schema at runtime rather than hardcoding a demo domain, so it isn't tied to the bundled Northwind + Go.Data sample data used below.
 
 Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, Anthropic (Claude), or Gemini** — pick with `MODEL_PROVIDER`; embeddings always use OpenAI.
 
-## Demo
+## Screenshots
 
-**Ingestion** — drop PDFs in the bulk-upload UI, watch them become a versioned Neo4j knowledge graph.
+**One chat, both retrieval modes.** The same session answers a structured Northwind query (`text2cypher` → live table) and an unstructured 10-K question (hybrid graph RAG → cited answer with a clickable source), each turn tagged with exactly which strategy, tool, and access level produced it — nothing is hidden about how an answer was reached.
 
-[![Agentic GraphRAG ingestion pipeline](https://img.youtube.com/vi/K4XIat6xpEw/maxresdefault.jpg)](https://youtu.be/K4XIat6xpEw)
+![Agentic GraphRAG chat — structured and unstructured retrieval in one session](docs/images/chat_demo.png)
 
-**Retrieval + eval** — the eval suite answered live in the chat UI, each case validated with an on-screen PASS/FAIL banner (recorded run: 30/30; the suite has since grown to 40 cases, currently 40/40).
+**Every cited answer opens its real source.** Click a `doc:` chip and the original ingested PDF opens in a side panel, scrolled to the cited page — no separate document viewer, no re-uploading, no "trust me."
 
-[![Agentic GraphRAG demo — eval pass](https://img.youtube.com/vi/7011-xkI1RI/maxresdefault.jpg)](https://youtu.be/7011-xkI1RI)
+![Source document viewer — the original PDF open in a side panel next to the cited answer](docs/images/document_viewer.png)
 
 ## Why this is different
 
@@ -32,7 +32,7 @@ Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, A
 | Loses document structure | Hierarchy: Document → Chapter → Section → Page → Region |
 | Guesses when context is missing | Eval suite covers anti-hallucination and empty-result cases |
 
-The same user session can ask *"Top 5 products by revenue in 1997"* (structured) and *"Which network deployed fellows to Greece and Kosovo?"* (unstructured, multi-hop) — an LLM router chooses `query_data` vs. `search_documents`, RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
+The same user session can ask *"Top 5 products by revenue in 1997"* (structured) and *"Which network deployed fellows to Greece and Kosovo?"* (unstructured, multi-hop) — you pick `structured`/`unstructured`/`hybrid` per query (dropdown in the UI, `retrieval_mode` in the API), RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
 
 ### Pluggable by design
 
@@ -41,7 +41,7 @@ Most RAG repos hardcode one parser, one embedding provider, and one retrieval pa
 | Seam | Interface | Registered implementations | Add your own |
 |------|-----------|------------------------------|---------------|
 | **Parsing** | `DocumentParser` Protocol — [`src/document/parser_base.py`](src/document/parser_base.py) | `LightPdfParser` (`.pdf:light`), `TableAwarePdfParser` (`.pdf:table-aware`) — [`src/document/parser_registry.py`](src/document/parser_registry.py) | Implement `parse(source) -> (nodes, edges)`, call `register_parser(".pdf:yourname", YourParser)` |
-| **Retrieval (unstructured)** | `UnstructuredStrategy` Protocol — [`src/retrieval/unstructured/strategies/base.py`](src/retrieval/unstructured/strategies/base.py) | `structural_box_list`, `subsection_tree`, `structural_toc`, `structural_page`, `graph_rag_hybrid` | Implement `retrieve(...)`, call `register_unstructured("yourname", factory)` |
+| **Retrieval (unstructured)** | `UnstructuredStrategy` Protocol — [`src/retrieval/unstructured/strategies/base.py`](src/retrieval/unstructured/strategies/base.py) | `structural_box_list`, `subsection_tree`, `structural_toc`, `structural_page`, `structural_filing_date`, `graph_rag_hybrid` | Implement `retrieve(...)`, call `register_unstructured("yourname", factory)` |
 | **Retrieval (structured)** | `StructuredStrategy` Protocol — [`src/retrieval/structured/strategies/base.py`](src/retrieval/structured/strategies/base.py) | `text2cypher`, `multistep` | Implement `retrieve(...)`, call `register_structured("yourname", factory)` |
 | **LLM (chat/synthesis)** | `ModelProvider` ABC — [`src/model_providers/base.py`](src/model_providers/base.py) | `OpenAIProvider`, `AnthropicProvider`, `GeminiProvider` — pick with `MODEL_PROVIDER` (`get_chat_provider()` in [`src/model_providers/factory.py`](src/model_providers/factory.py)) | Implement `chat_completion`/`chat_completion_stream`, register in `get_model_provider()` |
 | **Embeddings** | same `ModelProvider` ABC | `OpenAIProvider` only — always used regardless of `MODEL_PROVIDER` (Anthropic has no embeddings API; Neo4j's vector index has a fixed dimension) — see `get_embedding_provider()` | Swapping embedding provider/dimension needs a matching vector-index rebuild; not currently wired up |
@@ -58,10 +58,10 @@ Two consequences worth calling out:
 
 ```mermaid
 flowchart TB
-  Q[User question] --> R[MCP router]
-  R -->|metrics / SQL-like| S[Structured agent]
-  R -->|policies / PDFs| U[Unstructured agent]
-  R -->|both| H[Hybrid answer]
+  Q[User question] --> M{retrieval_mode\nstructured / unstructured / hybrid}
+  M -->|structured| S[Structured agent]
+  M -->|unstructured| U[Unstructured agent]
+  M -->|hybrid| H[Both, combined]
   S --> C[Text-to-Cypher → Neo4j]
   U --> V[Vector + full-text + graph expand]
   U --> T[TOC / page / fact lookup]
@@ -72,6 +72,8 @@ flowchart TB
   U --> UI
   H --> UI
 ```
+
+The mode is set explicitly per query — by the caller (UI dropdown or API's `retrieval_mode` field), not inferred by an LLM — so a question can't silently get routed to the wrong knowledge source.
 
 Full write-up (query path, ingestion pipeline, multi-tenancy, audit log, project structure): **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
@@ -124,10 +126,13 @@ Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstruc
 
 | Area | Status |
 |------|--------|
-| Dual-graph RAG (structured + documents + hybrid), schema-driven routing | ✅ |
+| Dual-graph RAG (structured + documents + hybrid) via explicit retrieval-mode selection | ✅ |
 | Pluggable parser / retrieval strategy registries (see [Pluggable by design](#pluggable-by-design)) | ✅ |
+| Multi-provider chat/synthesis (OpenAI, Anthropic, Gemini) — embeddings always OpenAI | ✅ |
 | Scalable ingestion (Redis + RQ workers, versioning) | ✅ |
 | Ingestion-quality validation (`GET /ingest/quality`, LLM-free per-document report) | ✅ |
+| Source document viewer — click a citation, view the original PDF in a side panel | ✅ |
+| Bulk-question queue — paste several questions, answered one at a time in order | ✅ |
 | Multi-tenancy (property-based `tenant_id` isolation) | ✅ |
 | Audit log (who / what / when / result, admin API + dashboard) | ✅ |
 | Google OIDC auth, RBAC, per-user thread isolation | ✅ (`release/v1.0`) |
