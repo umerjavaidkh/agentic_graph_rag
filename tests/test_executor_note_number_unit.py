@@ -115,6 +115,28 @@ def test_is_subsection_request_true_for_example_with_dotted_number(executor):
     ) is True
 
 
+def test_has_multiple_structural_references_true_for_two_different_chapters(executor):
+    assert executor.has_multiple_structural_references(
+        "How does the treatment of momentum in Chapter 9 relate to angular momentum in Chapter 11?"
+    ) is True
+
+
+def test_has_multiple_structural_references_false_for_single_reference(executor):
+    assert executor.has_multiple_structural_references(
+        "List every Check Your Understanding question in Chapter 15."
+    ) is False
+
+
+def test_has_multiple_structural_references_false_for_same_reference_repeated(executor):
+    assert executor.has_multiple_structural_references(
+        "Tell me about Chapter 9. I mean Chapter 9 specifically."
+    ) is False
+
+
+def test_has_multiple_structural_references_false_for_no_reference(executor):
+    assert executor.has_multiple_structural_references("What was net sales for the quarter?") is False
+
+
 class _FakeResult:
     def __init__(self, row):
         self._row = row
@@ -223,6 +245,55 @@ def test_retrieve_returns_chapter_children_not_subsection_tree(subsection):
     )
     assert response is not None
     assert response["mode"] == "chapter_children"
+
+
+class _MultiRefFakeSession:
+    """Returns a different row depending on which sec_num the query was
+    run with -- proves retrieve() fetches EACH named reference directly,
+    not just the first one parse_section_number would match alone."""
+
+    _ROWS = {
+        "chapter 9": {
+            "sid": "phys_chapter_9", "stitle": "Chapter 9. Linear Momentum and Collisions",
+            "ssummary": "Chapter 9 covers linear momentum, impulse, and collisions.",
+            "stext": "", "spage_start": 405,
+        },
+        "chapter 11": {
+            "sid": "phys_chapter_11", "stitle": "Chapter 11. Angular Momentum",
+            "ssummary": "Chapter 11 covers angular momentum and its conservation.",
+            "stext": "", "spage_start": 549,
+        },
+    }
+
+    def run(self, cypher, **kwargs):
+        row = self._ROWS.get(kwargs.get("sec_num"))
+        return _FakeResult(row)
+
+
+def test_retrieve_fetches_both_named_chapters_for_a_comparison_query(subsection):
+    response = subsection.retrieve(
+        _MultiRefFakeSession(),
+        "How does the treatment of momentum in Chapter 9 relate to angular momentum in Chapter 11?",
+        tenant_id="default", limit=8, ctx=MagicMock(role=MagicMock(value="admin"), user_id="u1"),
+    )
+    assert response is not None
+    assert response["mode"] == "multi_reference_detail"
+    titles = {c["title"] for c in response["chunks"]}
+    assert "Chapter 9. Linear Momentum and Collisions" in titles
+    assert "Chapter 11. Angular Momentum" in titles
+
+
+def test_retrieve_returns_none_when_no_named_reference_resolves(subsection):
+    class _EmptyMultiRefSession:
+        def run(self, cypher, **kwargs):
+            return _FakeResult(None)
+
+    response = subsection.retrieve(
+        _EmptyMultiRefSession(),
+        "How does the treatment of momentum in Chapter 9 relate to angular momentum in Chapter 11?",
+        tenant_id="default", limit=8, ctx=MagicMock(role=MagicMock(value="admin"), user_id="u1"),
+    )
+    assert response is None
 
 
 def test_retrieve_returns_none_for_unrelated_query(subsection):

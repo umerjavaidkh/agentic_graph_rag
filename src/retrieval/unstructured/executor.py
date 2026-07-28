@@ -60,6 +60,40 @@ class DocumentQueryExecutor:
             return True
         return bool(_SUBSECTION_CUE_RE.search(q)) or ("sub section" in q.lower())
 
+    def has_multiple_structural_references(self, query: str) -> bool:
+        """True when a query names more than one distinct Note/Item/Example/
+        Chapter reference ("How does Chapter 9 relate to Chapter 11?").
+
+        parse_section_number only ever returns the FIRST match -- a query
+        naming two chapters silently narrows retrieval to just the first
+        one, so a genuine cross-chapter question gets answered from a
+        single chapter's content alone and the model correctly (from its
+        narrow context) reports the other chapter as "not covered." Callers
+        use this to route to a dedicated multi-reference lookup (see
+        parse_all_section_numbers) instead of confidently answering wrong
+        from a single match. Verified live: "How does the treatment of
+        momentum in Chapter 9 relate to angular momentum in Chapter 11?"
+        against the real ingested textbook returned only Chapter 9's
+        sections and answered "does not cover" the Chapter 11 relationship,
+        before this check existed.
+        """
+        return len(self.parse_all_section_numbers(query)) > 1
+
+    def parse_all_section_numbers(self, query: str) -> list[str]:
+        """Every distinct Note/Item/Example/Chapter reference in a query,
+        in first-seen order (unlike parse_section_number, which only
+        returns the first). Used for comparison-style questions naming
+        more than one reference.
+        """
+        seen: list[str] = []
+        seen_set: set[str] = set()
+        for g1, g2 in _STRUCTURAL_NUM_RE.findall(query or ""):
+            combined = f"{g1.lower()} {g2.lower()}"
+            if combined not in seen_set:
+                seen_set.add(combined)
+                seen.append(combined)
+        return seen
+
     def is_box_list_request(self, query: str) -> bool:
         q = query or ""
         return bool(_BOX_LIST_CUE_RE.search(q)) or bool(re.search(r"\bbox\s+headings?\b", q, re.I))
