@@ -44,9 +44,16 @@ def light_pdf_parser_cls(parser_registry):
     return LightPdfParser
 
 
-def test_pdf_extension_resolves_to_light_pdf_parser(parser_registry, light_pdf_parser_cls):
+@pytest.fixture()
+def rtldoc_pdf_parser_cls(parser_registry):
+    from src.document.rtldoc_backend.parser import RtldocPdfParser
+
+    return RtldocPdfParser
+
+
+def test_pdf_extension_resolves_to_rtldoc_pdf_parser_by_default(parser_registry, rtldoc_pdf_parser_cls):
     parser = parser_registry.get_parser("report.pdf")
-    assert isinstance(parser, light_pdf_parser_cls)
+    assert isinstance(parser, rtldoc_pdf_parser_cls)
 
 
 def test_explicit_backend_qualifier_resolves(parser_registry, light_pdf_parser_cls):
@@ -54,15 +61,21 @@ def test_explicit_backend_qualifier_resolves(parser_registry, light_pdf_parser_c
     assert isinstance(parser, light_pdf_parser_cls)
 
 
+def test_explicit_rtldoc_backend_qualifier_resolves(parser_registry, rtldoc_pdf_parser_cls):
+    parser = parser_registry.get_parser("report.pdf", backend="rtldoc")
+    assert isinstance(parser, rtldoc_pdf_parser_cls)
+
+
 def test_unknown_extension_raises_value_error(parser_registry):
     with pytest.raises(ValueError):
         parser_registry.get_parser("report.docx")
 
 
-def test_unregistered_backend_falls_back_to_bare_extension(parser_registry, light_pdf_parser_cls):
-    # No ".pdf:other" registered — falls back to the bare ".pdf" entry.
+def test_unregistered_backend_falls_back_to_bare_extension(parser_registry, rtldoc_pdf_parser_cls):
+    # No ".pdf:other" registered — falls back to the bare ".pdf" entry
+    # (rtldoc, the default backend as of this parser's introduction).
     parser = parser_registry.get_parser("report.pdf", backend="other")
-    assert isinstance(parser, light_pdf_parser_cls)
+    assert isinstance(parser, rtldoc_pdf_parser_cls)
 
 
 def test_supported_extensions_includes_pdf(parser_registry):

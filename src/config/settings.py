@@ -124,8 +124,12 @@ VISION_MAX_PAGES_PER_DOC = int(os.environ.get("VISION_MAX_PAGES_PER_DOC", "25"))
 VISION_SELECTIVE = os.environ.get("VISION_SELECTIVE", "true").lower() in ("1", "true", "yes")
 VISION_MIN_TEXT_CHARS = int(os.environ.get("VISION_MIN_TEXT_CHARS", "350"))
 
-# Lightweight PDF parser
-PDF_PARSER_BACKEND = os.environ.get("PDF_PARSER_BACKEND", "light").lower()
+# PDF parser backend: "rtldoc" (default — geometry-first, correct RTL/bidi
+# handling, vector-rule table detection, no OCR/model — see
+# https://github.com/umerjavaidkh/rtldoc), "light" (plain PyMuPDF/pdfplumber
+# heuristics), or "table-aware" (light + extra vetoes against table
+# fragments/running headers misread as headings).
+PDF_PARSER_BACKEND = os.environ.get("PDF_PARSER_BACKEND", "rtldoc").lower()
 PDF_ENABLE_PDFPLUMBER = os.environ.get("PDF_ENABLE_PDFPLUMBER", "true").lower() in ("1", "true", "yes")
 PDF_LOW_TEXT_CHARS = int(os.environ.get("PDF_LOW_TEXT_CHARS", "120"))
 # Per-page cap for pdfplumber fallback (find_tables/layout can hang on some PDFs).

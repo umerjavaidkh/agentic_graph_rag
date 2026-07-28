@@ -12,6 +12,7 @@ from typing import Callable
 from ..config.settings import PDF_PARSER_BACKEND
 from .light.parser import LightPdfParser
 from .parser_base import DocumentParser
+from .rtldoc_backend.parser import RtldocPdfParser
 from .table_aware.parser import TableAwarePdfParser
 
 _PARSER_REGISTRY: dict[str, Callable[[], DocumentParser]] = {}
@@ -42,6 +43,7 @@ def supported_extensions() -> set[str]:
     return {key.split(":", 1)[0] for key in _PARSER_REGISTRY}
 
 
-register_parser(".pdf", LightPdfParser)
+register_parser(".pdf", RtldocPdfParser)
 register_parser(".pdf:light", LightPdfParser)
 register_parser(".pdf:table-aware", TableAwarePdfParser)
+register_parser(".pdf:rtldoc", RtldocPdfParser)
