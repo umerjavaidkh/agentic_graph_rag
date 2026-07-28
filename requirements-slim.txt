@@ -4,6 +4,7 @@
 # ── Lightweight PDF ────────
 pymupdf>=1.24.0
 pdfplumber>=0.11.0
+rtldoc @ git+https://github.com/umerjavaidkh/rtldoc.git@v1.0.0
 
 # ── OCR fallback (low-confidence pages; requires the tesseract-ocr system
 # package too — see Dockerfile) ─────────
