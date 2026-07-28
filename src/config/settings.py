@@ -224,6 +224,15 @@ INGEST_WORKER_CONCURRENCY = int(os.environ.get("INGEST_WORKER_CONCURRENCY", "2")
 # Axis 2 — parallel NER: max simultaneous LLM calls for entity extraction.
 AXIS2_NER_CONCURRENCY = int(os.environ.get("AXIS2_NER_CONCURRENCY", "8"))
 
+# Axis 2 — nodes per NER LLM call. One call per node doesn't scale: a single
+# 7,165-node document (Section+Page nodes needing NER) burned an entire
+# 10,000-request daily OpenAI quota by itself, reproduced twice live. Batching
+# multiple nodes' text into one call cuts request count by roughly this
+# factor with no loss of coverage (every node still gets its own extracted
+# entities, just fewer round trips) — same "batch instead of one-call-per-
+# item" pattern chapter-summary enrichment already uses.
+AXIS2_NER_BATCH_SIZE = int(os.environ.get("AXIS2_NER_BATCH_SIZE", "15"))
+
 # API-process thread pools (src/api.py) that run blocking work (LLM calls,
 # Neo4j reads/writes) off the asyncio event loop. Defaults match what was
 # previously hardcoded — override per deployment to match expected
@@ -239,6 +248,19 @@ AXIS2_LLM_PAIR_CONCURRENCY = int(os.environ.get("AXIS2_LLM_PAIR_CONCURRENCY", "6
 # Axis 2 — cap on candidate pairs fed to the expensive LLM relationship pass.
 # Pairs are ranked by embedding similarity; only the top-k are sent to the LLM.
 AXIS2_MAX_LLM_PAIRS = int(os.environ.get("AXIS2_MAX_LLM_PAIRS", "300"))
+
+# Axis 2 — max SEMANTICALLY_SIMILAR / SAME_CATEGORY edges per node (a kNN cap,
+# not a flat similarity threshold alone). Without this, both edge builders
+# scale with corpus size in a way that blows up fast: SEMANTICALLY_SIMILAR
+# creates an edge for every pair above threshold with no per-node bound, and
+# SAME_CATEGORY's cluster count is capped at 10 regardless of node count, so
+# cluster (and thus intra-cluster pair) size grows with the corpus instead of
+# staying flat. Verified live: a 7,165-node textbook produced 2.17M edges
+# (~303/node) — almost entirely from SAME_CATEGORY's ~716-member clusters,
+# each fully interconnected (C(716,2) * 10 clusters ≈ 2.56M). Capped to each
+# node's top-k most-similar neighbors, this bounds total edges to O(n*k)
+# instead of O(n^2) regardless of corpus size.
+AXIS2_MAX_SIMILARITY_EDGES_PER_NODE = int(os.environ.get("AXIS2_MAX_SIMILARITY_EDGES_PER_NODE", "20"))
 
 # Chapter-summary enrichment: one LLM call per Chapter, fed section titles +
 # excerpts (not full body text) to bound both prompt size and cost — see
