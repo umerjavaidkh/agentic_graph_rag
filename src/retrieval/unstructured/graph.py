@@ -19,6 +19,7 @@ from .retriever import (
 from ...config.prompts import load_prompt
 from ...config.settings import (
     CHAT_MODEL,
+    DOCUMENT_SYNTHESIS_CONTEXT_MAX_CHARS,
     DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS,
     DOCUMENT_SYNTHESIS_MAX_TOKENS,
     RETRIEVAL_FINAL_LIMIT,
@@ -172,15 +173,29 @@ def _generate_document_answer(
         if answer:
             return {"answer": answer, "low_confidence": False}
 
+    # Budget the total prompt context in characters, not just per-chunk --
+    # a single chunk (e.g. a whole Chapter node's .text) can itself be huge
+    # once chapter detection is accurate, so capping only the OUTPUT side
+    # (DOCUMENT_SYNTHESIS_MAX_TOKENS) never bounded the INPUT side at all.
+    # Truncates/drops the tail of context rather than the LLM call failing
+    # outright on a context-window or rate-limit error.
     context_lines: list[str] = []
+    used_chars = 0
     for i, c in enumerate(chunks, 1):
         title = c.get("title", "Result")
         text = (c.get("text") or "").strip()
         if not text:
             continue
+        remaining = DOCUMENT_SYNTHESIS_CONTEXT_MAX_CHARS - used_chars
+        if remaining <= 0:
+            break
+        if len(text) > remaining:
+            text = text[:remaining].rstrip() + "\n[... truncated, content continues beyond this excerpt ...]"
         rel = c.get("related") or []
         rel_note = f" (graph: {', '.join(rel)})" if rel else ""
-        context_lines.append(f"[Chunk {i}] {title}{rel_note}\n{text}")
+        line = f"[Chunk {i}] {title}{rel_note}\n{text}"
+        context_lines.append(line)
+        used_chars += len(line)
     context_text = "\n\n".join(context_lines)
 
     if is_toc_question(question):

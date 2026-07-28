@@ -125,9 +125,51 @@ class LightPdfParser:
         doc = fitz.open(str(source))
         try:
             extracts = self._extract_pages(source, doc)
+            toc = self._usable_toc(doc)
+            if toc is not None:
+                return self._build_from_toc(extracts, toc, source.stem, len(doc))
             return self._build_from_extracts(extracts, source.stem, len(doc))
         finally:
             doc.close()
+
+    def _usable_toc(self, doc: fitz.Document) -> list[tuple[int, str, int]] | None:
+        """Return the PDF's own embedded outline/bookmarks (level, title,
+        1-indexed page) if there's a real chapter/section structure in it,
+        else None.
+
+        This exists because font-size/bold/regex heading heuristics
+        (_is_heading and friends below) are fundamentally guesswork, and
+        guesswork always has another edge case: fixing one document's
+        false-positive heading pattern (a repeated running header, an
+        exercise question, an equation fragment misread as a heading) never
+        generalizes to the next document's DIFFERENT false positive —
+        confirmed live across three distinct failure modes on one single
+        physics textbook alone before this method existed. A PDF's embedded
+        outline, when present, is ground truth written by whatever tool
+        produced the PDF — not a guess, so it sidesteps the entire class of
+        heuristic failures for any document that has one, without touching
+        behavior for documents that don't.
+
+        This is genuinely additive, not a replacement: verified live that
+        real SEC filings (converted from HTML) carry NO embedded outline at
+        all (0 entries) and fall through to the existing heuristic path
+        completely unchanged, while a professionally-produced textbook PDF
+        carries a full, accurate outline (167 entries, exact chapter/
+        section titles and page numbers) that this uses directly instead.
+        """
+        try:
+            toc = doc.get_toc()
+        except Exception:
+            return None
+        # A lone bookmark or two (e.g. just a title-page entry some PDFs
+        # carry) isn't a real chapter/section structure to build a graph
+        # from — require a nontrivial outline AND at least one top-level
+        # (chapter-like) entry.
+        if len(toc) < 5:
+            return None
+        if not any(level == 1 for level, _title, _page in toc):
+            return None
+        return toc
 
     def _extract_pages(self, source: Path, doc: fitz.Document) -> list[_PageExtract]:
         plumber_doc = None
@@ -499,6 +541,176 @@ class LightPdfParser:
                 break
             body_lines.append(ln)
         return "\n".join(body_lines).strip()
+
+    def _build_from_toc(
+        self,
+        extracts: list[_PageExtract],
+        toc: list[tuple[int, str, int]],
+        doc_name: str,
+        page_count: int,
+    ) -> tuple[list[DKGNode], list[DKGEdge]]:
+        """Build the chapter/section graph directly from the PDF's own
+        embedded outline instead of guessing from font size/bold/regex —
+        see _usable_toc's docstring for why. Reuses everything else
+        unchanged (page nodes, region nodes, sequential edges, reference
+        detection) — only chapter/section construction differs from
+        _build_from_extracts.
+        """
+        nodes: list[DKGNode] = []
+        edges: list[DKGEdge] = []
+
+        document_id = f"doc_{slug(doc_name)}"
+        document_node = DKGNode(
+            id=document_id,
+            type=NodeType.DOCUMENT,
+            title=doc_name,
+            text=doc_name,
+            order=0,
+            page_start=1,
+            page_end=max(1, page_count),
+            depth=0,
+        )
+        nodes.append(document_node)
+
+        page_buckets: dict[int, list[str]] = {
+            page.page: [page.text] if page.text else [] for page in extracts
+        }
+
+        def link_contains(parent_id: str, child_id: str) -> None:
+            edges.append(DKGEdge(parent_id, child_id, RelType.CONTAINS, axis=1))
+            edges.append(DKGEdge(child_id, parent_id, RelType.PART_OF, axis=1))
+
+        # Non-breaking spaces (\xa0) between "Chapter" and its number are
+        # common in PDF-authoring-tool-generated outlines; harmless in the
+        # title text itself but tidied here for a nicer display title.
+        #
+        # A PDF's own outline can contain a dangling/unresolvable bookmark
+        # -- PyMuPDF reports its page as -1 rather than raising. Previously
+        # clamped via max(1, page), which is exactly wrong: it turns an
+        # invalid entry into a phantom chapter starting at page 1, and since
+        # it's often the last entry (nothing after it to bound page_end),
+        # that phantom swallows the entire remaining document into one
+        # node's text. Verified live: a real textbook's outline ends with
+        # [1, "<filename>.pdf", -1] (broken link, likely PDF-authoring-tool
+        # junk, not anything about this book's content) followed by
+        # [2, "Blank Page", 2] -- clamping produced a ~2.4M-character
+        # "chapter" spanning pages 1-998 plus an equally huge child section,
+        # which is what actually blew past the LLM's token budget, not
+        # chapter size alone. Dropping invalid entries instead of clamping
+        # them is the general fix -- any PDF with a broken outline bookmark
+        # hits this, not just this one document.
+        #
+        # A second, related case: after dropping that entry, the very next
+        # one ("Blank Page", page 2) becomes the new *last* entry even
+        # though its page number is LESS than the chapter before it (page
+        # 11) -- both are remnants of the same broken-outline cluster. A
+        # well-formed nested outline's page numbers are monotonically
+        # non-decreasing in outline order; an entry whose page goes
+        # backward relative to everything accepted so far is itself
+        # evidence of corruption, not a legitimate structural marker (a
+        # subsection is never printed before the chapter that contains it
+        # started). Drop those too, tracking the running max as entries are
+        # accepted rather than requiring perfect global sortedness up
+        # front.
+        raw_entries = [
+            (level, re.sub(r"\s+", " ", (title or "").replace("\xa0", " ")).strip(), page)
+            for level, title, page in toc
+            if page is not None and page >= 1
+        ]
+        entries: list[tuple[int, str, int]] = []
+        max_page_seen = 0
+        for level, title, page in raw_entries:
+            if page < max_page_seen:
+                continue
+            entries.append((level, title, page))
+            max_page_seen = page
+
+        chapter_nodes: list[DKGNode] = []
+        section_nodes: list[DKGNode] = []
+        heading_stack: list[tuple[int, str]] = [(0, document_id)]
+        chapter_idx = 0
+        global_section_idx = 0
+        doc_order = 0
+
+        for i, (level, title, page_start) in enumerate(entries):
+            page_end = page_count
+            for nxt_level, _nxt_title, nxt_page in entries[i + 1 :]:
+                if nxt_level <= level:
+                    page_end = max(page_start, nxt_page - 1)
+                    break
+
+            body_parts: list[str] = []
+            for pno in range(page_start, page_end + 1):
+                body_parts.extend(page_buckets.get(pno, []))
+            body_text = "\n\n".join(t for t in body_parts if t.strip())
+            full_text = f"{title}\n\n{body_text}".strip() if body_text else title
+
+            doc_order += 1
+            while len(heading_stack) > 1 and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            parent_id = heading_stack[-1][1]
+
+            if level == 1:
+                chapter_idx += 1
+                global_section_idx = 0
+                node_id = f"{document_id}_chapter_{chapter_idx}"
+                node = DKGNode(
+                    id=node_id,
+                    type=NodeType.CHAPTER,
+                    title=title,
+                    text=full_text,
+                    order=doc_order,
+                    page_start=page_start,
+                    page_end=page_end,
+                    depth=1,
+                )
+                nodes.append(node)
+                chapter_nodes.append(node)
+                link_contains(document_id, node_id)
+            else:
+                global_section_idx += 1
+                node_id = f"{document_id}_section_{chapter_idx}_{global_section_idx}"
+                node = DKGNode(
+                    id=node_id,
+                    type=NodeType.SECTION,
+                    title=title,
+                    text=full_text,
+                    order=doc_order,
+                    page_start=page_start,
+                    page_end=page_end,
+                    depth=level,
+                )
+                nodes.append(node)
+                section_nodes.append(node)
+                link_contains(parent_id, node_id)
+            heading_stack.append((level, node_id))
+
+        all_page_numbers = set(range(1, page_count + 1)) | set(page_buckets.keys())
+        page_nodes = self._build_page_nodes(
+            page_buckets,
+            edges,
+            chapter_nodes,
+            section_nodes,
+            document_id,
+            all_page_numbers=all_page_numbers,
+        )
+        enrich_page_nodes(page_nodes, section_nodes)
+        nodes.extend(page_nodes)
+
+        region_nodes = self._build_region_nodes(extracts, page_nodes, edges, document_id)
+        nodes.extend(region_nodes)
+
+        self._add_sequential_edges(chapter_nodes, edges)
+        self._add_sequential_edges(section_nodes, edges)
+        self._add_sequential_edges(page_nodes, edges)
+        self._detect_reference_edges(nodes, edges)
+
+        print(
+            f"   📐 Structure (from embedded PDF outline): {len(chapter_nodes)} chapters, "
+            f"{len(section_nodes)} sections (nested CONTAINS), {len(page_nodes)} pages, "
+            f"{len(region_nodes)} regions"
+        )
+        return nodes, edges
 
     def _build_from_extracts(
         self, extracts: list[_PageExtract], doc_name: str, page_count: int

@@ -207,6 +207,23 @@ STRUCTURED_PLAN_SCHEMA_LARGE_CHARS = int(os.environ.get("STRUCTURED_PLAN_SCHEMA_
 
 DOCUMENT_SYNTHESIS_MAX_TOKENS = llm_max_tokens("DOCUMENT_SYNTHESIS_MAX_TOKENS", 600, minimum=100)
 DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS = llm_max_tokens("DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS", 1400, minimum=100)
+# Input-side budget for the synthesis prompt's retrieved-chunk context, in
+# characters (cheap token proxy, same convention as the STRUCTURED_PLAN_*_CHARS
+# tiers above). A whole-chapter node's own .text can legitimately span dozens
+# of pages once chapter detection is accurate (see the TOC-based parsing fix)
+# -- with no cap, a handful of such chunks blew past both the model's context
+# window and the org's tokens-per-minute rate limit in one call (verified
+# live: a 46-page chapter's chunks alone requested ~1.35M tokens against a
+# 200k TPM limit). 160k chars ≈ 40k tokens at a ~4-chars/token estimate --
+# comfortably under gpt-4o-mini's 128k context with room for the system
+# prompt/output and concurrent traffic against the shared TPM limit, while
+# large enough to fit even the biggest single real chapter whole (the
+# largest chapter in the physics textbook that surfaced this is ~149k
+# chars) rather than truncating its tail, which is exactly where a
+# "list every X in this chapter" question needs full coverage.
+DOCUMENT_SYNTHESIS_CONTEXT_MAX_CHARS = int(
+    os.environ.get("DOCUMENT_SYNTHESIS_CONTEXT_MAX_CHARS", "160000")
+)
 
 VISION_LLM_MAX_TOKENS = llm_max_tokens("VISION_LLM_MAX_TOKENS", 2000, minimum=256)
 
