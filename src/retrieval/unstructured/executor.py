@@ -8,11 +8,18 @@ from ...conversation.clarification import format_clarification_answer
 
 
 _SECTION_NUM_RE = re.compile(r"\b(\d+(?:\.\d+){1,3})\b")
-# Covers both financial-statement footnotes ("Note 3") and SEC filing items,
-# which use a letter-suffixed numbering convention Note references don't
-# ("Item 9A. Controls and Procedures", "Item 7A", "Item 1B") -- \d+[a-z]?
-# handles both shapes with one pattern.
-_STRUCTURAL_NUM_RE = re.compile(r"\b(note|item)\s+(?:no\.?\s*)?(\d+[a-z]?)\b", re.I)
+# Covers financial-statement footnotes ("Note 3"), SEC filing items (which
+# use a letter-suffixed numbering convention Note references don't --
+# "Item 9A. Controls and Procedures", "Item 7A", "Item 1B"), and textbook
+# worked examples ("Example 2.8") -- unlike Note/Item, a textbook's own
+# heading is "Example 2.8" (word BEFORE a DOTTED number, not the number
+# alone), so the returned "example 2.8" combined string still lines up
+# with subsection.py's `title STARTS WITH` match, which a bare "2.8"
+# extracted by _SECTION_NUM_RE alone would not (that title doesn't start
+# with the number). \d+(?:\.\d+)*[a-z]? covers all three shapes ("3",
+# "7A", "2.8") with one pattern -- the added `(?:\.\d+)*` is additive
+# (zero-or-more), so existing Note/Item matches are unaffected.
+_STRUCTURAL_NUM_RE = re.compile(r"\b(note|item|example)\s+(?:no\.?\s*)?(\d+(?:\.\d+)*[a-z]?)\b", re.I)
 _SUBSECTION_CUE_RE = re.compile(r"\b(sub\s*sections?|subsections?|under\s+this\s+section)\b", re.I)
 _BOX_LIST_CUE_RE = re.compile(r"\b(list|show|enumerate|all)\b.{0,20}\bbox(?:es)?\b", re.I)
 _BOX_RE = re.compile(r"\bbox\s+(\d{1,3})\b", re.I)

@@ -22,6 +22,17 @@ Verified live: "What does Item 9A report about the effectiveness of
 JPMorgan's internal controls?" against a real ingested 10-K with that
 exact section returned the generic Northwind-misroute fallback message.
 
+Third regression, same class, found via the physics-textbook stress test:
+worked examples are titled "Example 2.8" — word THEN a DOTTED number,
+unlike Note/Item's word-then-bare-integer shape. _SECTION_NUM_RE alone
+extracts the bare "2.8", but subsection.py's lookup matches on `title
+STARTS WITH`, and the title starts with "Example", not "2.8" — so even a
+bare-number match wouldn't have found it. Needs the same "word + number"
+combined-string shape Note/Item already return. Verified live: "Tell me
+about Example 2.8 Direction of Motion from Physics book." against a real
+ingested textbook with that exact section (confirmed present in Neo4j)
+answered "This document does not cover Example 2.8..." before this fix.
+
 Run with:
     python -m pytest tests/test_executor_note_number_unit.py -v
 """
@@ -68,6 +79,13 @@ def test_parse_section_number_still_matches_dotted_numbers(executor):
     assert executor.parse_section_number("What is under section 2.5?") == "2.5"
 
 
+def test_parse_section_number_recognizes_example_with_dotted_number(executor):
+    assert executor.parse_section_number(
+        "Tell me about Example 2.8 Direction of Motion from Physics book."
+    ) == "example 2.8"
+    assert executor.parse_section_number("What does Example 5.4 show?") == "example 5.4"
+
+
 def test_parse_section_number_returns_none_for_unrelated_query(executor):
     assert executor.parse_section_number("What was net sales for the quarter?") is None
 
@@ -82,6 +100,12 @@ def test_is_subsection_request_true_for_item_with_letter_suffix(executor):
 
 def test_is_subsection_request_unaffected_for_ordinary_queries(executor):
     assert executor.is_subsection_request("What was net sales for the quarter?") is False
+
+
+def test_is_subsection_request_true_for_example_with_dotted_number(executor):
+    assert executor.is_subsection_request(
+        "Tell me about Example 2.8 Direction of Motion from Physics book."
+    ) is True
 
 
 class _FakeResult:
@@ -138,6 +162,22 @@ def test_retrieve_returns_item_section_detail(subsection):
     assert response is not None
     assert response["mode"] == "section_detail"
     assert response["parent_title"] == "Item 9A. Controls and Procedures."
+
+
+def test_retrieve_returns_example_section_detail(subsection):
+    session = _FakeSession({
+        "sid": "univphysics_section_1_79",
+        "stitle": "Example 2.8",
+        "stext": "Direction of Motion\n\nIn a Cartesian coordinate system...",
+        "children": [],
+    })
+    response = subsection.retrieve(
+        session, "Tell me about Example 2.8 Direction of Motion from Physics book.",
+        tenant_id="default", limit=8, ctx=MagicMock(role=MagicMock(value="admin"), user_id="u1"),
+    )
+    assert response is not None
+    assert response["mode"] == "section_detail"
+    assert response["parent_title"] == "Example 2.8"
 
 
 def test_retrieve_returns_none_for_unrelated_query(subsection):
