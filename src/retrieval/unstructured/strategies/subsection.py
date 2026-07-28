@@ -76,9 +76,22 @@ class SubsectionStrategy:
         items, parent, doc_id, doc_title = self._structural_subsections(
             session, query, sec_num, tenant_id, document_id_hint
         )
+
+        # A chapter reference ("Chapter 15") is a broader scope than Note/
+        # Item/Example's direct-lookup use case -- "list every Check Your
+        # Understanding question in Chapter 15" needs the LLM to extract/
+        # filter from the chapter's content, not a raw dump of it. Note/
+        # Item/Example matches are tagged with the existing fast-path modes
+        # (dumping the matched text verbatim IS the correct answer for
+        # "tell me about Note 3"); chapter matches get distinct mode names
+        # deliberately excluded from _STRUCTURAL_FAST_MODES in graph.py, so
+        # they fall through to normal LLM synthesis over the (correctly
+        # scoped, budget-capped) retrieved content instead.
+        is_chapter_ref = sec_num.startswith("chapter ")
+
         if items:
             response = self._formatter.format(query, items, ctx=ctx)
-            response["mode"] = "subsection_tree"
+            response["mode"] = "chapter_children" if is_chapter_ref else "subsection_tree"
             response["strategy"] = "graph_rag"
             response["parent_id"] = parent.get("id")
             response["parent_title"] = parent.get("title")
@@ -91,7 +104,7 @@ class SubsectionStrategy:
 
         if parent and parent.get("text"):
             response = self._formatter.format(query, [parent], ctx=ctx)
-            response["mode"] = "section_detail"
+            response["mode"] = "chapter_detail" if is_chapter_ref else "section_detail"
             response["strategy"] = "graph_rag"
             response["parent_id"] = parent.get("id")
             response["parent_title"] = parent.get("title")
@@ -121,8 +134,9 @@ class SubsectionStrategy:
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {_doc_scope_cypher("d")}
               AND {tenant_filter("d")}
-            MATCH (s:Section)
-            WHERE (s.id STARTS WITH d.id + '_' OR EXISTS {{ MATCH (d)-[:CONTAINS*1..6]->(s) }})
+            MATCH (s)
+            WHERE (s:Section OR s:Chapter)
+              AND (s.id STARTS WITH d.id + '_' OR EXISTS {{ MATCH (d)-[:CONTAINS*1..6]->(s) }})
               AND s.title IS NOT NULL
               AND trim(s.title) <> ''
               AND toLower(s.title) STARTS WITH toLower($sec_num)

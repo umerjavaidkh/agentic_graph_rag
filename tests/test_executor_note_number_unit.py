@@ -86,6 +86,13 @@ def test_parse_section_number_recognizes_example_with_dotted_number(executor):
     assert executor.parse_section_number("What does Example 5.4 show?") == "example 5.4"
 
 
+def test_parse_section_number_recognizes_chapter_reference(executor):
+    assert executor.parse_section_number(
+        "List every Check Your Understanding question in Chapter 15."
+    ) == "chapter 15"
+    assert executor.parse_section_number("Summarize Chapter 3") == "chapter 3"
+
+
 def test_parse_section_number_returns_none_for_unrelated_query(executor):
     assert executor.parse_section_number("What was net sales for the quarter?") is None
 
@@ -178,6 +185,44 @@ def test_retrieve_returns_example_section_detail(subsection):
     assert response is not None
     assert response["mode"] == "section_detail"
     assert response["parent_title"] == "Example 2.8"
+
+
+def test_retrieve_returns_chapter_detail_not_section_detail(subsection):
+    """Chapter matches must NOT reuse "section_detail" -- that mode is in
+    graph.py's _STRUCTURAL_FAST_MODES, which dumps the matched text
+    verbatim with no LLM extraction. "List every X in Chapter N" needs the
+    LLM to filter/extract from the chapter's content, so it needs its own
+    mode name deliberately excluded from that fast-path set."""
+    session = _FakeSession({
+        "sid": "univphysics_chapter_15",
+        "stitle": "Chapter 15. Oscillations",
+        "stext": "Oscillations\n\n...chapter body...",
+        "children": [],
+    })
+    response = subsection.retrieve(
+        session, "List every Check Your Understanding question in Chapter 15.",
+        tenant_id="default", limit=8, ctx=MagicMock(role=MagicMock(value="admin"), user_id="u1"),
+    )
+    assert response is not None
+    assert response["mode"] == "chapter_detail"
+    assert response["parent_title"] == "Chapter 15. Oscillations"
+
+
+def test_retrieve_returns_chapter_children_not_subsection_tree(subsection):
+    session = _FakeSession({
+        "sid": "univphysics_chapter_15",
+        "stitle": "Chapter 15. Oscillations",
+        "stext": "Oscillations\n\n...chapter body...",
+        "children": [
+            {"id": "s15_1", "title": "15.1 Simple Harmonic Motion", "text": "...", "page_start": 753},
+        ],
+    })
+    response = subsection.retrieve(
+        session, "List every Check Your Understanding question in Chapter 15.",
+        tenant_id="default", limit=8, ctx=MagicMock(role=MagicMock(value="admin"), user_id="u1"),
+    )
+    assert response is not None
+    assert response["mode"] == "chapter_children"
 
 
 def test_retrieve_returns_none_for_unrelated_query(subsection):
