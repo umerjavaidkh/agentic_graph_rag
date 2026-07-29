@@ -20,7 +20,7 @@ _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from src.retrieval.structured.cypher.validator import sql_cypher_issue
+from src.retrieval.structured.cypher.validator import sql_cypher_issue, unknown_label_issue
 
 
 @pytest.mark.parametrize(
@@ -74,3 +74,58 @@ def test_tenant_filter_satisfied_when_multi_tenancy_enabled(monkeypatch):
     monkeypatch.setattr(v, "MULTI_TENANCY_ENABLED", True)
     cypher = "MATCH (p:Product) WHERE p.tenant_id = $tenant_id RETURN p.name"
     assert sql_cypher_issue(cypher) is None
+
+
+# ── unknown_label_issue ──────────────────────────────────────────────────────
+#
+# Regression: "Which employee has the most sales?" generated
+# `MATCH (e:Employee)<-[:ORDERED]-(c:Customer)-...`, but this graph has no
+# `Employee` node label at all -- employeeID is just a property on Order.
+# Neo4j doesn't error on an unknown label, the MATCH just silently returns 0
+# rows, so this went undetected until the whole pipeline fell all the way
+# through to the unstructured-document fallback and answered from an
+# unrelated SEC filing. Verified live against the real Northwind graph.
+
+_NORTHWIND_LABELS = {"Product", "Category", "Supplier", "Customer", "Order", "Address"}
+
+
+def test_hallucinated_employee_label_flagged():
+    cypher = (
+        "MATCH (e:Employee)<-[:ORDERED]-(c:Customer)-[:ORDERED]->(o:Order) "
+        "RETURN e.employeeID"
+    )
+    issue = unknown_label_issue(cypher, _NORTHWIND_LABELS)
+    assert issue is not None
+    assert "Employee" in issue
+
+
+def test_real_labels_not_flagged():
+    cypher = "MATCH (o:Order)-[:ORDER_CONTAINS]->(p:Product) RETURN o, p"
+    assert unknown_label_issue(cypher, _NORTHWIND_LABELS) is None
+
+
+def test_relationship_types_are_not_mistaken_for_labels():
+    """[r:ORDERED] is a relationship TYPE, a completely different namespace
+    from node labels -- must never be flagged just because "ORDERED" isn't
+    in the label set."""
+    cypher = "MATCH (c:Customer)-[r:ORDERED]->(o:Order) RETURN c, o"
+    assert unknown_label_issue(cypher, _NORTHWIND_LABELS) is None
+
+
+def test_multi_label_node_each_checked():
+    cypher = "MATCH (e:Employee:Person) RETURN e"
+    issue = unknown_label_issue(cypher, _NORTHWIND_LABELS)
+    assert issue is not None
+    assert "Employee" in issue and "Person" in issue
+
+
+def test_no_known_labels_declines_rather_than_false_positive():
+    """If schema introspection ever comes back empty, decline rather than
+    flag everything as unknown -- that would just make every query fail."""
+    cypher = "MATCH (o:Order) RETURN o"
+    assert unknown_label_issue(cypher, set()) is None
+
+
+def test_unlabeled_node_pattern_not_flagged():
+    cypher = "MATCH (n)-[:ORDERED]->(o:Order) RETURN n, o"
+    assert unknown_label_issue(cypher, _NORTHWIND_LABELS) is None

@@ -11,7 +11,7 @@ from ....auth.roles import UserContext
 from ....config.settings import STRUCTURED_MULTISTEP_STEP_ATTEMPTS
 from ..cypher.generator import CypherGenerator, regenerate_for_issue
 from ..cypher.repair import normalize_generated_cypher
-from ..cypher.validator import dropped_year_filter_issue, sql_cypher_issue
+from ..cypher.validator import dropped_year_filter_issue, sql_cypher_issue, unknown_label_issue
 from ..neo4j_sanitize import sanitize_row
 from ..schema.provider import SchemaProvider
 from .context import collect_values_from_ctx, find_param_names, normalize_row_keys
@@ -59,16 +59,18 @@ class MultiStepExecutor:
             "_tenant": {"rows": [{"tenant_id": user_context.tenant_id}]},
         }
         schema = self._schema.fetch()
+        known_labels = self._schema.known_labels()
         repair_fn = lambda c: normalize_generated_cypher(c, schema)  # noqa: E731
+        issue_fn = lambda c: sql_cypher_issue(c) or unknown_label_issue(c, known_labels)  # noqa: E731
         max_step_attempts = max(1, STRUCTURED_MULTISTEP_STEP_ATTEMPTS)
 
         with self._driver.session() as session:
             for _idx, step in enumerate(plan.steps, 1):
                 cypher = repair_fn((step.cypher or "").strip())
-                issue = sql_cypher_issue(cypher)
+                issue = issue_fn(cypher)
                 if issue:
                     repaired = repair_fn(cypher)
-                    if repaired.strip() != cypher.strip() and not sql_cypher_issue(repaired):
+                    if repaired.strip() != cypher.strip() and not issue_fn(repaired):
                         cypher = repaired
                     else:
                         cypher = repair_fn(

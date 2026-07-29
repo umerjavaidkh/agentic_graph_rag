@@ -62,6 +62,13 @@ SQL_CYPHER_ISSUES: list[tuple[str, str]] = [
     ),
 ]
 
+# Node label references appear right after "(" (optionally preceded by a
+# variable name): "(e:Employee)", "(e:Employee {name: 'x'})", "(e:Employee:Person)".
+# Relationship TYPE references use "[...]" instead ("[r:ORDERED]") and are a
+# completely different namespace -- this pattern only matches "(" so it never
+# confuses the two.
+_NODE_LABEL_RE = re.compile(r"\(\s*\w*((?:\s*:\s*[A-Za-z_][A-Za-z0-9_]*)+)\s*[){]")
+
 _QUESTION_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 
 _WITH_MISSING_ALIAS_MSG = (
@@ -113,6 +120,45 @@ def sql_cypher_issue(cypher: str) -> Optional[str]:
     if MULTI_TENANCY_ENABLED:
         return missing_tenant_filter_issue(cypher)
     return None
+
+
+def unknown_label_issue(cypher: str, known_labels: set[str]) -> Optional[str]:
+    """
+    Catch a generated Cypher query that MATCHes a node label absent from this
+    graph's actual schema -- an LLM hallucinating a shape it expects (e.g. a
+    first-class `Employee` node, the classic Northwind schema) rather than the
+    one it was given, when this particular graph only has an `employeeID`
+    property on `Order`. Neo4j doesn't error on an unknown label -- the MATCH
+    just silently matches nothing -- so without this the query "succeeds"
+    with 0 rows and the caller has no specific signal to regenerate against,
+    only a generic "0 rows" hint that doesn't name the actual problem.
+
+    Schema-agnostic: `known_labels` comes from live introspection
+    (SchemaProvider.known_labels()), not any hardcoded label list, so this
+    works for any graph/domain, not just Northwind.
+    """
+    if not known_labels:
+        return None
+    unknown: list[str] = []
+    seen: set[str] = set()
+    for m in _NODE_LABEL_RE.finditer(cypher or ""):
+        for label in m.group(1).split(":"):
+            label = label.strip()
+            if label and label not in known_labels and label not in seen:
+                seen.add(label)
+                unknown.append(label)
+    if not unknown:
+        return None
+    labels_str = ", ".join(unknown)
+    return (
+        f"Label(s) {labels_str} do not exist in this graph's schema -- the "
+        f"MATCH will silently return 0 rows, not an error. Only the labels "
+        f"listed under NODE TYPES in the schema exist. If you were trying to "
+        f"reference an entity that isn't its own node here, check whether it "
+        f"is instead just a property on a related node type (e.g. an id or "
+        f"name field), and match/group on that property directly instead of "
+        f"inventing a node label for it."
+    )
 
 
 def dropped_year_filter_issue(cypher: str, query: str) -> Optional[str]:

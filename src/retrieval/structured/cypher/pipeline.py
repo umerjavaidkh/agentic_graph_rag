@@ -21,7 +21,7 @@ from ..neo4j_sanitize import sanitize_row
 from ..schema.provider import SchemaProvider
 from .generator import CypherGenerator, regenerate_for_issue
 from .repair import fix_relationship_directions, normalize_generated_cypher
-from .validator import EMPTY_RESULT_HINTS, sql_cypher_issue
+from .validator import EMPTY_RESULT_HINTS, sql_cypher_issue, unknown_label_issue
 
 
 class Text2CypherPipeline:
@@ -65,13 +65,17 @@ class Text2CypherPipeline:
         repair_fn = lambda c: normalize_generated_cypher(c, schema)  # noqa: E731
         cypher = repair_fn(cypher)
 
+        known_labels = self._schema.known_labels()
+        def _issue(c: str) -> Optional[str]:  # noqa: E306
+            return sql_cypher_issue(c) or unknown_label_issue(c, known_labels)
+
         llm_sql_retries = 0
         for _ in range(max(1, STRUCTURED_CYPHER_SQL_LLM_RETRIES) + 1):
-            issue = sql_cypher_issue(cypher)
+            issue = _issue(cypher)
             if not issue:
                 break
             repaired = repair_fn(cypher)
-            if repaired.strip() != cypher.strip() and not sql_cypher_issue(repaired):
+            if repaired.strip() != cypher.strip() and not _issue(repaired):
                 cypher = repaired
                 continue
             if llm_sql_retries >= STRUCTURED_CYPHER_SQL_LLM_RETRIES:
@@ -89,7 +93,7 @@ class Text2CypherPipeline:
 
         def _regenerate(prev: str, err: str) -> Optional[str]:
             repaired = repair_fn(prev)
-            if repaired.strip() != prev.strip() and not sql_cypher_issue(repaired):
+            if repaired.strip() != prev.strip() and not _issue(repaired):
                 return repaired
             return self._cypher.generate(
                 query,
@@ -106,7 +110,7 @@ class Text2CypherPipeline:
             limit=limit,
             execute_once=_execute_once,
             regenerate=_regenerate,
-            sql_issue=sql_cypher_issue,
+            sql_issue=_issue,
             repair=repair_fn,
         )
         tel = get_telemetry()
