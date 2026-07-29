@@ -39,6 +39,24 @@ _STRUCTURAL_REF_RE = re.compile(
     r"\b(?:note|box|item|figure|fig\.?|section)\s+(?:no\.?\s*)?\d+[a-z]?(?:\.\d+)*\b", re.I
 )
 _PAREN_RE = re.compile(r"\([^)]*\)")
+
+# Cypher regex fragment for word-boundary term matching, used in place of a
+# raw `CONTAINS term` substring check anywhere a query term is matched
+# against node title/text or a document's own title/logical_id. Plain
+# substring matching lets a short term spuriously match INSIDE unrelated
+# longer words -- verified live: "EPS" (picked up as a doc-name anchor from
+# "diluted EPS", an all-caps mid-sentence token) substring-matched "st-EPS-",
+# "sw-EPS-" throughout an unrelated physics textbook via raw CONTAINS,
+# outnumbering a financial filing's genuine "EPS" mentions and winning
+# strict document resolution -- which runs BEFORE the conversation's
+# thread-continuity hint is even consulted, so the wrong document then got
+# saved as the new hint and silently corrupted every subsequent generic
+# follow-up in that thread until a strongly distinctive term happened to
+# reset it. `\b` is a safe general fix (never introduces a new match CONTAINS
+# didn't already have, only removes accidental substring collisions) and
+# works correctly across hyphenated/structured ids too (hyphens are
+# non-word characters, so "10k" still \b-matches inside "gs-10k-2026-02-25").
+_WORD_BOUNDARY_PATTERN = "('(?s).*\\\\b' + term + '\\\\b.*')"
 _POSSESSIVE_RE = re.compile(r"'s?$")
 
 
@@ -85,8 +103,8 @@ class DocumentResolver:
             OPTIONAL MATCH (d)-[:CONTAINS*1..6]->(n)
             WHERE {lc_n}
               AND {tenant_filter("n")}
-              AND (toLower(coalesce(n.title, '')) CONTAINS term
-                   OR toLower(coalesce(n.text, '')) CONTAINS term)
+              AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
+                   OR toLower(coalesce(n.text, '')) =~ {_WORD_BOUNDARY_PATTERN})
             WITH dl, term, count(DISTINCT n) AS cnt,
                  // Bare 4-digit years never count as a title match: our own
                  // logical_ids are systematically date-suffixed (ticker_form_
@@ -98,8 +116,8 @@ class DocumentResolver:
                  // Chevron's own 10-K, whose id doesn't happen to contain
                  // the query's year).
                  (NOT term =~ '\\d{{4}}'
-                  AND (toLower(coalesce(dl.title, '')) CONTAINS term
-                       OR toLower(dl.logical_id) CONTAINS term)) AS title_match
+                  AND (toLower(coalesce(dl.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
+                       OR toLower(dl.logical_id) =~ {_WORD_BOUNDARY_PATTERN})) AS title_match
             RETURN dl.logical_id AS id,
                    coalesce(dl.title, dl.logical_id) AS title,
                    collect({{term: term, cnt: cnt, title_match: title_match}}) AS term_hits
@@ -386,12 +404,12 @@ class DocumentResolver:
                     OPTIONAL MATCH (d)-[:CONTAINS*1..5]->(n)
                     WHERE {lc_n}
                       AND {tenant_filter("n")}
-                      AND (toLower(coalesce(n.title, '')) CONTAINS term
-                           OR toLower(coalesce(n.text, '')) CONTAINS term)
+                      AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
+                           OR toLower(coalesce(n.text, '')) =~ {_WORD_BOUNDARY_PATTERN})
                     WITH dl, term, count(DISTINCT n) AS cnt,
                          (NOT term =~ '\\d{{4}}'
-                          AND (toLower(coalesce(dl.title, '')) CONTAINS term
-                               OR toLower(dl.logical_id) CONTAINS term)) AS title_match
+                          AND (toLower(coalesce(dl.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
+                               OR toLower(dl.logical_id) =~ {_WORD_BOUNDARY_PATTERN})) AS title_match
                     RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title,
                            collect({{term: term, cnt: cnt, title_match: title_match}}) AS term_hits
                     """,
@@ -430,12 +448,12 @@ class DocumentResolver:
                 MATCH (d:{DOCUMENT_ROOT_CYPHER})
                 WHERE {lc}
                   AND {tenant_filter("d")}
-                  AND (toLower(coalesce(d.title, '')) CONTAINS term
+                  AND (toLower(coalesce(d.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
                    OR EXISTS {{
                      MATCH (d)-[:CONTAINS*1..5]->(n)
                      WHERE {lc_n}
-                       AND (toLower(coalesce(n.title, '')) CONTAINS term
-                            OR toLower(coalesce(n.text, '')) CONTAINS term)
+                       AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
+                            OR toLower(coalesce(n.text, '')) =~ {_WORD_BOUNDARY_PATTERN})
                    }})
                 RETURN coalesce(d.logical_doc_id, d.id) AS id,
                        coalesce(d.title, d.id) AS title,

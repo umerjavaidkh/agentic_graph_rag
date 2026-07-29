@@ -16,3 +16,5 @@ class ESGState(TypedDict, total=False):
     low_confidence: bool
     confidence_note: Optional[str]
     skip_structured_guard: bool
+    strategy: Optional[str]
+    _autofix_agent: Optional[str]

@@ -94,3 +94,71 @@ def test_search_documents_defaults_when_result_has_no_confidence_keys(monkeypatc
 
     assert out["low_confidence"] is False
     assert out["confidence_note"] is None
+
+
+# ── structured-misroute autofix attribution ──────────────────────────────────
+#
+# Regression: a structured-shaped question that reached the document agent
+# (default retrieval mode, or a document-RBAC denial) and got silently
+# re-answered by the structured agent via document_agent_structured_guard/
+# run_structured_autofix used to still be reported as "agent": "unstructured"
+# / route_tool "search_documents" here -- this function never checked the
+# esg_agent result for the "_autofix_agent" marker that flags the redirect,
+# so callers (and eval suites asserting route_tool=="query_data") had no way
+# to tell a real, RBAC-correct structured answer from a genuine document
+# search. Verified live: user regular_001 (has structured access, lacks
+# document access) asking "Which supplier provides Chai?" got the correct
+# answer's content but agent/route_tool still said unstructured/search_documents.
+
+
+def test_search_documents_reports_structured_agent_when_autofixed(monkeypatch):
+    fake_result = {
+        "answer": "The supplier that provides Chai is Exotic Liquids.",
+        "sources": [{"id": "row_0", "title": "Exotic Liquids"}],
+        "keywords": [],
+        "query_type": "graph_rag",
+        "low_confidence": False,
+        "strategy": "structured",
+        "_autofix_agent": "structured",
+    }
+    router_mod.esg_agent.invoke = MagicMock(return_value=fake_result)
+    captured_presentation_kwargs = {}
+
+    def _fake_build_presentation(**kwargs):
+        captured_presentation_kwargs.update(kwargs)
+        return None
+
+    monkeypatch.setattr(router_mod, "build_presentation", _fake_build_presentation)
+    monkeypatch.setattr(router_mod, "get_turn", lambda thread_id: None)
+    monkeypatch.setattr(router_mod, "save_turn", lambda *a, **k: None)
+    monkeypatch.setattr(router_mod, "resolve_follow_up", lambda question, prior: {"question": question})
+    monkeypatch.setattr(router_mod, "get_telemetry", lambda: None)
+
+    out = router_mod.search_documents("Which supplier provides Chai?")
+
+    assert out["agent"] == "structured"
+    assert out["_autofix_agent"] == "structured"
+    assert out["strategy"] == "structured"
+    assert captured_presentation_kwargs["agent"] == "structured"
+
+
+def test_search_documents_stays_unstructured_when_not_autofixed(monkeypatch):
+    fake_result = {
+        "answer": "The compliance policy requires reporting concerns.",
+        "sources": [{"id": "c1", "title": "Policy"}],
+        "keywords": [],
+        "query_type": "graph_rag",
+        "low_confidence": False,
+    }
+    router_mod.esg_agent.invoke = MagicMock(return_value=fake_result)
+    monkeypatch.setattr(router_mod, "build_presentation", lambda **kwargs: None)
+    monkeypatch.setattr(router_mod, "get_turn", lambda thread_id: None)
+    monkeypatch.setattr(router_mod, "save_turn", lambda *a, **k: None)
+    monkeypatch.setattr(router_mod, "resolve_follow_up", lambda question, prior: {"question": question})
+    monkeypatch.setattr(router_mod, "get_telemetry", lambda: None)
+
+    out = router_mod.search_documents("What does the compliance policy say?")
+
+    assert out["agent"] == "unstructured"
+    assert "_autofix_agent" not in out
+    assert out["strategy"] == "graph_rag"
