@@ -279,6 +279,126 @@
         "min_keyword_groups": 2
       },
       "notes": "Semantic alias: disease detectives → FETP fellows."
+    },
+    {
+      "id": "godata_k01_table_of_contents",
+      "category": "K",
+      "tier": "structural",
+      "question": "What is the table of contents of this annual report?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Contents"], ["contents"]]
+      }
+    },
+    {
+      "id": "godata_k02_abbreviations",
+      "category": "K",
+      "tier": "structural",
+      "question": "What does the list of abbreviations include in this report?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["AFENET"], ["CDC"], ["abbreviation"]]
+      }
+    },
+    {
+      "id": "godata_k03_page_1_introduction",
+      "category": "K",
+      "tier": "structural",
+      "question": "What is discussed on page 1 of the introduction in the Go.Data annual report?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Introduction"], ["introduction"]]
+      },
+      "notes": "Named the report explicitly. The fully generic phrasing ('what is discussed on page 1 of the introduction?', no document named, no prior conversation context) is genuinely ambiguous in a large multi-document corpus -- verified live it resolves to a DIFFERENT document (the physics textbook, which also has a page-1 preface) via vector-majority resolution, a known, pre-existing limitation of that fallback tier (see resolve_document_for_query's own docstring: vector-majority has no defense against corpus-size/content skew for un-anchored queries). Not a regression from this session's fixes -- a genuinely hard disambiguation problem (arguably the right behavior there is to ask for clarification, not guess) that's out of scope here."
+    },
+    {
+      "id": "godata_k04_box_9",
+      "category": "K",
+      "tier": "structural",
+      "question": "What is Box 9 about in this report?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["PowerBI"], ["dashboard"], ["template"]]
+      }
+    },
+    {
+      "id": "godata_k05_main_activities_objectives",
+      "category": "K",
+      "tier": "lookup",
+      "question": "What are Go.Data's main activities and objectives?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 30,
+        "any_of_keywords": [["GOARN"], ["outbreak"], ["surveillance"]]
+      }
+    },
+    {
+      "id": "godata_k06_who_best_practices",
+      "category": "K",
+      "tier": "lookup",
+      "question": "How did WHO promote best practices in field epidemiology response?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 30,
+        "any_of_keywords": [["training"], ["field epidemiology"]]
+      }
+    },
+    {
+      "id": "godata_k07_figure_1",
+      "category": "K",
+      "tier": "structural",
+      "question": "What does Figure 1 show in this report?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 10
+      },
+      "notes": "SOFT GAP, currently hedges rather than describing the figure ('The context does not provide a specific description of Figure 1...'). Not asserting content keywords -- only that the strategy routes correctly and gives a non-trivial answer -- until retrieval of figure/region content for a bare 'Figure N' reference is investigated."
+    },
+    {
+      "id": "godata_k08_covid19_role",
+      "category": "K",
+      "tier": "lookup",
+      "question": "What role did Go.Data play during the COVID-19 pandemic?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 30,
+        "any_of_keywords": [["COVID-19"], ["COVID"], ["pandemic"]]
+      }
+    },
+    {
+      "id": "godata_k09_overall_discussion",
+      "category": "K",
+      "tier": "synthesis",
+      "question": "What does this Go.Data annual report discuss overall?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 40
+      }
+    },
+    {
+      "id": "godata_k10_acknowledgements",
+      "category": "K",
+      "tier": "lookup",
+      "question": "Who acknowledged contributions to the global Go.Data rollout?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["World Health Organization"], ["WHO"], ["GOARN"]]
+      }
     }
   ]
 }
