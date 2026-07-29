@@ -66,19 +66,30 @@ def search_documents(
         state["prior_context"] = prior
 
     result = esg_agent.invoke(state)
+    # A structured-shaped question can reach here (default retrieval mode,
+    # or an RBAC denial on document access) and get silently re-answered by
+    # the structured agent via document_agent_structured_guard/
+    # run_structured_autofix (see retrieval/unstructured/graph.py's
+    # _generate_document_answer). Without checking for that marker, this
+    # function always reported "agent": "unstructured" / route_tool
+    # "search_documents" even when the structured agent produced the real
+    # answer -- misleading callers (and eval suites) that key off those
+    # fields to know which agent actually served the question.
+    autofixed_structured = result.get("_autofix_agent") == "structured"
     presentation = build_presentation(
         question=question,
         answer=result.get("answer", ""),
         sources=result.get("sources", []),
         retrieved_context=result.get("retrieved_context", {}),
         query_type=result.get("query_type"),
+        agent="structured" if autofixed_structured else None,
     )
     out = {
         "answer": result.get("answer", ""),
         "sources": result.get("sources", []),
         "keywords": result.get("keywords", []),
-        "agent": "unstructured",
-        "strategy": result.get("query_type", "semantic"),
+        "agent": "structured" if autofixed_structured else "unstructured",
+        "strategy": (result.get("strategy") or "structured") if autofixed_structured else result.get("query_type", "semantic"),
         "query_type": result.get("query_type"),
         "low_confidence": bool(result.get("low_confidence")),
         "confidence_note": result.get("confidence_note"),
@@ -87,6 +98,8 @@ def search_documents(
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
         "_follow_up": resolved.get("follow_up_kind") if resolved.get("use_prior") else None,
     }
+    if autofixed_structured:
+        out["_autofix_agent"] = "structured"
     tel = get_telemetry()
     if tel is not None:
         out["_telemetry"] = tel.summary()

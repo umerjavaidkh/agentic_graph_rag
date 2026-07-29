@@ -128,27 +128,44 @@ def _generate_document_answer(
     user_context=None,
     skip_structured_guard: bool = False,
 ) -> dict:
-    if not chunks:
+    denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
+    if not chunks or denied:
         # Misroute guard: structured-graph question sent to document agent →
         # autofix or generic hint. Gated on retrieval having found NOTHING
-        # here — not on the question's wording alone. Financial-document
-        # vocabulary ("sales", "revenue", "profit") is also a Northwind-era
-        # structured-data cue, so a bare keyword match used to redirect real
-        # 10-K questions away from chunks the document agent had already
-        # found (see [[repo_keyword_routing_scaling_risk]]). Only reaching
-        # for this guard once retrieval itself came up empty keeps it doing
-        # its original job — catching genuine misroutes — without discarding
-        # real content that happens to share vocabulary with the other graph.
-        # Skipped entirely when called as the structured path's own
-        # low-confidence fallback (routing.try_document_fallback) — bouncing
-        # back to structured there would just recreate the low-confidence
-        # answer we're trying to improve on, an infinite ping-pong for
-        # questions phrased like analytics but whose entity only exists in
-        # the ingested documents.
+        # real here (either no chunks at all, or the only "chunk" is the
+        # synthetic access_denied marker) -- not on the question's wording
+        # alone. Financial-document vocabulary ("sales", "revenue", "profit")
+        # is also a Northwind-era structured-data cue, so a bare keyword
+        # match used to redirect real 10-K questions away from chunks the
+        # document agent had already found (see
+        # [[repo_keyword_routing_scaling_risk]]). Only reaching for this
+        # guard once retrieval itself came up empty (or denied) keeps it
+        # doing its original job -- catching genuine misroutes -- without
+        # discarding real content that happens to share vocabulary with the
+        # other graph.
+        #
+        # The `denied` case matters just as much as the empty-chunks case:
+        # a user who lacks document/"esg" access but DOES have structured
+        # access, asking a structured-shaped question, used to get stuck on
+        # the flat "access denied" message below without ever trying the
+        # redirect -- because access_denied_response() returns a non-empty
+        # chunks list (one marker chunk), so `if not chunks:` alone never
+        # fired for this case. Skipped entirely when called as the
+        # structured path's own low-confidence fallback
+        # (routing.try_document_fallback) -- bouncing back to structured
+        # there would just recreate the low-confidence answer we're trying
+        # to improve on, an infinite ping-pong for questions phrased like
+        # analytics but whose entity only exists in the ingested documents.
         if not skip_structured_guard:
             guard = document_agent_structured_guard(question, user_context)
             if guard is not None:
                 return guard
+
+        if denied:
+            return {
+                "answer": (denied.get("text") or "Access denied for document data.").strip(),
+                "low_confidence": False,
+            }
 
         answer = "I could not find relevant information in the ingested documents."
         low_confidence, confidence_note = compute_confidence(
@@ -158,13 +175,6 @@ def _generate_document_answer(
             "answer": answer,
             "low_confidence": low_confidence,
             "confidence_note": confidence_note,
-        }
-
-    denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
-    if denied:
-        return {
-            "answer": (denied.get("text") or "Access denied for document data.").strip(),
-            "low_confidence": False,
         }
 
     mode = (retrieved.get("mode") or "").strip()

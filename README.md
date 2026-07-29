@@ -138,7 +138,7 @@ Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstruc
 | Google OIDC auth, RBAC, per-user thread isolation | ✅ (`release/v1.0`) |
 | Streaming answers with charts, retrieval feedback loop | ✅ |
 | Chapter-level rollup summaries for broad "what does this document/chapter discuss" questions | ✅ |
-| Regression eval suite (40 cases) | ✅ 40/40 |
+| Regression eval suite — 4 suites, 101 cases (Northwind structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ✅ 95/101 — remaining 6 are documented, known gaps (`notes` field in `eval/*.json`), not silent failures |
 | 1000-document corpus validation, then a tagged release | 🚧 in progress |
 | CI (tests on push/PR) | 🚧 in progress |
 

@@ -428,6 +428,14 @@ def run_via_mcp_tool(
                 result = doc_fn(question, user_context=user_context, thread_id=thread_id)
             tool_name = "search_documents"
             route_method = "fallback_structured_denied"
+    elif tool_name == "search_documents" and result.get("_autofix_agent") == "structured":
+        # Mirror direction of the branch above: the document agent silently
+        # redirected a misrouted structured-shaped question to the
+        # structured agent (see search_documents() in router.py). Reflect
+        # that in routing metadata so callers see "query_data"/"structured",
+        # not the document agent's original tool name.
+        tool_name = "query_data"
+        route_method = "misroute_autofix"
 
     result["_route_tool"] = tool_name
     result["_route_method"] = route_method
