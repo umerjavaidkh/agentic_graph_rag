@@ -152,6 +152,20 @@ def validate_response(case: dict[str, Any], response: dict[str, Any]) -> Validat
         else:
             result.add_fail(f"agent expected {exp_agent!r}, got {agent!r}")
 
+    # Which logical document the query actually resolved to -- the load-
+    # bearing check for conversation-continuity cases (a "thread_group"
+    # follow-up silently resolving to an unrelated document is exactly the
+    # failure mode none of this framework's other checks would catch, since
+    # a wrong-document answer can still be well-formed, long, and contain
+    # no forbidden phrases).
+    exp_doc = expect.get("document_id")
+    if exp_doc:
+        doc_id = response.get("document_id")
+        if doc_id == exp_doc:
+            result.add_pass(f"document_id={doc_id}")
+        else:
+            result.add_fail(f"document_id expected {exp_doc!r}, got {doc_id!r}")
+
     min_chars = expect.get("min_answer_chars", 0)
     if len(answer.strip()) >= min_chars:
         result.add_pass(f"answer length>={min_chars}")

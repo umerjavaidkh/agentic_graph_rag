@@ -1,0 +1,652 @@
+{
+  "suite": "sec_filing_qa_and_continuity_v1",
+  "description": "Regression suite built from a live manual QA session against a real JNJ 10-K (jnj-10k-2026-02-11) and the physics textbook, in a mixed multi-document corpus. Covers two bug classes fixed the same day: (1) conversation-continuity corruption -- a follow-up with no distinguishing vocabulary silently resolving to an unrelated document and then poisoning the thread's saved hint for every subsequent generic question, and (2) imprecise prefix matching -- 'Item 7' matching 'Item 7A', 'Chapter 1' matching 'Chapter 10'-'19', etc. Cases in the same thread_group execute in file order sharing one thread_id, reproducing the exact multi-turn sequence that originally broke.",
+  "eval_only_keywords": true,
+  "prerequisites": [
+    "JNJ 10-K ingested as logical_doc_id jnj-10k-2026-02-11.",
+    "Physics textbook (UniversityPhysicsVolume1) ingested as doc_universityphysicsvolume1.",
+    "Corpus must contain MULTIPLE documents (continuity/collision bugs only reproduce with more than one document) -- verified against a real corpus of 10+ filings plus the textbook.",
+    "App reachable at EVAL_BASE_URL (default http://localhost:8000)."
+  ],
+  "default_user_id": "admin_001",
+  "default_role": "admin",
+  "cases": [
+    {
+      "id": "jnj_c01_net_earnings",
+      "category": "continuity",
+      "tier": "lookup",
+      "thread_group": "jnj_continuity",
+      "question": "What were Johnson & Johnson net earnings for 2025, and how did that compare to 2024?",
+      "expect": {
+        "route_tool": "search_documents",
+        "agent": "unstructured",
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["26,804"], ["26.8 billion"]]
+      },
+      "notes": "Establishes the thread's document context for every case below."
+    },
+    {
+      "id": "jnj_c02_diluted_eps",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What was diluted EPS for 2025?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["11.03"], ["earnings per share"]],
+        "none_of_keywords": ["could not find", "does not cover"]
+      },
+      "notes": "Regression: 'EPS' was picked up as a doc-name anchor and substring-matched 'steps'/'sweeps' throughout the physics textbook via raw CONTAINS, resolving here instead of JNJ. Fixed via word-boundary matching in document_resolver.py."
+    },
+    {
+      "id": "jnj_c03_total_revenue",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What was total revenue/net sales for 2025?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["199.2"]]
+      },
+      "notes": "Regression: cascaded from jnj_c02's wrong hint being saved as the new thread document."
+    },
+    {
+      "id": "jnj_c04_stockholders_equity",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What was total stockholders' equity?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["81,544"], ["81.5"]]
+      }
+    },
+    {
+      "id": "jnj_c05_effective_tax_rate",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What was the effective tax rate for 2025?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["17.7"]]
+      }
+    },
+    {
+      "id": "jnj_c06_medtech_segment",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What were sales for the MedTech segment in 2025?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["33.8"]]
+      },
+      "notes": "Always resolved correctly even before the fix -- 'MedTech' is distinctive enough to win strict resolution on its own. Kept as a control case."
+    },
+    {
+      "id": "jnj_c07_innovative_medicine_segment",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What were Innovative Medicine segment sales?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["60.4"]]
+      },
+      "notes": "Control case -- resolving correctly also resets the thread's hint back to JNJ for the next cases."
+    },
+    {
+      "id": "jnj_c08_segment_operating_margin",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "How did the two segments compare in operating margin?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 5
+      },
+      "notes": "KNOWN CONTENT GAP, not a bug: verified live the filing reports segment sales and segment income before tax, but never states an explicit 'operating margin' percentage -- the raw components exist to compute one, but nothing currently synthesizes derived metrics across chunks. Only asserting the thread stayed on the right document; not asserting a numeric answer."
+    },
+    {
+      "id": "jnj_c09_net_earnings_no_company_named",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "Ask net earnings first, then without naming the company:",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 10,
+        "any_of_keywords": [["26,804"]]
+      }
+    },
+    {
+      "id": "jnj_c10_diluted_eps_bare",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What was diluted EPS?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["11.03"], ["earnings per share"]],
+        "none_of_keywords": ["could not find", "does not cover"]
+      },
+      "notes": "Second occurrence of the exact original regression trigger, without 'for 2025' this time -- must not re-corrupt the thread for the remaining cases."
+    },
+    {
+      "id": "jnj_c11_effective_tax_rate_bare",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What was the effective tax rate?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["17.7"]]
+      }
+    },
+    {
+      "id": "jnj_c12_item_1a_risk_factors",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What does Item 1A say about the main risk factors?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["risk"]],
+        "none_of_keywords": ["does not cover", "this document does not"]
+      }
+    },
+    {
+      "id": "jnj_c13_item_7_results_of_operations",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What does Item 7 discuss regarding results of operations?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["results of operations"], ["management's discussion"], ["management’s discussion"]],
+        "none_of_keywords": ["item 7a", "market risk", "does not cover"]
+      },
+      "notes": "Original symptom: an EMPTY assistant response. Also guards the separate prefix-boundary fix directly -- JNJ has both 'Item 7' and 'Item 7A' sections; STARTS WITH with no boundary check non-deterministically returned 7A's market-risk content instead."
+    },
+    {
+      "id": "jnj_c14_item_9a_controls",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What does Item 9A say about controls and procedures?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["controls and procedures"], ["disclosure controls"]],
+        "none_of_keywords": ["does not cover"]
+      }
+    },
+    {
+      "id": "jnj_c15_litigation",
+      "category": "continuity",
+      "tier": "follow_up",
+      "thread_group": "jnj_continuity",
+      "question": "What does the document say about litigation or legal proceedings?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["litigation"], ["legal proceedings"]],
+        "none_of_keywords": ["does not cover"]
+      }
+    },
+    {
+      "id": "jnj_s01_business_segments",
+      "category": "standalone",
+      "tier": "lookup",
+      "question": "What are Johnson & Johnson's main business segments?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Innovative Medicine"], ["MedTech"]],
+        "min_keyword_groups": 2
+      }
+    },
+    {
+      "id": "jnj_s02_rd_spending",
+      "category": "standalone",
+      "tier": "lookup",
+      "question": "What does Johnson & Johnson's 10-K filing say about R&D spending?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 30,
+        "any_of_keywords": [["research and development"], ["R&D"]]
+      }
+    },
+    {
+      "id": "jnj_s03_executive_officers",
+      "category": "standalone",
+      "tier": "lookup",
+      "question": "Who are the executive officers listed?",
+      "expect": {
+        "document_id": "jnj-10k-2026-02-11",
+        "min_answer_chars": 10,
+        "any_of_keywords": [["Duato"], ["Schmid"], ["Taubert"], ["Wolk"]]
+      },
+      "notes": "KNOWN UNFIXED BUG, expected to currently FAIL with this exact (generic, no-company-named) wording -- a more specific phrasing like 'Johnson & Johnson's executive officers?' happens to retrieve correctly, but this is the wording actually reported. Verified live: the filing lists 10 named officers (Duato, Schmid, Taubert, Wolk, ...) as separate Section nodes on pages 47-50, but they got nested under an unrelated 'Item 1B' Chapter due to a heading-detection heuristic misplacement -- this filing has no embedded PDF outline/TOC, so the TOC-based structure fix doesn't apply to it. Document resolution itself is correct (lands on JNJ); the retrieval-within-document step is what misses the names for generic phrasing. Needs either a heuristic-detection improvement (explicitly deferred -- whack-a-mole risk) or a retrieval-side fix (broader graph traversal from the intro section, independent of query wording). Kept in the suite as a live regression target, not silently dropped."
+    },
+    {
+      "id": "phys_s01_chapter_15_cyu_questions",
+      "category": "standalone",
+      "tier": "extraction",
+      "question": "List every Check Your Understanding question in Chapter 15 of the physics textbook.",
+      "expect": {
+        "document_id": "doc_universityphysicsvolume1",
+        "min_answer_chars": 50,
+        "any_of_keywords": [["pendulum"], ["oscillat"], ["damped"]]
+      },
+      "notes": "Guards the Chapter-N structural reference + context-budget fixes -- this exact question hung, then crashed with a rate-limit error, then returned irrelevant pages across three iterations of that fix."
+    },
+    {
+      "id": "phys_s02_cross_chapter_comparison",
+      "category": "standalone",
+      "tier": "synthesis",
+      "question": "How does the treatment of momentum in Chapter 9 relate to angular momentum in Chapter 11 of the physics textbook?",
+      "expect": {
+        "document_id": "doc_universityphysicsvolume1",
+        "min_answer_chars": 50,
+        "any_of_keywords": [["momentum"]],
+        "min_keyword_groups": 1
+      },
+      "notes": "Guards the multi-reference fix -- previously silently narrowed to Chapter 9 alone and reported Chapter 11 'not covered'."
+    },
+    {
+      "id": "phys_s03_worked_example_lookup",
+      "category": "standalone",
+      "tier": "lookup",
+      "question": "Tell me about Example 2.8 Direction of Motion from the physics textbook.",
+      "expect": {
+        "document_id": "doc_universityphysicsvolume1",
+        "min_answer_chars": 10,
+        "none_of_keywords": ["does not cover", "not covered"]
+      },
+      "notes": "KNOWN UNFIXED REGRESSION, expected to currently FAIL: worked examples aren't in the PDF's own embedded outline, so the TOC-based chapter-structure fix no longer indexes them as their own Section nodes. Was working before that fix (commit c4116b9); flagged as a deliberate trade-off, not silently dropped. Planned remediation: a visual/heading-classification pass within each TOC-derived section (see project_next_session_goals memory)."
+    },
+    {
+      "id": "amzn_t01_table_of_contents",
+      "category": "amazon",
+      "tier": "structural",
+      "thread_group": "amzn_10q",
+      "question": "List the table of contents from the Amazon 10-Q document.",
+      "expect": {
+        "document_id": "amzn-10q-2016-07-29-v3",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Table of Contents"], ["Table of contents"]]
+      }
+    },
+    {
+      "id": "amzn_t02_net_sales",
+      "category": "amazon",
+      "tier": "lookup",
+      "thread_group": "amzn_10q",
+      "question": "What was Amazon's net sales for the quarter ended June 30, 2016?",
+      "expect": {
+        "document_id": "amzn-10q-2016-07-29-v3",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["30,404"], ["30.4 billion"]]
+      }
+    },
+    {
+      "id": "amzn_t03_operating_income",
+      "category": "amazon",
+      "tier": "lookup",
+      "thread_group": "amzn_10q",
+      "question": "What was Amazon's operating income for this quarter?",
+      "expect": {
+        "document_id": "amzn-10q-2016-07-29-v3",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["1,285"]]
+      },
+      "notes": "Follow-up with no quarter/year restated -- continuity within the amzn_10q thread_group."
+    },
+    {
+      "id": "amzn_t04_note3_commitments",
+      "category": "amazon",
+      "tier": "structural",
+      "thread_group": "amzn_10q",
+      "question": "What does Note 3 (Commitments and Contingencies) discuss?",
+      "expect": {
+        "document_id": "amzn-10q-2016-07-29-v3",
+        "min_answer_chars": 30,
+        "any_of_keywords": [["Commitments"], ["Contingencies"]]
+      }
+    },
+    {
+      "id": "amzn_t05_stockholders_equity",
+      "category": "amazon",
+      "tier": "lookup",
+      "thread_group": "amzn_10q",
+      "question": "What was Amazon's total stockholders' equity as of June 30, 2016?",
+      "expect": {
+        "document_id": "amzn-10q-2016-07-29-v3",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["16,538"]]
+      }
+    },
+    {
+      "id": "amzn_t06_cash_and_equivalents",
+      "category": "amazon",
+      "tier": "lookup",
+      "thread_group": "amzn_10q",
+      "question": "How much cash and cash equivalents did Amazon have as of June 30, 2016?",
+      "expect": {
+        "document_id": "amzn-10q-2016-07-29-v3",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["12,521"]]
+      }
+    },
+    {
+      "id": "amzn_t07_note7_segments",
+      "category": "amazon",
+      "tier": "structural",
+      "thread_group": "amzn_10q",
+      "question": "What does Note 7 (Segment Information) report about Amazon's business segments?",
+      "expect": {
+        "document_id": "amzn-10q-2016-07-29-v3",
+        "min_answer_chars": 30,
+        "any_of_keywords": [["North America"], ["AWS"]],
+        "min_keyword_groups": 2
+      }
+    },
+    {
+      "id": "amzn_t08_part_ii",
+      "category": "amazon",
+      "tier": "structural",
+      "thread_group": "amzn_10q",
+      "question": "What is discussed in Part II of this filing?",
+      "expect": {
+        "document_id": "amzn-10q-2016-07-29-v3",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Legal Proceedings"], ["Risk Factors"]]
+      }
+    },
+    {
+      "id": "amzn_t09_note4_long_term_debt",
+      "category": "amazon",
+      "tier": "structural",
+      "thread_group": "amzn_10q",
+      "question": "What was Amazon's long-term debt as of June 30, 2016, per Note 4?",
+      "expect": {
+        "document_id": "amzn-10q-2016-07-29-v3",
+        "min_answer_chars": 10,
+        "any_of_keywords": [["8.3 billion"], ["LONG-TERM DEBT"]]
+      }
+    },
+    {
+      "id": "amzn_t10_exhibit_index",
+      "category": "amazon",
+      "tier": "structural",
+      "thread_group": "amzn_10q",
+      "question": "What is listed in the Exhibit Index of this filing?",
+      "expect": {
+        "document_id": "amzn-10q-2016-07-29-v3",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Exhibit"], ["Certificate of Incorporation"]]
+      }
+    },
+    {
+      "id": "tsla_t01_ceo_key_person_risk",
+      "category": "tesla",
+      "tier": "lookup",
+      "thread_group": "tsla_10k",
+      "question": "Who is Tesla's CEO, and what does the 10-K say about key-person risk?",
+      "expect": {
+        "document_id": "tsla-10k-2026-01-29",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Elon Musk"]]
+      }
+    },
+    {
+      "id": "tsla_t02_fsd_robotaxi",
+      "category": "tesla",
+      "tier": "lookup",
+      "thread_group": "tsla_10k",
+      "question": "What does the 10-K say about Full Self-Driving (FSD) and Robotaxi?",
+      "expect": {
+        "document_id": "tsla-10k-2026-01-29",
+        "min_answer_chars": 30,
+        "any_of_keywords": [["Full Self-Driving"], ["FSD"], ["Robotaxi"]]
+      }
+    },
+    {
+      "id": "tsla_t03_total_revenue_fy2025",
+      "category": "tesla",
+      "tier": "lookup",
+      "thread_group": "tsla_10k",
+      "question": "What was Tesla's total revenue for fiscal year 2025?",
+      "expect": {
+        "document_id": "tsla-10k-2026-01-29",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["94.83"]]
+      },
+      "notes": "Pre-confirmed value, independent of this session's fixes."
+    },
+    {
+      "id": "tsla_t04_item_1a_risk_factors",
+      "category": "tesla",
+      "tier": "structural",
+      "thread_group": "tsla_10k",
+      "question": "What does Item 1A report about risk factors?",
+      "expect": {
+        "document_id": "tsla-10k-2026-01-29",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["RISK FACTORS"]]
+      }
+    },
+    {
+      "id": "tsla_t05_item_1c_cybersecurity",
+      "category": "tesla",
+      "tier": "structural",
+      "thread_group": "tsla_10k",
+      "question": "What does Item 1C say about cybersecurity?",
+      "expect": {
+        "document_id": "tsla-10k-2026-01-29",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["CYBERSECURITY"]]
+      },
+      "notes": "Newer, less common Item letter suffix -- distinct SEC item code from the Item 9A/9C family already covered elsewhere."
+    },
+    {
+      "id": "tsla_t06_item_9a_controls",
+      "category": "tesla",
+      "tier": "structural",
+      "thread_group": "tsla_10k",
+      "question": "What does Item 9A report about the effectiveness of Tesla's internal controls?",
+      "expect": {
+        "document_id": "tsla-10k-2026-01-29",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["CONTROLS AND PROCEDURES"], ["Disclosure Controls"]]
+      }
+    },
+    {
+      "id": "tsla_t07_item_9c_foreign_jurisdictions",
+      "category": "tesla",
+      "tier": "structural",
+      "thread_group": "tsla_10k",
+      "question": "What does Item 9C disclose about foreign jurisdictions that prevent inspections?",
+      "expect": {
+        "document_id": "tsla-10k-2026-01-29",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["FOREIGN JURISDICTIONS"], ["Not applicable"]]
+      },
+      "notes": "Rare item code, good edge case for the Item-N-with-letter-suffix structural pattern -- correctly returns 'Not applicable' rather than a wrong/empty answer, since Tesla's own filing states that verbatim."
+    },
+    {
+      "id": "tsla_t08_table_of_contents",
+      "category": "tesla",
+      "tier": "structural",
+      "thread_group": "tsla_10k",
+      "question": "What is the table of contents?",
+      "expect": {
+        "document_id": "tsla-10k-2026-01-29",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Table of contents"], ["PART I"]]
+      },
+      "notes": "Bare 'table of contents' with no document named -- relies on thread continuity within tsla_10k."
+    },
+    {
+      "id": "tsla_t09_overview",
+      "category": "tesla",
+      "tier": "synthesis",
+      "thread_group": "tsla_10k",
+      "question": "Give me an overview of this 10-K.",
+      "expect": {
+        "document_id": "tsla-10k-2026-01-29",
+        "min_answer_chars": 50
+      }
+    },
+    {
+      "id": "tsla_t10_item_3_legal_proceedings",
+      "category": "tesla",
+      "tier": "structural",
+      "thread_group": "tsla_10k",
+      "question": "What does Item 3 say about legal proceedings?",
+      "expect": {
+        "document_id": "tsla-10k-2026-01-29",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["LEGAL PROCEEDINGS"]]
+      },
+      "notes": "Bare 'Item 3' (no letter suffix) -- distinguishes correctly from Tesla's own Item 3-adjacent items."
+    },
+    {
+      "id": "gs_t01_net_earnings",
+      "category": "goldman_sachs",
+      "tier": "lookup",
+      "thread_group": "gs_10k",
+      "question": "What were Goldman Sachs's net earnings for 2025, and how did that compare to 2024?",
+      "expect": {
+        "document_id": "gs-10k-2026-02-25",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["17.176"], ["17.2 billion"]]
+      }
+    },
+    {
+      "id": "gs_t02_diluted_eps_roe",
+      "category": "goldman_sachs",
+      "tier": "lookup",
+      "thread_group": "gs_10k",
+      "question": "What was diluted EPS and ROE for 2025?",
+      "expect": {
+        "document_id": "gs-10k-2026-02-25",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["51.32"]]
+      },
+      "notes": "Same class of query as the JNJ 'diluted EPS' continuity bug -- confirms the word-boundary document-resolution fix generalizes to another filing/thread."
+    },
+    {
+      "id": "gs_t03_book_value_per_share",
+      "category": "goldman_sachs",
+      "tier": "lookup",
+      "thread_group": "gs_10k",
+      "question": "What was book value per common share?",
+      "expect": {
+        "document_id": "gs-10k-2026-02-25",
+        "min_answer_chars": 5,
+        "any_of_keywords": [["357.60"]]
+      }
+    },
+    {
+      "id": "gs_t04_item_1c_cybersecurity",
+      "category": "goldman_sachs",
+      "tier": "structural",
+      "thread_group": "gs_10k",
+      "question": "What does Item 1C say about cybersecurity?",
+      "expect": {
+        "document_id": "gs-10k-2026-02-25",
+        "min_answer_chars": 10,
+        "any_of_keywords": [["Cybersecurity"]]
+      }
+    },
+    {
+      "id": "gs_t05_item_7a_market_risk",
+      "category": "goldman_sachs",
+      "tier": "structural",
+      "thread_group": "gs_10k",
+      "question": "What does Item 7A report about quantitative and qualitative disclosures about market risk?",
+      "expect": {
+        "document_id": "gs-10k-2026-02-25",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Market Risk"]]
+      }
+    },
+    {
+      "id": "gs_t06_item_9_accountants",
+      "category": "goldman_sachs",
+      "tier": "structural",
+      "thread_group": "gs_10k",
+      "question": "What does Item 9 discuss regarding accountants and financial disclosure?",
+      "expect": {
+        "document_id": "gs-10k-2026-02-25",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Accountants"], ["Disagreements"]]
+      },
+      "notes": "Plain 'Item 9' (no letter suffix) -- must resolve distinctly from 'Item 9A'/'Item 9C' in the same filing (Goldman's own 10-K has all three)."
+    },
+    {
+      "id": "gs_t07_item_12_beneficial_owners",
+      "category": "goldman_sachs",
+      "tier": "structural",
+      "thread_group": "gs_10k",
+      "question": "What does Item 12 say about security ownership of beneficial owners?",
+      "expect": {
+        "document_id": "gs-10k-2026-02-25",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["Beneficial Owners"], ["Security Ownership"]]
+      }
+    },
+    {
+      "id": "gs_t08_note_13",
+      "category": "goldman_sachs",
+      "tier": "structural",
+      "thread_group": "gs_10k",
+      "question": "What does Note 13 discuss?",
+      "expect": {
+        "document_id": "gs-10k-2026-02-25",
+        "min_answer_chars": 15,
+        "none_of_keywords": ["Note 13.\n\nNote 13."]
+      },
+      "notes": "KNOWN UNFIXED BUG, expected to currently FAIL: verified live the Section node titled 'Note 13.' has literally 8 characters of text (just its own title, no body) -- the real footnote content is deep in 'Notes to Consolidated Financial Statements', but 'Note 13.' ALSO appears as a bare entry on this filing's own notes INDEX/TOC page, and heading detection promoted that empty index-page occurrence to its own Section instead of the real one. Distinct, narrower bug from the two already-known gaps -- ingestion doesn't yet disambiguate an index/list occurrence of a heading-shaped string from the real section start when both exist in the same document. Not yet root-caused into a general fix; flagged here as a live regression target."
+    },
+    {
+      "id": "gs_t09_gsbe_subsidiary",
+      "category": "goldman_sachs",
+      "tier": "lookup",
+      "thread_group": "gs_10k",
+      "question": "What role does GS Bank USA (GSBE) play in the firm's operations?",
+      "expect": {
+        "document_id": "gs-10k-2026-02-25",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["bank subsidiary"], ["GS Bank USA"]]
+      }
+    },
+    {
+      "id": "gs_t10_risk_management_follow_up",
+      "category": "goldman_sachs",
+      "tier": "follow_up",
+      "thread_group": "gs_10k",
+      "question": "What did it say about risk management?",
+      "expect": {
+        "document_id": "gs-10k-2026-02-25",
+        "min_answer_chars": 20,
+        "any_of_keywords": [["risk management"], ["liquidity"], ["market risk"]]
+      },
+      "notes": "Bare pronoun follow-up, no document named -- must not drift to JPM/AAPL/any other filing in the corpus. Direct continuity guard, same bug class as the JNJ cases."
+    }
+  ]
+}

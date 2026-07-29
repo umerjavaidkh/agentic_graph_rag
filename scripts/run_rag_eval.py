@@ -33,6 +33,7 @@ SUITE_PATHS = {
     "document": ROOT / "eval" / "document_rag_suite.json",
     "structured": ROOT / "eval" / "structured_rag_suite.json",
     "advanced": ROOT / "eval" / "advanced_structured_suite.json",
+    "sec_filing_qa": ROOT / "eval" / "sec_filing_qa_suite.json",
 }
 
 
@@ -95,10 +96,26 @@ def run_case(
     timeout: float,
     dry_run: bool,
     attach_feedback: bool,
+    run_id: str,
+    thread_groups: dict[str, str],
 ) -> dict[str, Any]:
     user_id = case.get("user_id") or suite_meta.get("default_user_id", "public_001")
     role = case.get("role") or suite_meta.get("default_role", "public")
-    thread_id = f"eval_{case['id']}_{int(time.time() * 1000)}"
+    # Every case gets its own fresh, isolated thread by default -- correct
+    # for single-turn lookup cases, but it means this framework could never
+    # catch a conversation-continuity bug (a follow-up silently resolving
+    # to the wrong document) since no case ever saw a prior turn. A case
+    # opting into "thread_group": "<label>" shares one thread_id with every
+    # other case using the same label IN THIS RUN (cases execute in suite-
+    # file order already, so continuity-dependent cases just need to be
+    # adjacent/ordered correctly in the JSON) -- keyed by run_id so two
+    # separate `python run_rag_eval.py` invocations never share stale
+    # server-side thread_memory state from a previous run.
+    group = case.get("thread_group")
+    if group:
+        thread_id = thread_groups.setdefault(group, f"eval_{run_id}_{group}")
+    else:
+        thread_id = f"eval_{run_id}_{case['id']}"
 
     record: dict[str, Any] = {
         "id": case["id"],
@@ -131,6 +148,7 @@ def run_case(
                 "request_id": response.get("request_id"),
                 "route_tool": response.get("route_tool"),
                 "agent": response.get("agent"),
+                "document_id": response.get("document_id"),
                 "total_chunks": response.get("total_chunks"),
                 "answer_preview": (response.get("answer") or "")[:240],
                 "checks": validation.checks,
@@ -159,7 +177,12 @@ def run_case(
 def collect_cases(suite_name: str, case_id: str | None) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     paths = []
     if suite_name == "all":
-        paths = [SUITE_PATHS["document"], SUITE_PATHS["structured"], SUITE_PATHS["advanced"]]
+        paths = [
+            SUITE_PATHS["document"],
+            SUITE_PATHS["structured"],
+            SUITE_PATHS["advanced"],
+            SUITE_PATHS["sec_filing_qa"],
+        ]
     else:
         paths = [SUITE_PATHS[suite_name]]
 
@@ -202,9 +225,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run RAG eval suites (document + structured).")
     parser.add_argument(
         "--suite",
-        choices=["document", "structured", "advanced", "all"],
+        choices=["document", "structured", "advanced", "sec_filing_qa", "all"],
         default="all",
-        help="Which suite to run (default: all = 20 document + 10 structured + 10 advanced)",
+        help="Which suite to run (default: all)",
     )
     parser.add_argument("--id", help="Run a single case id (e.g. nw_04, godata_a01)")
     parser.add_argument(
@@ -231,6 +254,8 @@ def main() -> int:
         return 2
 
     print(f"Running {len(pairs)} case(s) against {args.base_url} (suite={args.suite})")
+    run_id = str(int(time.time() * 1000))
+    thread_groups: dict[str, str] = {}
     results = [
         run_case(
             args.base_url,
@@ -239,6 +264,8 @@ def main() -> int:
             timeout=args.timeout,
             dry_run=args.dry_run,
             attach_feedback=args.attach_feedback,
+            run_id=run_id,
+            thread_groups=thread_groups,
         )
         for meta, case in pairs
     ]

@@ -24,6 +24,26 @@ from ..services.formatter import ResponseFormatter
 # any single one of them (a whole chapter) could be 100k+ characters alone.
 _MULTI_REF_EXCERPT_CHARS = 6000
 
+# A plain `title STARTS WITH sec_num` match has no defense against a longer
+# number/letter-suffixed sibling sharing the same prefix -- "item 7"
+# STARTS WITH-matches "Item 7A. Quantitative and Qualitative..." just as
+# readily as the real "Item 7. Management's discussion...", with no
+# ORDER BY to break the tie deterministically. Same failure class for
+# "chapter 1" matching "Chapter 10"-"Chapter 19", "note 3" matching a
+# hypothetical "Note 30", etc. Verified live: "What does Item 7 discuss
+# regarding results of operations?" (JNJ 10-K, which has both a real
+# "Item 7" and "Item 7A" section) non-deterministically returned "Item 7A"
+# content instead. Fixed by additionally requiring the character right
+# after the matched prefix to be non-alphanumeric (or the title to be
+# exactly that length) -- "item 7." and "item 7 —" still match "item 7";
+# "item 7a" no longer does. Doesn't need sec_num escaped into a regex (only
+# a fixed, safe `[a-z0-9]` pattern is used) since STARTS WITH still does
+# the literal prefix comparison.
+_PREFIX_BOUNDARY_CYPHER = (
+    "(size(s.title) = size($sec_num) "
+    "OR NOT substring(toLower(s.title), size($sec_num), 1) =~ '[a-z0-9]')"
+)
+
 
 class SubsectionStrategy:
     name = "subsection_tree"
@@ -188,6 +208,7 @@ class SubsectionStrategy:
               AND s.title IS NOT NULL
               AND trim(s.title) <> ''
               AND toLower(s.title) STARTS WITH toLower($sec_num)
+              AND {_PREFIX_BOUNDARY_CYPHER}
               AND {tenant_filter("s")}
             RETURN
               s.id AS sid,
@@ -239,6 +260,7 @@ class SubsectionStrategy:
               AND s.title IS NOT NULL
               AND trim(s.title) <> ''
               AND toLower(s.title) STARTS WITH toLower($sec_num)
+              AND {_PREFIX_BOUNDARY_CYPHER}
               AND {tenant_filter("s")}
             WITH s
             OPTIONAL MATCH (s)-[:CONTAINS]->(c:Section)
