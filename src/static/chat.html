@@ -6,39 +6,39 @@
   <title>Agentic Graph RAG</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&family=PT+Serif:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
-    /* Theme: warm-paper editorial (after tdd.cat's "The Daily Diff" masthead) --
-       cream newsprint ground, oxblood rubric accent, Playfair Display for the
-       masthead/display type, PT Serif for running text and UI labels. */
+    /* Theme: dark indigo SaaS-app look (after a "Quirkle"-style AI chat
+       helper reference) -- near-black panels floating on a soft lavender
+       page background, vivid indigo/purple accent, Inter throughout. */
     :root{
-      --bg0:#f2ecdd;
-      --bg1:#ece4d1;
-      --surface:#faf6ea;
-      --surface-elevated:#f5efdf;
-      --card: rgba(38,28,16,0.035);
-      --border: rgba(38,28,16,0.14);
-      --border-strong: rgba(38,28,16,0.26);
-      --text:#241c14;
-      --text-secondary:#6b5c48;
-      --text-muted:#8c7b64;
-      --accent:#8a2a20;
-      --accent-soft:rgba(138,42,32,0.12);
-      --accent-glow:rgba(138,42,32,0.28);
-      --success:#3f6b3f;
-      --danger:#a3311f;
-      --shadow: 0 2px 10px rgba(38,28,16,0.08), 0 1px 0 rgba(255,255,255,0.5) inset;
-      --shadow-lg: 0 10px 30px rgba(38,28,16,0.12);
-      --radius: 3px;
-      --radius-sm: 2px;
-      --radius-lg: 4px;
+      --bg0:#cdbff2;
+      --bg1:#b6a3ea;
+      --surface:#18151f;
+      --surface-elevated:#201c2c;
+      --card: rgba(255,255,255,0.045);
+      --border: rgba(255,255,255,0.08);
+      --border-strong: rgba(255,255,255,0.16);
+      --text:#f2eefb;
+      --text-secondary:#a99fc6;
+      --text-muted:#786f92;
+      --accent:#6c5ce7;
+      --accent-soft:rgba(108,92,231,0.16);
+      --accent-glow:rgba(108,92,231,0.38);
+      --success:#34d399;
+      --danger:#f87171;
+      --shadow: 0 2px 10px rgba(0,0,0,0.25), 0 1px 0 rgba(255,255,255,0.04) inset;
+      --shadow-lg: 0 25px 70px rgba(15,8,35,0.5);
+      --radius: 10px;
+      --radius-sm: 8px;
+      --radius-lg: 16px;
       --font-size: 15px;
       --font-size-sm: 13px;
       --font-size-xs: 11.5px;
       --line: 1.6;
       --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      --sans: "PT Serif", Georgia, "Times New Roman", serif;
-      --font-display: "Playfair Display", Georgia, serif;
+      --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       --msg-max:  min(720px, 88%);
     }
     *{ box-sizing:border-box; }
@@ -49,9 +49,7 @@
       font-size: var(--font-size);
       line-height: var(--line);
       color: var(--text);
-      background:
-        repeating-linear-gradient(180deg, rgba(38,28,16,0.015) 0px, rgba(38,28,16,0.015) 1px, transparent 1px, transparent 3px),
-        linear-gradient(165deg, var(--bg0) 0%, var(--bg1) 100%);
+      background: linear-gradient(150deg, var(--bg0) 0%, var(--bg1) 100%);
       min-height:100vh;
       display:flex;
       align-items:stretch;
@@ -168,7 +166,7 @@
       font-family: var(--mono);
       font-size: 0.85em;
       color: var(--text);
-      background: rgba(38,28,16,0.08);
+      background: rgba(255,255,255,0.08);
       padding: 1px 5px;
       border-radius: 4px;
     }
@@ -195,12 +193,12 @@
     button.primary{
       border-color: var(--accent);
       background: var(--accent);
-      color: #fdf8ec;
+      color: #ffffff;
       font-weight: 700;
     }
     button.primary:hover:not(:disabled){
-      background: #6e2118;
-      border-color: #6e2118;
+      background: #5b4bd6;
+      border-color: #5b4bd6;
       filter: none;
     }
     button:disabled{
@@ -228,7 +226,7 @@
     .chat-body::-webkit-scrollbar{ width: 8px; }
     .chat-body::-webkit-scrollbar-track{ background: transparent; }
     .chat-body::-webkit-scrollbar-thumb{
-      background: rgba(38,28,16,0.18);
+      background: rgba(255,255,255,0.15);
       border-radius: 4px;
     }
     .welcome-card{
@@ -609,7 +607,7 @@
     .doc-panel-backdrop{
       position: fixed;
       inset: 0;
-      background: rgba(38,28,16,0.35);
+      background: rgba(0,0,0,0.55);
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.2s ease;
@@ -712,12 +710,12 @@
     .feedback-btn:disabled{ opacity: 0.45; cursor: default; }
     .feedback-btn.selected-pass{
       border-color: var(--success);
-      background: rgba(63,107,63,0.12);
+      background: rgba(52,211,153,0.14);
       color: var(--success);
     }
     .feedback-btn.selected-fail{
       border-color: var(--danger);
-      background: rgba(163,49,31,0.12);
+      background: rgba(248,113,113,0.14);
       color: var(--danger);
     }
     .feedback-thanks{ color: var(--text-secondary); font-size: var(--font-size-xs); }
@@ -813,7 +811,7 @@
     .error{
       font-size: var(--font-size-sm);
       color: var(--danger);
-      background: rgba(163,49,31,0.1);
+      background: rgba(248,113,113,0.12);
       border: 1px solid var(--danger);
       padding: 12px 16px;
       border-radius: var(--radius-sm);
@@ -1336,7 +1334,7 @@
           legend: {
             display: isPie,
             position: 'bottom',
-            labels: { color: '#6b5c48', boxWidth: 12, padding: 10 },
+            labels: { color: '#a99fc6', boxWidth: 12, padding: 10 },
           },
           tooltip: {
             callbacks: {
@@ -1355,15 +1353,15 @@
       if (!isPie) {
         options.scales = {
           x: {
-            ticks: { color: '#6b5c48', maxRotation: 45, minRotation: 0 },
-            grid: { color: 'rgba(38,28,16,0.08)' },
+            ticks: { color: '#a99fc6', maxRotation: 45, minRotation: 0 },
+            grid: { color: 'rgba(255,255,255,0.08)' },
           },
           y: {
             ticks: {
-              color: '#6b5c48',
+              color: '#a99fc6',
               callback: (v) => formatChartValue(v, block),
             },
-            grid: { color: 'rgba(38,28,16,0.08)' },
+            grid: { color: 'rgba(255,255,255,0.08)' },
             beginAtZero: true,
           },
         };
