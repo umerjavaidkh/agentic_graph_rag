@@ -80,6 +80,19 @@ def test_check_answer_sanity_lexical_mode_enough_chunks():
         "The document does not mention that detail.",
         "I am unable to locate the exact figure requested.",
         "That data is not in the document corpus; use structured data access.",
+        # Regression: "does not cover" (and other synonymous hedge verbs)
+        # slipped through the original mention/contain/include-only verb
+        # list, and "This document..." (not "The document...") slipped
+        # through the original the-only determiner -- together, this let
+        # a hedge get treated as a confident, on-topic answer instead.
+        # Verified live: this exact phrasing let a structured-data
+        # question's RBAC-denial fallback silently substitute this hedge
+        # for the clear "you don't have permission" message it should
+        # have shown instead.
+        "This document does not cover the specific topic of the top 5 products by sales revenue.",
+        "This document does not cover Example 2.8 Direction of Motion.",
+        "The document does not address that topic.",
+        "The provided sections do not discuss this subject.",
     ],
 )
 def test_check_answer_sanity_hedge_language_flagged(answer):

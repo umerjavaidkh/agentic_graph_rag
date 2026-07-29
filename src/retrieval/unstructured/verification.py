@@ -34,9 +34,16 @@ _ENUMERATION_MIN_CHUNKS = 3  # below this, a "list all X" answer is likely incom
 
 _HEDGE_RE = re.compile(
     r"\b(i (?:could not|couldn't|did not|don't|do not) find|"
-    r"not (?:mentioned|found|present|available) in the (?:provided|document|ingested)|"
+    r"not (?:mentioned|found|present|available|covered|addressed|discussed|described) in the (?:provided|document|ingested)|"
     r"no (?:relevant )?information (?:is |was )?(?:available|found)|"
-    r"the (?:document|text|provided sections?) does(?:n'?t| not) (?:mention|contain|include)|"
+    # Verb alternation deliberately broad -- "does not cover" slipped through
+    # here (only mention/contain/include were listed) and got treated as a
+    # confident, on-topic answer instead of a hedge, which let a structured-
+    # data question's RBAC-denial fallback silently return this instead of
+    # the clear permission-denied message. Verified live: "This document
+    # does not cover the specific topic of the top 5 products by sales
+    # revenue" (a hedge, not a real answer) went undetected.
+    r"(?:the|this) (?:document|text|provided sections?) (?:does(?:n'?t| not)|do(?:n'?t| not)) (?:mention|contain|include|cover|address|discuss|describe|specify|provide)|"
     r"unable to (?:find|locate|determine)|"
     r"not in the document corpus|"
     r"use structured data access|"
