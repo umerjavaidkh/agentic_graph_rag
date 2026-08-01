@@ -113,6 +113,23 @@ def _topk_edge_pairs(
 
 _POSSESSIVE_RE = re.compile(r"[’']s\b")
 _WS_RE_ENTITY = re.compile(r"\s+")
+# Strips a trailing corporate-entity suffix so "Pfizer" and "Pfizer Inc."
+# (or "Apple Inc.", "Chevron Corporation", ...) normalize to the same key
+# and canonicalize together -- found live: entity-frequency analysis of an
+# ingested Pfizer 10-Q showed "pfizer inc." (40.4% of entity-bearing
+# nodes) and "pfizer" (19.2%) as two SEPARATE canonical entities, each
+# individually staying just under the genericity-filter threshold despite
+# jointly referring to the filer's own name in ~60% of nodes -- neither
+# _canonicalize_entities' possessive-stripping nor its 0.92 fuzzy-ratio
+# threshold catches this (a short root word plus a several-character
+# suffix pushes the similarity ratio well below 0.92). General pattern
+# (any all-caps-agnostic company-suffix word), not any specific company
+# name, so it generalizes across the corpus rather than being tuned to
+# this one filer.
+_CORP_SUFFIX_RE = re.compile(
+    r"\s*[,.]?\s*\b(?:incorporated|inc|corporation|corp|company|co|llc|ltd|"
+    r"limited|plc|l\.?p\.?|group|holdings?)\.?\s*$"
+)
 _ENTITY_SIMILARITY_THRESHOLD = 0.92
 _ENTITY_MAX_LEN_DIFF = 6
 _ENTITY_PREFIX_LEN = 4
@@ -159,6 +176,7 @@ def _canonicalize_entities(all_entities: set[str]) -> dict[str, str]:
     normalized: dict[str, str] = {}
     for e in all_entities:
         key = _WS_RE_ENTITY.sub(" ", _POSSESSIVE_RE.sub("", e)).strip()
+        key = _CORP_SUFFIX_RE.sub("", key).strip()
         normalized[e] = key or e
 
     keys = sorted(set(normalized.values()))
@@ -202,6 +220,33 @@ def _canonicalize_entities(all_entities: set[str]) -> dict[str, str]:
         for member in members
     }
     return {e: key_to_canonical[normalized[e]] for e in all_entities}
+
+
+# Below this many entity-bearing nodes, a document-frequency ratio isn't a
+# meaningful signal (a term shared by 2 of 4 nodes is 50% "generic" purely
+# by chance) -- skip the genericity filter entirely rather than let small
+# documents' entities get spuriously excluded.
+_ENTITY_GENERICITY_MIN_NODES = 5
+# An entity mentioned in more than this fraction of a document's
+# entity-bearing nodes doesn't distinguish one section from another within
+# THIS document -- every node "sharing" it makes a SHARES_ENTITY edge built
+# on it meaningless as a link, not just weak (verified live: sampled
+# LLM-judge audits of ingested SEC filings flagged exactly this pattern --
+# edges anchored on "company", "2023", the filer's own name, appearing in
+# most sections of the filing). Same generic-vs-distinctive reasoning
+# already used for lexical ranking (document_resolver.py's IDF-weighted
+# term scoring, LexicalService's IDF keyword ranking) -- applied here to
+# which entities may anchor an edge, not to retrieval scoring.
+_ENTITY_GENERICITY_DF_RATIO = 0.40
+
+
+def _informative_entities(entity_to_nodes: dict[str, list[int]], total_entity_nodes: int) -> set[str]:
+    """Entities NOT too generic (by document-frequency ratio) to anchor a
+    SHARES_ENTITY edge within this document. See constants above for why."""
+    if total_entity_nodes < _ENTITY_GENERICITY_MIN_NODES:
+        return set(entity_to_nodes.keys())
+    max_df = max(1, int(total_entity_nodes * _ENTITY_GENERICITY_DF_RATIO))
+    return {e for e, idxs in entity_to_nodes.items() if len(idxs) <= max_df}
 
 
 # ─────────────────────────────────────────
@@ -423,8 +468,18 @@ class Axis2Builder:
             for e in ents:
                 entity_to_nodes.setdefault(e, []).append(idx)
 
+        # Entities mentioned in most of this document's entity-bearing
+        # nodes ("the Company", the filer's own name, a bare fiscal year)
+        # don't distinguish one section from another -- excluded from
+        # anchoring an edge (and from the reported shared_entities) so a
+        # SHARES_ENTITY link means something more specific than "both
+        # sections are part of the same filing". See _informative_entities.
+        informative = _informative_entities(entity_to_nodes, len(entity_nodes))
+
         pair_counts: dict[Tuple[int, int], int] = {}
-        for idx_list in entity_to_nodes.values():
+        for entity, idx_list in entity_to_nodes.items():
+            if entity not in informative:
+                continue
             for a, b in itertools.combinations(sorted(idx_list), 2):
                 pair_counts[(a, b)] = pair_counts.get((a, b), 0) + 1
 
@@ -432,7 +487,9 @@ class Axis2Builder:
         cap = AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
         for i, j, _count in _cap_edges_by_degree(candidates, cap):
             a, b = entity_nodes[i], entity_nodes[j]
-            shared = node_entity_sets[i] & node_entity_sets[j]
+            shared = (node_entity_sets[i] & node_entity_sets[j]) & informative
+            if not shared:
+                continue
             edges.append(DKGEdge(
                 source_id  = a.id,
                 target_id  = b.id,
