@@ -11,6 +11,7 @@ import logging
 from ....config.settings import EMBEDDING_MODEL, VECTOR_STORE_BACKEND
 from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
+from ....storage.hydrator import BlobHydrator
 from ....storage.vector.factory import get_vector_store
 from ..constants import _GRAPH_REL_TYPES, _TEXT_NODE_LABELS
 from ....model_providers.factory import get_embedding_provider
@@ -111,7 +112,10 @@ class GraphSeedService:
         tenant_id: str = "",
         document_id: str = "",
     ) -> list[dict]:
-        """Similarity search against the external VectorStore, hydrated from Neo4j."""
+        """Similarity search against the external VectorStore, hydrated via
+        blob_key_text (docs/DESIGN_unstructured_graph_v2.md phase 3) --
+        full-text hydration, not search_text, since this is the LLM-context
+        payload and must not lose fidelity vs. today's `n.text` read."""
         try:
             filters: dict = {}
             if tenant_id:
@@ -126,13 +130,13 @@ class GraphSeedService:
                 f"""
                 UNWIND $ids AS nid
                 MATCH (n) WHERE n.id = nid
-                  AND coalesce(n.text, '') <> ''
+                  AND coalesce(n.search_text, '') <> ''
                   AND {lifecycle_active("n")}
                   AND {tenant_filter("n")}
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
-                  coalesce(n.text, '') AS text,
+                  n.blob_key_text AS blob_key_text,
                   coalesce(labels(n)[0], '') AS node_label,
                   n.page_start AS page_start
                 """,
@@ -140,11 +144,12 @@ class GraphSeedService:
                 tenant_id=tenant_id,
             )
             by_id = {r["id"]: r for r in rows if r["id"]}
+            hydrator = BlobHydrator()
             results = [
                 {
                     "id": id,
                     "title": row["title"] or id,
-                    "text": row["text"],
+                    "text": hydrator.hydrate(row["blob_key_text"]),
                     "node_label": row.get("node_label") or "",
                     "page_start": row.get("page_start"),
                     "score": float(scores.get(id, 0.0)),

@@ -15,6 +15,7 @@ from typing import Optional
 from ..config.settings import CHAT_MODEL
 from ..model_providers.factory import get_chat_provider
 from ..storage.blob.factory import get_blob_store
+from ..storage.hydrator import BlobHydrator
 from .ontology_validation import (
     ONTOLOGY_ACCURACY_TARGET,
     extract_toc_ground_truth,
@@ -65,13 +66,19 @@ def _fetch_pdf_bytes(logical_doc_id: str, revision_meta: dict, tenant_id: str) -
 
 
 def _sample_edges(session, logical_doc_id: str, revision_id: str, n: int) -> list[dict]:
+    """Hydrates source/target text from blob_key_text rather than reading
+    `.text` off Neo4j directly (docs/DESIGN_unstructured_graph_v2.md phase
+    3) -- full-text hydration, not search_text, so this scoring pass reads
+    the exact same text pre- and post-migration. score_axis2_idea_linking
+    truncates to [:800] regardless, so identical source text in means
+    identical judge input."""
     rows = session.run(
         """
         MATCH (a)-[r]->(b)
         WHERE a.logical_doc_id = $logical_doc_id AND a.revision_id = $revision_id
           AND type(r) IN $rel_types
-        RETURN a.text AS source_text, b.text AS target_text, type(r) AS rel_type,
-               coalesce(r.properties, '') AS shared
+        RETURN a.blob_key_text AS source_blob_key, b.blob_key_text AS target_blob_key,
+               type(r) AS rel_type, coalesce(r.properties, '') AS shared
         ORDER BY rand()
         LIMIT $n
         """,
@@ -80,7 +87,16 @@ def _sample_edges(session, logical_doc_id: str, revision_id: str, n: int) -> lis
         rel_types=list(_SEMANTIC_REL_TYPES),
         n=n,
     )
-    return [dict(r) for r in rows]
+    hydrator = BlobHydrator()
+    return [
+        {
+            "source_text": hydrator.hydrate(r["source_blob_key"]),
+            "target_text": hydrator.hydrate(r["target_blob_key"]),
+            "rel_type": r["rel_type"],
+            "shared": r["shared"],
+        }
+        for r in rows
+    ]
 
 
 def _sample_entities(session, logical_doc_id: str, revision_id: str, n: int) -> list[dict]:
@@ -88,7 +104,7 @@ def _sample_entities(session, logical_doc_id: str, revision_id: str, n: int) -> 
         """
         MATCH (node) WHERE node.logical_doc_id = $logical_doc_id AND node.revision_id = $revision_id
           AND size(coalesce(node.entities, [])) > 0
-        RETURN node.text AS source_text, node.entities AS entities
+        RETURN node.blob_key_text AS source_blob_key, node.entities AS entities
         ORDER BY rand()
         LIMIT $n
         """,
@@ -96,9 +112,10 @@ def _sample_entities(session, logical_doc_id: str, revision_id: str, n: int) -> 
         revision_id=revision_id,
         n=n,
     )
+    hydrator = BlobHydrator()
     out: list[dict] = []
     for r in rows:
-        text = r["source_text"]
+        text = hydrator.hydrate(r["source_blob_key"])
         for ent in r["entities"] or []:
             out.append({"source_text": text, "entity": ent})
     random.shuffle(out)

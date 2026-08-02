@@ -93,3 +93,6 @@ class QdrantVectorStore(VectorStore):
             collection_name=self.collection_name,
             points_selector=FilterSelector(filter=query_filter),
         )
+
+    def point_id_for(self, node_id: str) -> str:
+        return _point_id(node_id)

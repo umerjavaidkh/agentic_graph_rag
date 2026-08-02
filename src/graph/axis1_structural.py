@@ -82,6 +82,36 @@ def _region_title(kind: str, text: str, pdf_page: int, index: int) -> str:
     return f"{label} {index} (PDF page {pdf_page})"
 
 
+# Chunk-bounded text kept on Neo4j nodes for Lucene/IDF lexical matching
+# once `text` itself is no longer written there (docs/DESIGN_unstructured_
+# graph_v2.md phase 3). Generous vs. the 800-char LLM-judge truncation
+# ontology_validation.py already applies, so lexical predicates see
+# meaningfully more than the judge does.
+_SEARCH_TEXT_CHAR_BUDGET = 2000
+
+
+def _derive_search_text(
+    title: str, page_buckets: dict[int, list[str]], page_start: int, page_end: int
+) -> str:
+    """Chunk-bounded body text for a Chapter/Section node -- same page-range
+    walk as the full aggregated `.text` these nodes already build, capped at
+    _SEARCH_TEXT_CHAR_BUDGET instead of unbounded. Page/Region nodes don't
+    need this: their `.text` is already chunk-sized (one StructuralChunker
+    chunk per page), so `search_text = text` verbatim there, zero loss."""
+    parts: list[str] = []
+    budget = _SEARCH_TEXT_CHAR_BUDGET
+    for pno in range(page_start, page_end + 1):
+        for chunk_text in page_buckets.get(pno, []):
+            if budget <= 0:
+                break
+            parts.append(chunk_text[:budget])
+            budget -= len(chunk_text)
+        if budget <= 0:
+            break
+    body = "\n\n".join(p for p in parts if p.strip())
+    return f"{title}\n\n{body}".strip() if body else title
+
+
 def _page_buckets_from_chunks(chunks: list[Chunk]) -> dict[int, list[str]]:
     """Page node bodies build from `chunks`, not directly from
     `DocumentIR.pages` -- the default StructuralChunker is informationally
@@ -130,6 +160,7 @@ class Axis1StructuralBuilder:
             type=NodeType.DOCUMENT,
             title=doc_name,
             text=doc_name,
+            search_text=doc_name,
             order=0,
             page_start=1,
             page_end=max(1, page_count),
@@ -207,6 +238,7 @@ class Axis1StructuralBuilder:
                 body_parts.extend(page_buckets.get(pno, []))
             body_text = "\n\n".join(t for t in body_parts if t.strip())
             full_text = f"{title}\n\n{body_text}".strip() if body_text else title
+            search_text = _derive_search_text(title, page_buckets, page_start, page_end)
 
             doc_order += 1
             while len(heading_stack) > 1 and heading_stack[-1][0] >= level:
@@ -222,6 +254,7 @@ class Axis1StructuralBuilder:
                     type=NodeType.CHAPTER,
                     title=title,
                     text=full_text,
+                    search_text=search_text,
                     order=doc_order,
                     page_start=page_start,
                     page_end=page_end,
@@ -238,6 +271,7 @@ class Axis1StructuralBuilder:
                     type=NodeType.SECTION,
                     title=title,
                     text=full_text,
+                    search_text=search_text,
                     order=doc_order,
                     page_start=page_start,
                     page_end=page_end,
@@ -291,6 +325,7 @@ class Axis1StructuralBuilder:
             type=NodeType.DOCUMENT,
             title=doc_name,
             text=doc_name,
+            search_text=doc_name,
             order=0,
             page_start=1,
             page_end=max(1, page_count),
@@ -423,6 +458,7 @@ class Axis1StructuralBuilder:
                         type=NodeType.CHAPTER,
                         title=title,
                         text=title,
+                        search_text=title,
                         order=doc_order,
                         page_start=page_no,
                         page_end=page_no,
@@ -460,6 +496,7 @@ class Axis1StructuralBuilder:
                         type=NodeType.SECTION,
                         title=full_title,
                         text=full_title,
+                        search_text=full_title,
                         order=doc_order,
                         page_start=page_no,
                         page_end=page_no,
@@ -494,6 +531,7 @@ class Axis1StructuralBuilder:
                     type=NodeType.SECTION,
                     title="Preamble",
                     text="",
+                    search_text="Preamble",
                     order=doc_order,
                     page_start=page_no,
                     page_end=page_no,
@@ -517,6 +555,18 @@ class Axis1StructuralBuilder:
 
         finalize_section()
         self._enrich_box_sections_from_pages(section_nodes, page_buckets)
+
+        # Chapter/Section page ranges keep growing as blocks stream in
+        # (page_end extended at lines above right up to the last block of
+        # each), so search_text can only be derived once every node's final
+        # page_start/page_end is settled -- one pass over both lists here,
+        # rather than threading it through finalize_section (which only
+        # ever closes out the SECTION half of this, chapters have no
+        # equivalent finalize step in this heuristic path).
+        for node in chapter_nodes + section_nodes:
+            node.search_text = _derive_search_text(
+                node.title, page_buckets, node.page_start, node.page_end
+            )
 
         all_page_numbers = set(range(1, page_count + 1)) | set(page_buckets.keys())
         page_nodes = self._build_page_nodes(
@@ -699,6 +749,7 @@ class Axis1StructuralBuilder:
                     type=NodeType.REGION,
                     title=title,
                     text=text or title,
+                    search_text=text or title,
                     order=idx,
                     page_start=page_no,
                     page_end=page_no,
@@ -772,11 +823,13 @@ class Axis1StructuralBuilder:
         for page_no in page_nos:
             texts = page_buckets.get(page_no, [])
             node_id = f"{document_id}_page_{page_no}"
+            page_text = "\n".join(texts) if texts else ""
             node = DKGNode(
                 id=node_id,
                 type=NodeType.PAGE,
                 title=f"Page {page_no}",
-                text="\n".join(texts) if texts else "",
+                text=page_text,
+                search_text=page_text,
                 order=page_no,
                 page_start=page_no,
                 page_end=page_no,

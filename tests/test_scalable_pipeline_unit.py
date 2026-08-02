@@ -96,6 +96,8 @@ for _n in [
 _factory_mock = MagicMock()
 sys.modules["src.model_providers.base"].ModelProvider = object
 sys.modules["src.model_providers.factory"].get_model_provider = _factory_mock
+sys.modules["src.model_providers.factory"].get_chat_provider = _factory_mock
+sys.modules["src.model_providers.factory"].get_embedding_provider = _factory_mock
 sys.modules["src.model_providers"].get_model_provider = _factory_mock
 
 # --- auth stubs ---
@@ -124,13 +126,18 @@ for _n in [
     "src.document.parser_base",
     "src.document.parser_registry",
     "src.document.page_vision",
+    "src.document.graph_snapshot",
 ]:
     _stub_module(_n)
 sys.modules["src.document.parser_base"].DocumentParser = object
+sys.modules["src.document.graph_snapshot"].X1_STAGE = "x1_structural"
+sys.modules["src.document.graph_snapshot"].X2_STAGE = "x2_semantic"
+sys.modules["src.document.graph_snapshot"].write_snapshot = MagicMock()
 sys.modules["src.document.versioning"].resolve_logical_id = MagicMock(return_value="doc_test")
 sys.modules["src.document.versioning"].build_revision_plan = MagicMock()
 sys.modules["src.document.versioning"].apply_revision_to_graph = MagicMock(return_value=([], []))
 sys.modules["src.document.versioning"].file_content_sha256 = MagicMock(return_value="abc123")
+sys.modules["src.document.versioning"].source_file_blob_key = MagicMock(return_value="blob/key")
 # DocumentRevisionPlan as a simple MagicMock class (exporter.py uses it only as a type annotation)
 sys.modules["src.document.versioning"].DocumentRevisionPlan = MagicMock
 
@@ -200,6 +207,40 @@ _ing_pkg.IngestionManager = MagicMock()
 _ing_pkg.IngestionJob = _IngestionJob
 _ing_pkg.__path__ = [str(_root / "src" / "ingestion")]
 _ing_pkg.__package__ = "src.ingestion"
+
+_STUBBED_MODULE_NAMES = (
+    "neo4j", "neo4j.exceptions",
+    "fastapi", "fastapi.responses", "fastapi.staticfiles",
+    "pydantic", "openai", "langgraph", "langgraph.graph",
+    "sklearn", "sklearn.cluster",
+    "src.model_providers", "src.model_providers.base",
+    "src.model_providers.factory", "src.model_providers.openai_provider",
+    "src.auth", "src.auth.rbac_setup", "src.auth.roles",
+    "src.document", "src.document.versioning", "src.document.light",
+    "src.document.light.parser", "src.document.parser_base",
+    "src.document.parser_registry", "src.document.page_vision",
+    "src.document.graph_snapshot",
+    "src.graph", "src.graph.constants", "src.graph.driver",
+    "src.bridge", "src.conversation", "src.routing", "src.router",
+    "src.ingestion.service", "src.ingestion",
+)
+
+
+def teardown_module(module) -> None:
+    """Remove this file's fake stand-ins once its own tests are done, so a
+    test file collected afterward gets a clean sys.modules and can import
+    the real neo4j/fastapi/src.document/src.graph/etc. if it needs them —
+    otherwise whichever of those modules this file stubbed stays faked
+    (or, worse, a bare non-package ModuleType with no __path__) for every
+    test that runs later in the same pytest process. Same fix as
+    test_ingestion_manager_di_unit.py's own teardown_module, applied here
+    after this file's stub list quietly drifted out of sync with what
+    src/ingestion/service.py actually imports (missing
+    src.document.graph_snapshot, source_file_blob_key, get_chat_provider)
+    and, separately, was found leaking a fake src.graph package into
+    tests/test_search_text_derivation_unit.py's collection."""
+    for _n in _STUBBED_MODULE_NAMES:
+        sys.modules.pop(_n, None)
 
 
 # ── Test 1: InMemoryJobStore round-trip ──────────────────────────────────────
@@ -569,6 +610,9 @@ class _FakeVectorStore:
 
     def query(self, embedding, top_k=10, *, filters=None):
         return []
+
+    def point_id_for(self, node_id):
+        return f"point_{node_id}"
 
     def delete(self, id):
         pass

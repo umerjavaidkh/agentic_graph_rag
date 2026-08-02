@@ -1,10 +1,12 @@
 """
 tests/test_graph_seeds_vector_store_unit.py — GraphSeedService VectorStore read path.
 
-Covers the Phase 4 read-side wiring: when VECTOR_STORE_BACKEND == "qdrant",
+Covers the read-side wiring: when VECTOR_STORE_BACKEND == "qdrant",
 vector_seed dispatches to the external VectorStore instead of Neo4j's
-native vector index, and hydrates title/text/node_label from Neo4j for the
-matched ids.
+native vector index, and hydrates title/node_label from Neo4j plus full
+text via BlobHydrator (docs/DESIGN_unstructured_graph_v2.md phase 3 --
+text moved off `n.text` to blob storage, hydrated via `n.blob_key_text`)
+for the matched ids.
 
 Originally written against mixins/graph_seeds.py's GraphSeedsMixin, before
 the loosely-coupled retrieval refactor extracted this into a standalone
@@ -48,6 +50,17 @@ def service() -> GraphSeedService:
     return GraphSeedService(RankingService())
 
 
+class _FakeHydrator:
+    """Stands in for BlobHydrator -- maps a blob_key straight to a
+    deterministic string instead of hitting a real blob store, so these
+    tests can assert on hydrated `text` without a BlobStore dependency."""
+
+    def hydrate(self, blob_key, fallback=""):
+        if not blob_key:
+            return fallback
+        return f"hydrated:{blob_key}"
+
+
 def test_vector_seed_via_vector_store_hydrates_from_neo4j(service, monkeypatch):
     fake_store = type(
         "FakeVectorStore",
@@ -55,11 +68,12 @@ def test_vector_seed_via_vector_store_hydrates_from_neo4j(service, monkeypatch):
         {"query": lambda self, embedding, top_k=10, filters=None: [("id1", 0.9), ("id2", 0.5)]},
     )()
     monkeypatch.setattr(graph_seeds_mod, "get_vector_store", lambda: fake_store)
+    monkeypatch.setattr(graph_seeds_mod, "BlobHydrator", _FakeHydrator)
 
     session = _FakeSession(
         [
-            {"id": "id1", "title": "Title 1", "text": "Text 1", "node_label": "Section"},
-            {"id": "id2", "title": "Title 2", "text": "Text 2", "node_label": "Section"},
+            {"id": "id1", "title": "Title 1", "blob_key_text": "blob/id1", "node_label": "Section"},
+            {"id": "id2", "title": "Title 2", "blob_key_text": "blob/id2", "node_label": "Section"},
         ]
     )
 
@@ -67,7 +81,9 @@ def test_vector_seed_via_vector_store_hydrates_from_neo4j(service, monkeypatch):
 
     assert [r["id"] for r in results] == ["id1", "id2"]
     assert results[0]["score"] == 0.9
-    assert results[0]["text"] == "Text 1"
+    # text comes from BlobHydrator.hydrate(blob_key_text), not a raw Cypher
+    # column -- this is the actual regression test for the phase-3 rewire.
+    assert results[0]["text"] == "hydrated:blob/id1"
     # Two consecutive WHERE clauses on the same MATCH is a Cypher syntax error
     # (`_FakeSession` never validates the query, so this regressed silently
     # until exercised against a real Neo4j) -- must be a single WHERE with AND.
@@ -92,9 +108,12 @@ def test_vector_seed_via_vector_store_drops_ids_missing_from_neo4j(service, monk
         {"query": lambda self, *a, **k: [("id1", 0.9), ("stale_id", 0.8)]},
     )()
     monkeypatch.setattr(graph_seeds_mod, "get_vector_store", lambda: fake_store)
+    monkeypatch.setattr(graph_seeds_mod, "BlobHydrator", _FakeHydrator)
 
     # Neo4j only returns id1 — stale_id has no matching node (e.g. purged on supersede).
-    session = _FakeSession([{"id": "id1", "title": "T", "text": "Text", "node_label": "Section"}])
+    session = _FakeSession(
+        [{"id": "id1", "title": "T", "blob_key_text": "blob/id1", "node_label": "Section"}]
+    )
     results = service.vector_seed_via_vector_store(session, [0.1, 0.2], limit=5)
 
     assert [r["id"] for r in results] == ["id1"]

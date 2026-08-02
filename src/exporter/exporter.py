@@ -335,6 +335,7 @@ class Neo4jExporter:
                 )
                 self.blob_store.put(node.blob_key_visual, node.visual_content)
             if node.embedding:
+                node.vector_id = self.vector_store.point_id_for(node.id)
                 vector_items.append(
                     (
                         node.id,
@@ -356,6 +357,14 @@ class Neo4jExporter:
             "id": node.id,
             "title": node.title,
             "text": node.text,
+            # search_text/vector_id: phase-3 lean-storage plumbing (docs/
+            # DESIGN_unstructured_graph_v2.md). Dual-written alongside
+            # `text` for now -- `text` itself isn't dropped from this dict
+            # until the write-side strip step, once every WHERE-clause
+            # predicate that reads `.text` has been repointed at
+            # `search_text` and verified.
+            "search_text": node.search_text,
+            "vector_id": node.vector_id,
             "order": node.order,
             "page_start": node.page_start,
             "page_end": node.page_end,
