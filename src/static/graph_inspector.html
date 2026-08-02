@@ -80,6 +80,21 @@
 
     .legend { margin-top: 1.5rem; padding-top: 0.9rem; border-top: 1px solid #e2e8f0; }
     .legend-item { display: flex; align-items: center; font-size: 0.78rem; color: #475569; margin-bottom: 0.3rem; }
+
+    .quality { margin-top: 1.5rem; padding-top: 0.9rem; border-top: 1px solid #e2e8f0; }
+    .quality .row { display: flex; gap: 0.5rem; }
+    .quality button { margin-top: 0; padding: 0.5rem 0.6rem; font-size: 0.78rem; }
+    .quality-score { margin-top: 0.75rem; padding: 0.6rem 0.7rem; border-radius: 8px; font-size: 0.8rem; }
+    .quality-score.pass { background: #f0fdf4; border: 1px solid #bbf7d0; }
+    .quality-score.fail { background: #fef2f2; border: 1px solid #fecaca; }
+    .quality-score .qs-row { display: flex; justify-content: space-between; padding: 0.1rem 0; }
+    .quality-score .qs-row .k { color: #64748b; }
+    .quality-score .qs-row .v { font-weight: 700; }
+    .quality-score .qs-badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.68rem; font-weight: 700; color: #fff; margin-left: 0.4rem; }
+    .quality-score .qs-badge.pass { background: #16a34a; }
+    .quality-score .qs-badge.fail { background: #dc2626; }
+    .quality-score .qs-examples { margin-top: 0.4rem; font-size: 0.72rem; color: #7f1d1d; }
+    .quality-score .qs-examples li { margin-bottom: 0.15rem; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -121,6 +136,16 @@
         <div class="stat-row"><span class="k">Edges</span><span class="v" id="stat_edges">0</span></div>
         <div class="breakdown" id="node_breakdown"></div>
         <div class="breakdown" id="edge_breakdown"></div>
+      </div>
+
+      <div class="quality">
+        <div style="font-size:0.78rem;font-weight:700;color:#374151;margin-bottom:0.4rem;">Quality (docs/DESIGN_unstructured_graph_v2.md gate, &ge;90%)</div>
+        <div class="row">
+          <button class="secondary" id="check_axis1_btn" type="button" title="Free — pure Cypher + local PDF parsing">Check X1 (free)</button>
+          <button class="secondary" id="check_axis2_btn" type="button" title="Costs one small LLM call per sampled edge/entity">Check X2 (LLM cost)</button>
+        </div>
+        <div class="hint" id="quality_hint">Scored on demand — never runs automatically.</div>
+        <div id="quality_result"></div>
       </div>
 
       <div class="legend">
@@ -165,6 +190,7 @@
     const NODE_RADIUS = { Document: 12, Chapter: 8.5, Section: 5.5, Page: 4, Region: 5, Concept: 5.5, DocRevision: 4.5 };
 
     let currentSnapshot = null;
+    let currentQualityReport = {};  // merged axis1/axis2 results, keyed per doc so switching docs doesn't show stale scores
     let currentStage = 'x1_structural';
     let currentZoom = null;   // d3.zoom behavior, kept so the +/- buttons can drive it
     let currentSvg = null;
@@ -251,6 +277,70 @@
       } finally {
         btn.disabled = false;
         btn.textContent = 'Load graph';
+      }
+    }
+
+    function renderQualityScore(report) {
+      const box = document.getElementById('quality_result');
+      const a1 = report.axis1, a2 = report.axis2;
+      const passClass = report.passes_gate ? 'pass' : 'fail';
+      const badge = (ok) => `<span class="qs-badge ${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</span>`;
+      let html = `<div class="quality-score ${passClass}">`;
+      if (a1) {
+        html += `<div class="qs-row"><span class="k">Axis-1 (${a1.method})</span><span class="v">${(a1.score * 100).toFixed(1)}%${badge(a1.score >= 0.9)}</span></div>`;
+        html += `<div class="qs-row"><span class="k">Matched</span><span class="v">${a1.matched}/${a1.total_ground_truth}</span></div>`;
+      }
+      if (a2) {
+        html += `<div class="qs-row"><span class="k">Axis-2 (idea-linking)</span><span class="v">${(a2.score * 100).toFixed(1)}%${badge(a2.score >= 0.9)}</span></div>`;
+        html += `<div class="qs-row"><span class="k">Edge precision</span><span class="v">${a2.edge_precision ?? '—'}</span></div>`;
+        html += `<div class="qs-row"><span class="k">Entity grounding</span><span class="v">${a2.entity_grounding_precision ?? '—'}</span></div>`;
+        html += `<div class="qs-row"><span class="k">Sampled</span><span class="v">${a2.sampled_edges} edges, ${a2.sampled_entities} entities</span></div>`;
+        if (a2.invalid_examples && a2.invalid_examples.length) {
+          html += `<div class="qs-examples">Flagged as not meaningfully connected:<ul>` +
+            a2.invalid_examples.slice(0, 3).map(ex => `<li>${ex}</li>`).join('') + `</ul></div>`;
+        }
+      }
+      html += `</div>`;
+      box.innerHTML = html;
+    }
+
+    async function checkOntologyScore(axis1Only, axis2Only) {
+      const docId = document.getElementById('doc_picker').value;
+      if (!docId) { showError('Pick a document first.'); return; }
+      showError('');
+      const btn = document.getElementById(axis1Only ? 'check_axis1_btn' : 'check_axis2_btn');
+      const otherBtn = document.getElementById(axis1Only ? 'check_axis2_btn' : 'check_axis1_btn');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      otherBtn.disabled = true;
+      btn.textContent = 'Scoring…';
+      document.getElementById('quality_hint').textContent =
+        axis2Only ? 'Running LLM-judge sample — this makes real API calls.' : 'Scored on demand — never runs automatically.';
+      try {
+        const c = ctx();
+        const params = { user_id: c.user_id, role: c.role, axis1_only: axis1Only, axis2_only: axis2Only };
+        const resp = await fetch(`/documents/${encodeURIComponent(docId)}/ontology-score?${qs(params)}`);
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({}));
+          throw new Error(body.detail || `${resp.status} ${resp.statusText}`);
+        }
+        const report = await resp.json();
+        // Merge into whatever was already scored for THIS doc, so
+        // checking axis2 after axis1 (or vice versa) shows both
+        // together instead of the second call wiping the first out.
+        if (currentQualityReport.logical_doc_id !== docId) currentQualityReport = { logical_doc_id: docId };
+        if (report.axis1) currentQualityReport.axis1 = report.axis1;
+        if (report.axis2) currentQualityReport.axis2 = report.axis2;
+        currentQualityReport.passes_gate =
+          (currentQualityReport.axis1 ? currentQualityReport.axis1.score >= 0.9 : true) &&
+          (currentQualityReport.axis2 ? currentQualityReport.axis2.score >= 0.9 : true);
+        renderQualityScore(currentQualityReport);
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        btn.disabled = false;
+        otherBtn.disabled = false;
+        btn.textContent = originalText;
       }
     }
 
@@ -647,6 +737,8 @@
     document.getElementById('show_edge_labels').addEventListener('change', (e) => {
       if (currentEdgeLabelSel) currentEdgeLabelSel.style('display', e.target.checked ? null : 'none');
     });
+    document.getElementById('check_axis1_btn').addEventListener('click', () => checkOntologyScore(true, false));
+    document.getElementById('check_axis2_btn').addEventListener('click', () => checkOntologyScore(false, true));
 
     loadDocPicker();
   </script>

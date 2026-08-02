@@ -1035,6 +1035,49 @@ async def get_document_graph_final(
     )
 
 
+@app.get("/documents/{logical_doc_id}/ontology-score")
+async def get_document_ontology_score(
+    logical_doc_id: str,
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+    axis1_only: bool = Query(False, description="Skip axis2 (no LLM calls, free/fast)"),
+    axis2_only: bool = Query(False, description="Skip axis1"),
+    sample_size: int = Query(15, ge=1, le=50, description="Axis-2 sample size (edges + entities)"),
+):
+    """
+    Measured ontology-accuracy score for this document, per
+    docs/DESIGN_unstructured_graph_v2.md's >=90% gate -- axis1
+    (structural, free) scored against the PDF's own embedded outline or
+    structural invariants; axis2 (idea-linking) via sampled LLM-judge
+    precision (real cost: one small call per sampled edge/entity, hence
+    both the opt-in axis1_only/axis2_only flags and the capped
+    sample_size -- this is meant to be triggered explicitly from the
+    Graph Inspector's Quality panel, not run automatically).
+    """
+    resolve_admin_session(
+        authorization=authorization, body_user_id=user_id, body_role=role, body_tenant_id=tenant_id,
+    )
+    if axis1_only and axis2_only:
+        raise HTTPException(status_code=400, detail="axis1_only and axis2_only are mutually exclusive")
+
+    from .document.ontology_report import run_for_doc
+
+    driver = get_neo4j_driver()
+    loop = asyncio.get_running_loop()
+    report = await loop.run_in_executor(
+        _query_executor,
+        lambda: run_for_doc(
+            driver, logical_doc_id, sample_size,
+            skip_axis1=axis2_only, skip_axis2=axis1_only,
+        ),
+    )
+    if not report.get("found"):
+        raise HTTPException(status_code=404, detail=f"No document found for {logical_doc_id!r}")
+    return report
+
+
 @app.get("/ingest/queue/status")
 async def ingest_queue_status(
     authorization: Optional[str] = Header(default=None),
