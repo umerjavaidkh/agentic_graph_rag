@@ -1,13 +1,14 @@
 """
 tests/test_parser_item_heading_hierarchy_unit.py — SEC "Item N[Letter]"
-headings nest correctly through the full LightPdfParser structure-building
-pipeline (_build_from_extracts + _link_number_hierarchy), not just at the
-patterns.py helper-function level.
+headings nest correctly through the full structure-building pipeline
+(Axis1StructuralBuilder._build_from_extracts + _link_number_hierarchy),
+not just at the patterns.py helper-function level.
 
 RtldocPdfParser and TableAwarePdfParser both subclass LightPdfParser and
-only override page-extraction, inheriting this structure-building logic
-unchanged -- this test exercises the shared code path all three backends
-actually run.
+only override page-extraction; Axis1StructuralBuilder (moved out of
+LightPdfParser in docs/DESIGN_unstructured_graph_v2.md phase 2) is the
+one shared construction implementation all three backends' IR ultimately
+runs through -- this test exercises that shared code path.
 
 Run with:
     python -m pytest tests/test_parser_item_heading_hierarchy_unit.py -v
@@ -22,6 +23,8 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from src.document.light.parser import LightPdfParser, _PageExtract, _PdfBlock
+from src.graph.axis1_structural import Axis1StructuralBuilder
+from src.graph.chunker import StructuralChunker
 from src.models import NodeType, RelType
 
 
@@ -55,7 +58,9 @@ def test_item_1a_nests_under_item_1():
     ]
 
     parser = LightPdfParser()
-    nodes, edges = parser._build_from_extracts(extracts, "sample-10k", page_count=3)
+    ir = parser._to_document_ir(extracts, toc=None, source_name="sample-10k", page_count=3)
+    chunks = StructuralChunker().chunk(ir)
+    nodes, edges = Axis1StructuralBuilder()._build_from_extracts(ir, chunks)
 
     # Chapter titles are the content-derived title only ("Business"), not
     # prefixed with the section number the way section titles are -- the

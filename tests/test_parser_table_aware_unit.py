@@ -265,12 +265,17 @@ def test_does_not_flag_repeated_text_at_varying_vertical_position():
 
 
 def test_repeated_header_veto_wired_into_is_heading():
+    """is_repeated_header now travels via Block.extra (_block_to_ir),
+    read by Axis1StructuralBuilder's single collapsed _is_heading rather
+    than a per-class TableAwarePdfParser._is_heading override."""
     from src.document.light.parser import _PdfBlock
+    from src.graph.axis1_structural import Axis1StructuralBuilder
 
     block = _PdfBlock(text="Table of Contents", page=5, bbox=[10.0, 20.0, 200.0, 30.0])
     block.is_repeated_header = True
     parser = TableAwarePdfParser()
-    assert parser._is_heading(block, font_threshold=999.0) is False
+    ir_block = parser._block_to_ir(block)
+    assert Axis1StructuralBuilder()._is_heading(ir_block, font_threshold=999.0) is False
 
 
 def test_short_document_skips_repeat_detection():

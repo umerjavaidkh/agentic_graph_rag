@@ -37,6 +37,18 @@ def _drop_fake_document_stubs() -> None:
 
 
 from src.document.rtldoc_backend.parser import RtldocPdfParser
+from src.graph.axis1_structural import Axis1StructuralBuilder
+
+
+def _is_heading(pdf_block, font_threshold: float, *, parser: RtldocPdfParser | None = None) -> bool:
+    """Heading detection now happens in two steps -- a backend's
+    _block_to_ir stamps hints (role classification, veto flags) onto the
+    IR Block, and Axis1StructuralBuilder._is_heading reads them -- rather
+    than one per-class _is_heading override. This helper chains both
+    steps so the tests below can still express "is this _PdfBlock a
+    heading?" in one call."""
+    ir_block = (parser or RtldocPdfParser())._block_to_ir(pdf_block)
+    return Axis1StructuralBuilder()._is_heading(ir_block, font_threshold)
 
 
 # ── registry wiring ───────────────────────────────────────────────────────
@@ -82,7 +94,7 @@ def test_heading_role_becomes_a_heading_regardless_of_font_size():
         [_rtl_block("heading", "5.1 Forces")], page_no=1, page=None
     )
     assert len(blocks) == 1
-    assert parser._is_heading(blocks[0], font_threshold=999.0) is True
+    assert _is_heading(blocks[0], font_threshold=999.0, parser=parser) is True
 
 
 def test_passage_role_is_not_a_heading():
@@ -92,7 +104,7 @@ def test_passage_role_is_not_a_heading():
         page_no=1,
         page=None,
     )
-    assert parser._is_heading(blocks[0], font_threshold=999.0) is False
+    assert _is_heading(blocks[0], font_threshold=999.0, parser=parser) is False
 
 
 def test_table_and_figure_roles_become_regions():
@@ -192,7 +204,7 @@ def test_rtldoc_missed_heading_rescued_by_font_geometry():
     )
     # font_threshold=10.5 mirrors _heading_font_threshold's median(9.0)+1.5
     # for this document's actual body-text size.
-    assert parser._is_heading(blocks[0], font_threshold=10.5) is True
+    assert _is_heading(blocks[0], font_threshold=10.5, parser=parser) is True
 
 
 def test_rtldoc_passage_role_with_body_sized_font_stays_not_a_heading():
@@ -209,7 +221,7 @@ def test_rtldoc_passage_role_with_body_sized_font_stays_not_a_heading():
         page_no=1,
         page=None,
     )
-    assert parser._is_heading(blocks[0], font_threshold=10.5) is False
+    assert _is_heading(blocks[0], font_threshold=10.5, parser=parser) is False
 
 
 def test_pymupdf_sourced_block_falls_back_to_base_heading_heuristic():
@@ -222,7 +234,7 @@ def test_pymupdf_sourced_block_falls_back_to_base_heading_heuristic():
     block = _PdfBlock(text="CHAPTER ONE", page=1, bold=True, max_font_size=20.0, source="pymupdf")
     # Should not raise, and should defer to LightPdfParser's own heuristic
     # (a bold, large, short, all-caps line clears its heading bar).
-    assert parser._is_heading(block, font_threshold=10.0) is True
+    assert _is_heading(block, font_threshold=10.0, parser=parser) is True
 
 
 # ── per-page fallback when rtldoc declines a page ────────────────────────

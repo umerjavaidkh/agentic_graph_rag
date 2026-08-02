@@ -19,7 +19,7 @@ _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from src.document.light.parser import LightPdfParser
+from src.graph.axis1_structural import Axis1StructuralBuilder
 from src.models import DKGEdge, DKGNode, NodeType, RelType
 
 
@@ -39,8 +39,7 @@ def test_table_reference_resolves_to_region_node():
     nodes = [section, table]
     edges: list[DKGEdge] = []
 
-    parser = LightPdfParser()
-    parser._detect_reference_edges(nodes, edges)
+    Axis1StructuralBuilder()._detect_reference_edges(nodes, edges)
 
     refs = [e for e in edges if e.rel_type == RelType.REFERENCES]
     assert len(refs) == 1
@@ -54,8 +53,7 @@ def test_figure_reference_resolves_to_region_node():
     nodes = [section, figure]
     edges: list[DKGEdge] = []
 
-    parser = LightPdfParser()
-    parser._detect_reference_edges(nodes, edges)
+    Axis1StructuralBuilder()._detect_reference_edges(nodes, edges)
 
     refs = [e for e in edges if e.rel_type == RelType.REFERENCES]
     assert len(refs) == 1
@@ -69,8 +67,7 @@ def test_no_matching_table_number_produces_no_edge():
     nodes = [section, table]
     edges: list[DKGEdge] = []
 
-    parser = LightPdfParser()
-    parser._detect_reference_edges(nodes, edges)
+    Axis1StructuralBuilder()._detect_reference_edges(nodes, edges)
 
     assert edges == []
 
@@ -82,8 +79,7 @@ def test_chapter_section_aliasing_still_works():
     nodes = [section_a, section_b]
     edges: list[DKGEdge] = []
 
-    parser = LightPdfParser()
-    parser._detect_reference_edges(nodes, edges)
+    Axis1StructuralBuilder()._detect_reference_edges(nodes, edges)
 
     refs = [e for e in edges if e.rel_type == RelType.REFERENCES]
     assert len(refs) == 1
@@ -97,8 +93,7 @@ def test_decimal_table_number_resolves():
     nodes = [section, table]
     edges: list[DKGEdge] = []
 
-    parser = LightPdfParser()
-    parser._detect_reference_edges(nodes, edges)
+    Axis1StructuralBuilder()._detect_reference_edges(nodes, edges)
 
     refs = [e for e in edges if e.rel_type == RelType.REFERENCES]
     assert len(refs) == 1

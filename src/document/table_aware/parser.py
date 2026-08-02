@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import fitz
 
+from ..ir import Block
 from ..light.parser import LightPdfParser, _PageExtract, _PdfBlock
 
 # Safety ceiling on how far a table region gets padded upward to catch
@@ -109,14 +110,19 @@ class TableAwarePdfParser(LightPdfParser):
                 return True
         return False
 
-    def _is_heading(self, block: _PdfBlock, font_threshold: float) -> bool:
-        if block.in_table_region:
-            return False
-        if block.is_repeated_header:
-            return False
-        if self._looks_like_table_fragment(block.text):
-            return False
-        return super()._is_heading(block, font_threshold)
+    def _block_to_ir(self, b: _PdfBlock) -> Block:
+        """in_table_region/is_repeated_header already transfer via the base
+        _block_to_ir (LightPdfParser -- both are named _PdfBlock fields,
+        not table_aware-specific). Only the table-fragment text heuristic
+        (digit-dominant merged row fragments) needs stamping here -- the
+        other two vetoes used to live in a per-class `_is_heading`
+        override alongside this one; moved to Axis1StructuralBuilder's
+        single collapsed _is_heading (src/graph/axis1_structural.py),
+        which reads all three from Block.extra."""
+        ir_block = super()._block_to_ir(b)
+        if self._looks_like_table_fragment(b.text):
+            ir_block.extra["table_fragment"] = True
+        return ir_block
 
     @staticmethod
     def _looks_like_table_fragment(text: str) -> bool:

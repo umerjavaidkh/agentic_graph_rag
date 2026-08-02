@@ -1,7 +1,13 @@
 """
 tests/test_parser_toc_based_structure_unit.py — embedded-PDF-outline-based
 chapter/section structure building (LightPdfParser._usable_toc /
-_build_from_toc).
+Axis1StructuralBuilder._build_from_toc).
+
+_build_from_toc moved from LightPdfParser to Axis1StructuralBuilder
+(docs/DESIGN_unstructured_graph_v2.md phase 2) -- these tests now build a
+DocumentIR from the same _PageExtract fixtures via LightPdfParser's own
+_to_document_ir (unchanged) and call the new builder, rather than calling
+a since-removed method on LightPdfParser directly.
 
 Built in response to font-size/regex heading heuristics misclassifying
 equation fragments, exercise prompts, and repeated running headers as new
@@ -35,6 +41,8 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from src.document.light.parser import LightPdfParser, _PageExtract, _PdfBlock
+from src.graph.axis1_structural import Axis1StructuralBuilder
+from src.graph.chunker import StructuralChunker
 from src.models import NodeType
 
 
@@ -45,6 +53,12 @@ def _extract(page_num: int, text: str) -> _PageExtract:
 
 def _parser() -> LightPdfParser:
     return LightPdfParser()
+
+
+def _build_from_toc(extracts, toc, name, count):
+    ir = _parser()._to_document_ir(extracts, toc, name, count)
+    chunks = StructuralChunker().chunk(ir)
+    return Axis1StructuralBuilder()._build_from_toc(ir, chunks)
 
 
 # ── _usable_toc ────────────────────────────────────────────────────────
@@ -88,7 +102,7 @@ def test_build_from_toc_creates_nested_chapters_and_sections():
         (2, "Section 2.1", 12),
     ]
 
-    nodes, edges = _parser()._build_from_toc(extracts, toc, "book", 20)
+    nodes, edges = _build_from_toc(extracts, toc, "book", 20)
 
     chapters = [n for n in nodes if n.type == NodeType.CHAPTER]
     sections = [n for n in nodes if n.type == NodeType.SECTION]
@@ -115,7 +129,7 @@ def test_build_from_toc_drops_entry_with_negative_page_instead_of_clamping():
         (2, "Blank Page", 2),
     ]
 
-    nodes, edges = _parser()._build_from_toc(extracts, toc, "book", 20)
+    nodes, edges = _build_from_toc(extracts, toc, "book", 20)
 
     chapters = [n for n in nodes if n.type == NodeType.CHAPTER]
     sections = [n for n in nodes if n.type == NodeType.SECTION]
@@ -140,6 +154,6 @@ def test_build_from_toc_drops_entry_with_zero_page():
         (1, "Chapter 2", 11),
     ]
 
-    nodes, _edges = _parser()._build_from_toc(extracts, toc, "book", 20)
+    nodes, _edges = _build_from_toc(extracts, toc, "book", 20)
     chapters = [n for n in nodes if n.type == NodeType.CHAPTER]
     assert {n.title for n in chapters} == {"Chapter 1", "Chapter 2"}

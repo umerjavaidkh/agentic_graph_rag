@@ -18,7 +18,7 @@ _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from src.document.light.parser import LightPdfParser
+from src.graph.axis1_structural import Axis1StructuralBuilder
 from src.models import DKGEdge, DKGNode, EdgeConfidenceTier, NodeType, RelType
 
 
@@ -45,7 +45,7 @@ def test_sequential_edges_inherit_extracted_default():
     b = DKGNode(id="b", type=NodeType.SECTION, title="B", text="b", order=2)
     edges: list[DKGEdge] = []
 
-    parser = LightPdfParser()
+    parser = Axis1StructuralBuilder()
     parser._add_sequential_edges([a, b], edges)
 
     assert edges
@@ -59,7 +59,7 @@ def test_reference_edges_inherit_extracted_default():
     table.region_kind = "table"
     edges: list[DKGEdge] = []
 
-    parser = LightPdfParser()
+    parser = Axis1StructuralBuilder()
     parser._detect_reference_edges([section, table], edges)
 
     refs = [e for e in edges if e.rel_type == RelType.REFERENCES]

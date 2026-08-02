@@ -1,0 +1,3704 @@
+{
+ "nodes": [
+  {
+   "id": "doc_rag_document",
+   "type": "Document",
+   "title": "rag_document",
+   "page_start": 1,
+   "page_end": 12,
+   "depth": 0,
+   "order": 0,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_chapter_1",
+   "type": "Chapter",
+   "title": "CORPORATE COMPLIANCE AT STRATEC",
+   "page_start": 4,
+   "page_end": 4,
+   "depth": 1,
+   "order": 33,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_chapter_10",
+   "type": "Chapter",
+   "title": "Is it impossible that my action might harm STRATEC? (financial loss, image, ...)",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 1,
+   "order": 93,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_chapter_2",
+   "type": "Chapter",
+   "title": "COMPLIANCE OBJECTIVES",
+   "page_start": 4,
+   "page_end": 9,
+   "depth": 1,
+   "order": 35,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_chapter_3",
+   "type": "Chapter",
+   "title": "ETHICS AS AN EMPLOYER",
+   "page_start": 9,
+   "page_end": 11,
+   "depth": 1,
+   "order": 69,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_chapter_4",
+   "type": "Chapter",
+   "title": "IMPLEMENTATION AT STRATEC",
+   "page_start": 11,
+   "page_end": 12,
+   "depth": 1,
+   "order": 81,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_chapter_5",
+   "type": "Chapter",
+   "title": "SUMMARY",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 1,
+   "order": 87,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_chapter_6",
+   "type": "Chapter",
+   "title": "Is my action or decision legal?",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 1,
+   "order": 89,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_chapter_7",
+   "type": "Chapter",
+   "title": "Is my action free of personal interests?",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 1,
+   "order": 90,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_chapter_8",
+   "type": "Chapter",
+   "title": "Would a neutral person judge my action to be legally sound?",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 1,
+   "order": 91,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_chapter_9",
+   "type": "Chapter",
+   "title": "Does it meet the requirements of the STRATEC Corporate Compliance Policy?",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 1,
+   "order": 92,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_1",
+   "type": "Page",
+   "title": "Page 1",
+   "page_start": 1,
+   "page_end": 1,
+   "depth": 99,
+   "order": 1,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_10",
+   "type": "Page",
+   "title": "Page 10",
+   "page_start": 10,
+   "page_end": 10,
+   "depth": 99,
+   "order": 10,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_11",
+   "type": "Page",
+   "title": "Page 11",
+   "page_start": 11,
+   "page_end": 11,
+   "depth": 99,
+   "order": 11,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_12",
+   "type": "Page",
+   "title": "Page 12",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 99,
+   "order": 12,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_2",
+   "type": "Page",
+   "title": "Page 2",
+   "page_start": 2,
+   "page_end": 2,
+   "depth": 99,
+   "order": 2,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_3",
+   "type": "Page",
+   "title": "Page 3",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 99,
+   "order": 3,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_4",
+   "type": "Page",
+   "title": "Page 4",
+   "page_start": 4,
+   "page_end": 4,
+   "depth": 99,
+   "order": 4,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_5",
+   "type": "Page",
+   "title": "Page 5",
+   "page_start": 5,
+   "page_end": 5,
+   "depth": 99,
+   "order": 5,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_6",
+   "type": "Page",
+   "title": "Page 6",
+   "page_start": 6,
+   "page_end": 6,
+   "depth": 99,
+   "order": 6,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_7",
+   "type": "Page",
+   "title": "Page 7",
+   "page_start": 7,
+   "page_end": 7,
+   "depth": 99,
+   "order": 7,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_8",
+   "type": "Page",
+   "title": "Page 8",
+   "page_start": 8,
+   "page_end": 8,
+   "depth": 99,
+   "order": 8,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_page_9",
+   "type": "Page",
+   "title": "Page 9",
+   "page_start": 9,
+   "page_end": 9,
+   "depth": 99,
+   "order": 9,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_1",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 1,
+   "page_end": 1,
+   "depth": 2,
+   "order": 1,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_10",
+   "type": "Section",
+   "title": "MISSION STATEMENT\n2",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 10,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_11",
+   "type": "Section",
+   "title": "1\nCorporate COMPLIANCE at STRATEC\n4",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 11,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_12",
+   "type": "Section",
+   "title": "2\nCOMPLIANCE OBJECTIVES\n4",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 12,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_13",
+   "type": "Section",
+   "title": "3\nKEY ELEMENTS AND PRINCIPLES OF OUR COMPLIANCE\nUNDERSTANDING\n5",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 13,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_14",
+   "type": "Section",
+   "title": "COMPLIANCE WITH LEGAL AND REGULATORY REQUIREMENTS\n5",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 14,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_15",
+   "type": "Section",
+   "title": "4\nSelected areas of STRATEC's Compliance Management System\n5",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 15,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_16",
+   "type": "Section",
+   "title": "PREVENTION AND COMBATING OF MONEY LAUNDERING\n6",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 16,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_17",
+   "type": "Section",
+   "title": "ENVIRONMENTAL PROTECTION\n9",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 17,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_18",
+   "type": "Section",
+   "title": "DUAL CONTROL PRINCIPLE\n9",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 18,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_19",
+   "type": "Section",
+   "title": "5\nETHICS AS AN EMPLOYER\n9",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 19,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_2",
+   "type": "Section",
+   "title": "STRATEC GROUP",
+   "page_start": 1,
+   "page_end": 1,
+   "depth": 2,
+   "order": 2,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_20",
+   "type": "Section",
+   "title": "FREEDOM OF ASSOCIATION / COLLECTIVE BARGAINING\n9",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 20,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_21",
+   "type": "Section",
+   "title": "EQUAL OPPORTUNITIES\n10",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 21,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_22",
+   "type": "Section",
+   "title": "WORKPLACE COMPLAINTS\n10",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 22,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_23",
+   "type": "Section",
+   "title": "FLEXIBILITY AND RESPONSIBILITY OUTSIDE THE WORKPLACE\n10",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 23,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_24",
+   "type": "Section",
+   "title": "EMPLOYMENT SECURITY\n10",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 24,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_25",
+   "type": "Section",
+   "title": "TRAINING AND EDUCATION\n11",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 25,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_26",
+   "type": "Section",
+   "title": "6\nIMPLEMENTATION AT STRATEC\n11",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 26,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_27",
+   "type": "Section",
+   "title": "EACH INDIVIDUAL\n11",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 27,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_28",
+   "type": "Section",
+   "title": "WHO CAN I ASK IN CASE OF UNCERTAINTY?\n11",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 28,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_29",
+   "type": "Section",
+   "title": "WHISTLE-BLOWING SYSTEM\n11",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 29,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_3",
+   "type": "Section",
+   "title": "stratecee\n\n~ COMPLIANCE POLICY\nSTRATEC GROUP",
+   "page_start": 1,
+   "page_end": 1,
+   "depth": 2,
+   "order": 3,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_30",
+   "type": "Section",
+   "title": "7\nSUMMARY\n12",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 30,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_31",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 4,
+   "page_end": 4,
+   "depth": 2,
+   "order": 31,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_32",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n4 / 12",
+   "page_start": 4,
+   "page_end": 4,
+   "depth": 2,
+   "order": 32,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_4",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 2,
+   "page_end": 2,
+   "depth": 2,
+   "order": 4,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_5",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n2 / 12",
+   "page_start": 2,
+   "page_end": 2,
+   "depth": 2,
+   "order": 5,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_6",
+   "type": "Section",
+   "title": "MISSION STATEMENT",
+   "page_start": 2,
+   "page_end": 2,
+   "depth": 2,
+   "order": 6,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_7",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 7,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_8",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n3 / 12",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 8,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_0_9",
+   "type": "Section",
+   "title": "CONTENTS",
+   "page_start": 3,
+   "page_end": 3,
+   "depth": 2,
+   "order": 9,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_10_1",
+   "type": "Section",
+   "title": "Preamble",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 2,
+   "order": 94,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_1_1",
+   "type": "Section",
+   "title": "Preamble",
+   "page_start": 4,
+   "page_end": 4,
+   "depth": 2,
+   "order": 34,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_1",
+   "type": "Section",
+   "title": "Preamble",
+   "page_start": 4,
+   "page_end": 4,
+   "depth": 2,
+   "order": 36,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_10",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 6,
+   "page_end": 6,
+   "depth": 2,
+   "order": 45,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_11",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n6 / 12",
+   "page_start": 6,
+   "page_end": 6,
+   "depth": 2,
+   "order": 46,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_12",
+   "type": "Section",
+   "title": "4.1.1 NOTE: HOW CAN I AVOID CONFLICTS WHEN IT COMES TO GIFTS AND BENEFITS?",
+   "page_start": 6,
+   "page_end": 6,
+   "depth": 4,
+   "order": 47,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_13",
+   "type": "Section",
+   "title": "PREVENTION AND COMBATING OF MONEY LAUNDERING",
+   "page_start": 6,
+   "page_end": 6,
+   "depth": 2,
+   "order": 48,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_14",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 7,
+   "page_end": 7,
+   "depth": 2,
+   "order": 49,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_15",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n7 / 12",
+   "page_start": 7,
+   "page_end": 7,
+   "depth": 2,
+   "order": 50,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_16",
+   "type": "Section",
+   "title": "COMPLIANCE WITH CAPITAL MARKET AND ANTITRUST",
+   "page_start": 7,
+   "page_end": 7,
+   "depth": 2,
+   "order": 51,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_17",
+   "type": "Section",
+   "title": "REGULATIONS",
+   "page_start": 7,
+   "page_end": 7,
+   "depth": 2,
+   "order": 52,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_18",
+   "type": "Section",
+   "title": "4.3.1 INSIDER TRADING",
+   "page_start": 7,
+   "page_end": 7,
+   "depth": 4,
+   "order": 53,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_19",
+   "type": "Section",
+   "title": "4.3.2 FINANCIAL REPORTING",
+   "page_start": 7,
+   "page_end": 7,
+   "depth": 4,
+   "order": 54,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_2",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 5,
+   "page_end": 5,
+   "depth": 2,
+   "order": 37,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_20",
+   "type": "Section",
+   "title": "4.3.3 ANTITRUST LAW REQUIREMENTS",
+   "page_start": 7,
+   "page_end": 7,
+   "depth": 4,
+   "order": 55,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_21",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 8,
+   "page_end": 8,
+   "depth": 2,
+   "order": 56,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_22",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n8 / 12",
+   "page_start": 8,
+   "page_end": 8,
+   "depth": 2,
+   "order": 57,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_23",
+   "type": "Section",
+   "title": "FAIR AND RESPECTFUL BEHAVIOUR",
+   "page_start": 8,
+   "page_end": 8,
+   "depth": 2,
+   "order": 58,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_24",
+   "type": "Section",
+   "title": "4.4.1 PRINCIPLES FOR THE WORKPLACE ENVIRONMENT",
+   "page_start": 8,
+   "page_end": 8,
+   "depth": 4,
+   "order": 59,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_25",
+   "type": "Section",
+   "title": "4.4.2 EQUAL OPPORTUNITIES",
+   "page_start": 8,
+   "page_end": 8,
+   "depth": 4,
+   "order": 60,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_26",
+   "type": "Section",
+   "title": "4.4.3 HEALTH AND SAFETY",
+   "page_start": 8,
+   "page_end": 8,
+   "depth": 4,
+   "order": 61,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_27",
+   "type": "Section",
+   "title": "4.4.4 DATA PROTECTION",
+   "page_start": 8,
+   "page_end": 8,
+   "depth": 4,
+   "order": 62,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_28",
+   "type": "Section",
+   "title": "4.4.5 PRINCIPLES FOR CONFLICTS OF INTEREST",
+   "page_start": 8,
+   "page_end": 8,
+   "depth": 4,
+   "order": 63,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_29",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 9,
+   "page_end": 9,
+   "depth": 2,
+   "order": 64,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_3",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n5 / 12",
+   "page_start": 5,
+   "page_end": 5,
+   "depth": 2,
+   "order": 38,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_30",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n9 / 12",
+   "page_start": 9,
+   "page_end": 9,
+   "depth": 2,
+   "order": 65,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_31",
+   "type": "Section",
+   "title": "4.4.6 REPORTING OBLIGATIONS",
+   "page_start": 9,
+   "page_end": 9,
+   "depth": 4,
+   "order": 66,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_32",
+   "type": "Section",
+   "title": "ENVIRONMENTAL PROTECTION",
+   "page_start": 9,
+   "page_end": 9,
+   "depth": 2,
+   "order": 67,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_33",
+   "type": "Section",
+   "title": "DUAL CONTROL PRINCIPLE",
+   "page_start": 9,
+   "page_end": 9,
+   "depth": 2,
+   "order": 68,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_4",
+   "type": "Section",
+   "title": "3 KEY ELEMENTS AND PRINCIPLES OF OUR\nCOMPLIANCE UNDERSTANDING",
+   "page_start": 5,
+   "page_end": 5,
+   "depth": 2,
+   "order": 39,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_5",
+   "type": "Section",
+   "title": "COMPLIANCE WITH LEGAL AND REGULATORY REQUIREMENTS",
+   "page_start": 5,
+   "page_end": 5,
+   "depth": 2,
+   "order": 40,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_6",
+   "type": "Section",
+   "title": "STRUCTURE AND ORGANISATION OF THE COMPLIANCE",
+   "page_start": 5,
+   "page_end": 5,
+   "depth": 2,
+   "order": 41,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_7",
+   "type": "Section",
+   "title": "MANAGEMENT SYSTEM AT STRATEC",
+   "page_start": 5,
+   "page_end": 5,
+   "depth": 2,
+   "order": 42,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_8",
+   "type": "Section",
+   "title": "4 SELECTED AREAS OF STRATEC'S COMPLIANCE\nMANAGEMENT SYSTEM",
+   "page_start": 5,
+   "page_end": 5,
+   "depth": 2,
+   "order": 43,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_2_9",
+   "type": "Section",
+   "title": "CORRUPTION PREVENTION",
+   "page_start": 5,
+   "page_end": 5,
+   "depth": 2,
+   "order": 44,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_1",
+   "type": "Section",
+   "title": "Preamble",
+   "page_start": 9,
+   "page_end": 9,
+   "depth": 2,
+   "order": 70,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_10",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n11 / 12",
+   "page_start": 11,
+   "page_end": 11,
+   "depth": 2,
+   "order": 79,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_11",
+   "type": "Section",
+   "title": "TRAINING AND EDUCATION",
+   "page_start": 11,
+   "page_end": 11,
+   "depth": 2,
+   "order": 80,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_2",
+   "type": "Section",
+   "title": "FREEDOM OF ASSOCIATION / COLLECTIVE BARGAINING",
+   "page_start": 9,
+   "page_end": 9,
+   "depth": 2,
+   "order": 71,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_3",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 10,
+   "page_end": 10,
+   "depth": 2,
+   "order": 72,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_4",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n10 / 12",
+   "page_start": 10,
+   "page_end": 10,
+   "depth": 2,
+   "order": 73,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_5",
+   "type": "Section",
+   "title": "EQUAL OPPORTUNITIES",
+   "page_start": 10,
+   "page_end": 10,
+   "depth": 2,
+   "order": 74,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_6",
+   "type": "Section",
+   "title": "WORKPLACE COMPLAINTS",
+   "page_start": 10,
+   "page_end": 10,
+   "depth": 2,
+   "order": 75,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_7",
+   "type": "Section",
+   "title": "FLEXIBILITY AND RESPONSIBILITY OUTSIDE THE WORKPLACE",
+   "page_start": 10,
+   "page_end": 10,
+   "depth": 2,
+   "order": 76,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_8",
+   "type": "Section",
+   "title": "EMPLOYMENT SECURITY",
+   "page_start": 10,
+   "page_end": 10,
+   "depth": 2,
+   "order": 77,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_3_9",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 11,
+   "page_end": 11,
+   "depth": 2,
+   "order": 78,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_4_1",
+   "type": "Section",
+   "title": "EACH INDIVIDUAL",
+   "page_start": 11,
+   "page_end": 11,
+   "depth": 2,
+   "order": 82,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_4_2",
+   "type": "Section",
+   "title": "WHO CAN I ASK IN CASE OF UNCERTAINTY?",
+   "page_start": 11,
+   "page_end": 11,
+   "depth": 2,
+   "order": 83,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_4_3",
+   "type": "Section",
+   "title": "WHISTLE-BLOWING SYSTEM",
+   "page_start": 11,
+   "page_end": 11,
+   "depth": 2,
+   "order": 84,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_4_4",
+   "type": "Section",
+   "title": "COMPLIANCE POLICY",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 2,
+   "order": 85,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_4_5",
+   "type": "Section",
+   "title": "CORPORATE COMPLIANCE POLICY 2025\n12 / 12",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 2,
+   "order": 86,
+   "region_kind": null
+  },
+  {
+   "id": "doc_rag_document_section_5_1",
+   "type": "Section",
+   "title": "Preamble",
+   "page_start": 12,
+   "page_end": 12,
+   "depth": 2,
+   "order": 88,
+   "region_kind": null
+  }
+ ],
+ "edges": [
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_chapter_1",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_chapter_10",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_chapter_4",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_chapter_5",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_chapter_6",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_chapter_7",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_chapter_8",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_chapter_9",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_1",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_10",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_11",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_12",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_13",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_14",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_15",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_16",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_17",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_18",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_19",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_2",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_20",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_21",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_22",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_23",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_24",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_25",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_26",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_27",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_28",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_29",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_3",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_30",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_31",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_32",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_4",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_5",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_6",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_7",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_8",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document",
+   "target_id": "doc_rag_document_section_0_9",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_1",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_1",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_1",
+   "target_id": "doc_rag_document_section_1_1",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_10",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_10",
+   "target_id": "doc_rag_document_chapter_9",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_10",
+   "target_id": "doc_rag_document_section_10_1",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_chapter_1",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_1",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_10",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_11",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_13",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_14",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_15",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_16",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_17",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_2",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_21",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_22",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_23",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_29",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_3",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_30",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_32",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_33",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_4",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_5",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_6",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_7",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_8",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_2",
+   "target_id": "doc_rag_document_section_2_9",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_chapter_4",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_1",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_10",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_11",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_2",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_3",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_4",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_5",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_6",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_7",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_8",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_3",
+   "target_id": "doc_rag_document_section_3_9",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_4",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_4",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_4",
+   "target_id": "doc_rag_document_chapter_5",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_4",
+   "target_id": "doc_rag_document_section_4_1",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_4",
+   "target_id": "doc_rag_document_section_4_2",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_4",
+   "target_id": "doc_rag_document_section_4_3",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_4",
+   "target_id": "doc_rag_document_section_4_4",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_4",
+   "target_id": "doc_rag_document_section_4_5",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_5",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_5",
+   "target_id": "doc_rag_document_chapter_4",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_5",
+   "target_id": "doc_rag_document_chapter_6",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_5",
+   "target_id": "doc_rag_document_section_5_1",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_6",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_6",
+   "target_id": "doc_rag_document_chapter_5",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_6",
+   "target_id": "doc_rag_document_chapter_7",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_7",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_7",
+   "target_id": "doc_rag_document_chapter_6",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_7",
+   "target_id": "doc_rag_document_chapter_8",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_8",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_8",
+   "target_id": "doc_rag_document_chapter_7",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_8",
+   "target_id": "doc_rag_document_chapter_9",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_9",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_9",
+   "target_id": "doc_rag_document_chapter_10",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_9",
+   "target_id": "doc_rag_document_chapter_8",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_9",
+   "target_id": "doc_rag_document_section_2_12",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_9",
+   "target_id": "doc_rag_document_section_2_18",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_chapter_9",
+   "target_id": "doc_rag_document_section_2_24",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_1",
+   "target_id": "doc_rag_document_page_2",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_1",
+   "target_id": "doc_rag_document_section_0_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_10",
+   "target_id": "doc_rag_document_page_11",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_10",
+   "target_id": "doc_rag_document_page_9",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_10",
+   "target_id": "doc_rag_document_section_3_8",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_11",
+   "target_id": "doc_rag_document_page_10",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_11",
+   "target_id": "doc_rag_document_page_12",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_11",
+   "target_id": "doc_rag_document_section_4_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_12",
+   "target_id": "doc_rag_document_page_11",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_12",
+   "target_id": "doc_rag_document_section_10_1",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_2",
+   "target_id": "doc_rag_document_page_1",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_2",
+   "target_id": "doc_rag_document_page_3",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_2",
+   "target_id": "doc_rag_document_section_0_6",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_3",
+   "target_id": "doc_rag_document_page_2",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_3",
+   "target_id": "doc_rag_document_page_4",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_3",
+   "target_id": "doc_rag_document_section_0_30",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_4",
+   "target_id": "doc_rag_document_page_3",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_4",
+   "target_id": "doc_rag_document_page_5",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_4",
+   "target_id": "doc_rag_document_section_2_1",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_5",
+   "target_id": "doc_rag_document_page_4",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_5",
+   "target_id": "doc_rag_document_page_6",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_5",
+   "target_id": "doc_rag_document_section_2_9",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_6",
+   "target_id": "doc_rag_document_page_5",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_6",
+   "target_id": "doc_rag_document_page_7",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_6",
+   "target_id": "doc_rag_document_section_2_12",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_7",
+   "target_id": "doc_rag_document_page_6",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_7",
+   "target_id": "doc_rag_document_page_8",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_7",
+   "target_id": "doc_rag_document_section_2_20",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_8",
+   "target_id": "doc_rag_document_page_7",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_8",
+   "target_id": "doc_rag_document_page_9",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_8",
+   "target_id": "doc_rag_document_section_2_28",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_9",
+   "target_id": "doc_rag_document_page_10",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_9",
+   "target_id": "doc_rag_document_page_8",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_page_9",
+   "target_id": "doc_rag_document_section_2_31",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_1",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_1",
+   "target_id": "doc_rag_document_section_0_2",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_10",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_10",
+   "target_id": "doc_rag_document_section_0_11",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_10",
+   "target_id": "doc_rag_document_section_0_9",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_11",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_11",
+   "target_id": "doc_rag_document_section_0_10",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_11",
+   "target_id": "doc_rag_document_section_0_12",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_12",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_12",
+   "target_id": "doc_rag_document_section_0_11",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_12",
+   "target_id": "doc_rag_document_section_0_13",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_13",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_13",
+   "target_id": "doc_rag_document_section_0_12",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_13",
+   "target_id": "doc_rag_document_section_0_14",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_14",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_14",
+   "target_id": "doc_rag_document_section_0_13",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_14",
+   "target_id": "doc_rag_document_section_0_15",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_15",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_15",
+   "target_id": "doc_rag_document_section_0_14",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_15",
+   "target_id": "doc_rag_document_section_0_16",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_16",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_16",
+   "target_id": "doc_rag_document_section_0_15",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_16",
+   "target_id": "doc_rag_document_section_0_17",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_17",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_17",
+   "target_id": "doc_rag_document_section_0_16",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_17",
+   "target_id": "doc_rag_document_section_0_18",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_18",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_18",
+   "target_id": "doc_rag_document_section_0_17",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_18",
+   "target_id": "doc_rag_document_section_0_19",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_19",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_19",
+   "target_id": "doc_rag_document_section_0_18",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_19",
+   "target_id": "doc_rag_document_section_0_20",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_2",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_2",
+   "target_id": "doc_rag_document_section_0_1",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_2",
+   "target_id": "doc_rag_document_section_0_3",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_20",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_20",
+   "target_id": "doc_rag_document_section_0_19",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_20",
+   "target_id": "doc_rag_document_section_0_21",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_21",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_21",
+   "target_id": "doc_rag_document_section_0_20",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_21",
+   "target_id": "doc_rag_document_section_0_22",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_22",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_22",
+   "target_id": "doc_rag_document_section_0_21",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_22",
+   "target_id": "doc_rag_document_section_0_23",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_23",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_23",
+   "target_id": "doc_rag_document_section_0_22",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_23",
+   "target_id": "doc_rag_document_section_0_24",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_24",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_24",
+   "target_id": "doc_rag_document_section_0_23",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_24",
+   "target_id": "doc_rag_document_section_0_25",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_25",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_25",
+   "target_id": "doc_rag_document_section_0_24",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_25",
+   "target_id": "doc_rag_document_section_0_26",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_26",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_26",
+   "target_id": "doc_rag_document_section_0_25",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_26",
+   "target_id": "doc_rag_document_section_0_27",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_27",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_27",
+   "target_id": "doc_rag_document_section_0_26",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_27",
+   "target_id": "doc_rag_document_section_0_28",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_28",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_28",
+   "target_id": "doc_rag_document_section_0_27",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_28",
+   "target_id": "doc_rag_document_section_0_29",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_29",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_29",
+   "target_id": "doc_rag_document_section_0_28",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_29",
+   "target_id": "doc_rag_document_section_0_30",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_3",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_3",
+   "target_id": "doc_rag_document_page_1",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_3",
+   "target_id": "doc_rag_document_section_0_2",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_3",
+   "target_id": "doc_rag_document_section_0_4",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_30",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_30",
+   "target_id": "doc_rag_document_page_3",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_30",
+   "target_id": "doc_rag_document_section_0_29",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_30",
+   "target_id": "doc_rag_document_section_0_31",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_31",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_31",
+   "target_id": "doc_rag_document_section_0_30",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_31",
+   "target_id": "doc_rag_document_section_0_32",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_32",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_32",
+   "target_id": "doc_rag_document_section_0_31",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_32",
+   "target_id": "doc_rag_document_section_1_1",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_4",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_4",
+   "target_id": "doc_rag_document_section_0_3",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_4",
+   "target_id": "doc_rag_document_section_0_5",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_5",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_5",
+   "target_id": "doc_rag_document_section_0_4",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_5",
+   "target_id": "doc_rag_document_section_0_6",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_6",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_6",
+   "target_id": "doc_rag_document_page_2",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_6",
+   "target_id": "doc_rag_document_section_0_5",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_6",
+   "target_id": "doc_rag_document_section_0_7",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_7",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_7",
+   "target_id": "doc_rag_document_section_0_6",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_7",
+   "target_id": "doc_rag_document_section_0_8",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_8",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_8",
+   "target_id": "doc_rag_document_section_0_7",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_8",
+   "target_id": "doc_rag_document_section_0_9",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_9",
+   "target_id": "doc_rag_document",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_9",
+   "target_id": "doc_rag_document_section_0_10",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_0_9",
+   "target_id": "doc_rag_document_section_0_8",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_10_1",
+   "target_id": "doc_rag_document_chapter_10",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_10_1",
+   "target_id": "doc_rag_document_page_12",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_10_1",
+   "target_id": "doc_rag_document_section_5_1",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_1_1",
+   "target_id": "doc_rag_document_chapter_1",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_1_1",
+   "target_id": "doc_rag_document_section_0_32",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_1_1",
+   "target_id": "doc_rag_document_section_2_1",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_1",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_1",
+   "target_id": "doc_rag_document_page_4",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_1",
+   "target_id": "doc_rag_document_section_1_1",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_1",
+   "target_id": "doc_rag_document_section_2_2",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_10",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_10",
+   "target_id": "doc_rag_document_section_2_11",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_10",
+   "target_id": "doc_rag_document_section_2_9",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_11",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_11",
+   "target_id": "doc_rag_document_section_2_10",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_11",
+   "target_id": "doc_rag_document_section_2_12",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_11",
+   "target_id": "doc_rag_document_section_2_12",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_12",
+   "target_id": "doc_rag_document_chapter_9",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_12",
+   "target_id": "doc_rag_document_page_6",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_12",
+   "target_id": "doc_rag_document_section_2_11",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_12",
+   "target_id": "doc_rag_document_section_2_11",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_12",
+   "target_id": "doc_rag_document_section_2_13",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_13",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_13",
+   "target_id": "doc_rag_document_section_2_12",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_13",
+   "target_id": "doc_rag_document_section_2_14",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_14",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_14",
+   "target_id": "doc_rag_document_section_2_13",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_14",
+   "target_id": "doc_rag_document_section_2_15",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_15",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_15",
+   "target_id": "doc_rag_document_section_2_14",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_15",
+   "target_id": "doc_rag_document_section_2_16",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_16",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_16",
+   "target_id": "doc_rag_document_section_2_15",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_16",
+   "target_id": "doc_rag_document_section_2_17",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_17",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_17",
+   "target_id": "doc_rag_document_section_2_16",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_17",
+   "target_id": "doc_rag_document_section_2_18",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_17",
+   "target_id": "doc_rag_document_section_2_18",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_17",
+   "target_id": "doc_rag_document_section_2_19",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_17",
+   "target_id": "doc_rag_document_section_2_20",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_18",
+   "target_id": "doc_rag_document_chapter_9",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_18",
+   "target_id": "doc_rag_document_section_2_17",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_18",
+   "target_id": "doc_rag_document_section_2_17",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_18",
+   "target_id": "doc_rag_document_section_2_19",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_18",
+   "target_id": "doc_rag_document_section_2_19",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_18",
+   "target_id": "doc_rag_document_section_2_20",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_19",
+   "target_id": "doc_rag_document_section_2_17",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_19",
+   "target_id": "doc_rag_document_section_2_18",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_19",
+   "target_id": "doc_rag_document_section_2_18",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_19",
+   "target_id": "doc_rag_document_section_2_20",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_2",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_2",
+   "target_id": "doc_rag_document_section_2_1",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_2",
+   "target_id": "doc_rag_document_section_2_3",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_20",
+   "target_id": "doc_rag_document_page_7",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_20",
+   "target_id": "doc_rag_document_section_2_17",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_20",
+   "target_id": "doc_rag_document_section_2_18",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_20",
+   "target_id": "doc_rag_document_section_2_19",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_20",
+   "target_id": "doc_rag_document_section_2_21",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_21",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_21",
+   "target_id": "doc_rag_document_section_2_20",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_21",
+   "target_id": "doc_rag_document_section_2_22",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_22",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_22",
+   "target_id": "doc_rag_document_section_2_21",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_22",
+   "target_id": "doc_rag_document_section_2_23",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_23",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_23",
+   "target_id": "doc_rag_document_section_2_22",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_23",
+   "target_id": "doc_rag_document_section_2_24",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_23",
+   "target_id": "doc_rag_document_section_2_24",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_23",
+   "target_id": "doc_rag_document_section_2_25",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_23",
+   "target_id": "doc_rag_document_section_2_26",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_23",
+   "target_id": "doc_rag_document_section_2_27",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_23",
+   "target_id": "doc_rag_document_section_2_28",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_24",
+   "target_id": "doc_rag_document_chapter_9",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_24",
+   "target_id": "doc_rag_document_section_2_23",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_24",
+   "target_id": "doc_rag_document_section_2_23",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_24",
+   "target_id": "doc_rag_document_section_2_25",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_24",
+   "target_id": "doc_rag_document_section_2_25",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_24",
+   "target_id": "doc_rag_document_section_2_26",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_24",
+   "target_id": "doc_rag_document_section_2_27",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_24",
+   "target_id": "doc_rag_document_section_2_28",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_24",
+   "target_id": "doc_rag_document_section_2_31",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_25",
+   "target_id": "doc_rag_document_section_2_23",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_25",
+   "target_id": "doc_rag_document_section_2_24",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_25",
+   "target_id": "doc_rag_document_section_2_24",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_25",
+   "target_id": "doc_rag_document_section_2_26",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_26",
+   "target_id": "doc_rag_document_section_2_23",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_26",
+   "target_id": "doc_rag_document_section_2_24",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_26",
+   "target_id": "doc_rag_document_section_2_25",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_26",
+   "target_id": "doc_rag_document_section_2_27",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_27",
+   "target_id": "doc_rag_document_section_2_23",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_27",
+   "target_id": "doc_rag_document_section_2_24",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_27",
+   "target_id": "doc_rag_document_section_2_26",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_27",
+   "target_id": "doc_rag_document_section_2_28",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_28",
+   "target_id": "doc_rag_document_page_8",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_28",
+   "target_id": "doc_rag_document_section_2_23",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_28",
+   "target_id": "doc_rag_document_section_2_24",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_28",
+   "target_id": "doc_rag_document_section_2_27",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_28",
+   "target_id": "doc_rag_document_section_2_29",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_29",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_29",
+   "target_id": "doc_rag_document_section_2_28",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_29",
+   "target_id": "doc_rag_document_section_2_30",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_3",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_3",
+   "target_id": "doc_rag_document_section_2_2",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_3",
+   "target_id": "doc_rag_document_section_2_4",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_30",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_30",
+   "target_id": "doc_rag_document_section_2_29",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_30",
+   "target_id": "doc_rag_document_section_2_31",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_30",
+   "target_id": "doc_rag_document_section_2_31",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_31",
+   "target_id": "doc_rag_document_page_9",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_31",
+   "target_id": "doc_rag_document_section_2_24",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_31",
+   "target_id": "doc_rag_document_section_2_30",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_31",
+   "target_id": "doc_rag_document_section_2_30",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_31",
+   "target_id": "doc_rag_document_section_2_32",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_32",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_32",
+   "target_id": "doc_rag_document_section_2_31",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_32",
+   "target_id": "doc_rag_document_section_2_33",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_33",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_33",
+   "target_id": "doc_rag_document_section_2_32",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_33",
+   "target_id": "doc_rag_document_section_3_1",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_4",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_4",
+   "target_id": "doc_rag_document_section_2_3",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_4",
+   "target_id": "doc_rag_document_section_2_5",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_5",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_5",
+   "target_id": "doc_rag_document_section_2_4",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_5",
+   "target_id": "doc_rag_document_section_2_6",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_6",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_6",
+   "target_id": "doc_rag_document_section_2_5",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_6",
+   "target_id": "doc_rag_document_section_2_7",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_7",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_7",
+   "target_id": "doc_rag_document_section_2_6",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_7",
+   "target_id": "doc_rag_document_section_2_8",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_8",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_8",
+   "target_id": "doc_rag_document_section_2_7",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_8",
+   "target_id": "doc_rag_document_section_2_9",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_9",
+   "target_id": "doc_rag_document_chapter_2",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_9",
+   "target_id": "doc_rag_document_page_5",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_9",
+   "target_id": "doc_rag_document_section_2_10",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_2_9",
+   "target_id": "doc_rag_document_section_2_8",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_1",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_1",
+   "target_id": "doc_rag_document_section_2_33",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_1",
+   "target_id": "doc_rag_document_section_3_2",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_10",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_10",
+   "target_id": "doc_rag_document_section_3_11",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_10",
+   "target_id": "doc_rag_document_section_3_9",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_11",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_11",
+   "target_id": "doc_rag_document_section_3_10",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_11",
+   "target_id": "doc_rag_document_section_4_1",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_2",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_2",
+   "target_id": "doc_rag_document_section_3_1",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_2",
+   "target_id": "doc_rag_document_section_3_3",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_3",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_3",
+   "target_id": "doc_rag_document_section_3_2",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_3",
+   "target_id": "doc_rag_document_section_3_4",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_4",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_4",
+   "target_id": "doc_rag_document_section_3_3",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_4",
+   "target_id": "doc_rag_document_section_3_5",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_5",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_5",
+   "target_id": "doc_rag_document_section_3_4",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_5",
+   "target_id": "doc_rag_document_section_3_6",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_6",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_6",
+   "target_id": "doc_rag_document_section_3_5",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_6",
+   "target_id": "doc_rag_document_section_3_7",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_7",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_7",
+   "target_id": "doc_rag_document_section_3_6",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_7",
+   "target_id": "doc_rag_document_section_3_8",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_8",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_8",
+   "target_id": "doc_rag_document_page_10",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_8",
+   "target_id": "doc_rag_document_section_3_7",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_8",
+   "target_id": "doc_rag_document_section_3_9",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_9",
+   "target_id": "doc_rag_document_chapter_3",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_9",
+   "target_id": "doc_rag_document_section_3_10",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_3_9",
+   "target_id": "doc_rag_document_section_3_8",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_1",
+   "target_id": "doc_rag_document_chapter_4",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_1",
+   "target_id": "doc_rag_document_section_3_11",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_1",
+   "target_id": "doc_rag_document_section_4_2",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_2",
+   "target_id": "doc_rag_document_chapter_4",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_2",
+   "target_id": "doc_rag_document_section_4_1",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_2",
+   "target_id": "doc_rag_document_section_4_3",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_3",
+   "target_id": "doc_rag_document_chapter_4",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_3",
+   "target_id": "doc_rag_document_page_11",
+   "rel_type": "CONTAINS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_3",
+   "target_id": "doc_rag_document_section_4_2",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_3",
+   "target_id": "doc_rag_document_section_4_4",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_4",
+   "target_id": "doc_rag_document_chapter_4",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_4",
+   "target_id": "doc_rag_document_section_4_3",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_4",
+   "target_id": "doc_rag_document_section_4_5",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_5",
+   "target_id": "doc_rag_document_chapter_4",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_5",
+   "target_id": "doc_rag_document_section_4_4",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_4_5",
+   "target_id": "doc_rag_document_section_5_1",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_5_1",
+   "target_id": "doc_rag_document_chapter_5",
+   "rel_type": "PART_OF",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_5_1",
+   "target_id": "doc_rag_document_section_10_1",
+   "rel_type": "PRECEDES",
+   "axis": 1
+  },
+  {
+   "source_id": "doc_rag_document_section_5_1",
+   "target_id": "doc_rag_document_section_4_5",
+   "rel_type": "FOLLOWS",
+   "axis": 1
+  }
+ ]
+}

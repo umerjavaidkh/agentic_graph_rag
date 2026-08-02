@@ -35,6 +35,8 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from src.document.light.parser import LightPdfParser, _PageExtract, _PdfBlock
+from src.graph.axis1_structural import Axis1StructuralBuilder
+from src.graph.chunker import StructuralChunker
 from src.models import NodeType
 
 
@@ -96,7 +98,9 @@ def test_section_body_text_excludes_repeated_header_via_full_pipeline():
 
     parser = LightPdfParser()
     parser._flag_repeated_headers(extracts)
-    nodes, _edges = parser._build_from_extracts(extracts, "sample-doc", page_count=6)
+    ir = parser._to_document_ir(extracts, toc=None, source_name="sample-doc", page_count=6)
+    chunks = StructuralChunker().chunk(ir)
+    nodes, _edges = Axis1StructuralBuilder()._build_from_extracts(ir, chunks)
 
     sections = [n for n in nodes if n.type == NodeType.SECTION]
     assert sections, "expected at least one section to be built"
