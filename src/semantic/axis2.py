@@ -556,8 +556,23 @@ class Axis2Builder:
         # mean anything (small documents, or a chat provider unavailable
         # so NER never ran) -- same fallback shape as before this change,
         # not a behavior regression for that case.
+        #
+        # Canonicalized the same way _build_entity_edges is (_canonicalize_
+        # entities), so "Newton"/"newton's"/"Sir Isaac Newton" count as one
+        # clustering dimension instead of three separate near-duplicate
+        # ones. Deliberately NOT filtered through _build_entity_edges's
+        # _informative_entities genericity cutoff, though -- that threshold
+        # is calibrated for PAIRWISE edge-anchoring (a term touching >40% of
+        # nodes makes a poor excuse to link any two of them), not for
+        # clustering, where a term split roughly 50/50 across the corpus is
+        # exactly the kind of feature that makes two real clusters
+        # separable. Reusing that cutoff here was tried and breaks that
+        # legitimate case (verified via
+        # test_same_category_uses_entity_signal_when_entities_available).
         target_nodes = [n for n in nodes if n.entities]
-        vocab = sorted({e.lower() for n in target_nodes for e in n.entities})
+        raw_entities = {e.lower() for n in target_nodes for e in n.entities}
+        canonical = _canonicalize_entities(raw_entities) if raw_entities else {}
+        vocab = sorted({canonical[e.lower()] for n in target_nodes for e in n.entities})
         signal = "entity_cooccurrence"
         if len(target_nodes) < 3 or len(vocab) < 2:
             target_nodes = [n for n in nodes if n.embedding is not None]
@@ -571,12 +586,37 @@ class Axis2Builder:
             raw = np.zeros((len(target_nodes), len(vocab)), dtype=np.float32)
             doc_freq = np.zeros(len(vocab), dtype=np.float32)
             for row, node in enumerate(target_nodes):
-                touched = {vocab_index[e.lower()] for e in node.entities}
+                touched = {vocab_index[canonical[e.lower()]] for e in node.entities}
                 for idx in touched:
                     raw[row, idx] += 1
                     doc_freq[idx] += 1
             idf = np.log((len(target_nodes) + 1) / (doc_freq + 1)) + 1
             vecs = raw * idf
+
+            # Drop nodes whose entity vector is negligible relative to the
+            # rest of the corpus, instead of letting them into clustering at
+            # all -- verified live on a real SEC filing: a cover-page node
+            # whose only entities were boilerplate ("United States",
+            # "Securities and Exchange Commission", both near-100% document
+            # frequency, so idf collapses toward its floor of 1) ended up
+            # with a near-zero raw*idf vector. `vecs / (norms + 1e-10)`
+            # below turns a near-zero vector into an unstable, arbitrary-
+            # direction unit vector, which then scored spuriously high
+            # cosine similarity against unrelated sections -- one low-
+            # content node fanning out into dozens of bad SAME_CATEGORY
+            # edges. A RELATIVE floor (fraction of the corpus median), not
+            # an absolute one, since a node's total vector magnitude scales
+            # with how many distinct entities it has and how rare they are,
+            # which varies a lot document to document.
+            norms_pre = np.linalg.norm(vecs, axis=1)
+            nonzero = norms_pre[norms_pre > 0]
+            median_norm = float(np.median(nonzero)) if nonzero.size else 0.0
+            keep_mask = norms_pre >= (median_norm * 0.1) if median_norm > 0 else norms_pre > 0
+            if not bool(np.all(keep_mask)):
+                target_nodes = [n for n, keep in zip(target_nodes, keep_mask) if keep]
+                vecs = vecs[keep_mask]
+                if len(target_nodes) < 3:
+                    return nodes, edges
         else:
             vecs = np.array([n.embedding for n in target_nodes], dtype=np.float32)
 
