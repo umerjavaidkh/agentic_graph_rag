@@ -11,6 +11,7 @@ from typing import Optional
 
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
+from ....storage.hydrator import BlobHydrator
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import _doc_scope_cypher
 from ..text_utils import _extract_urls
@@ -127,7 +128,8 @@ class LexicalService:
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
-              coalesce(n.search_text, '') AS text,
+              n.blob_key_text AS blob_key_text,
+              coalesce(n.search_text, '') AS search_text,
               n.page_start AS page_start,
               matched,
               w
@@ -142,6 +144,7 @@ class LexicalService:
             weight=weight,
         )
 
+        hydrator = BlobHydrator()
         items: list[dict] = []
         for r in rows:
             if not r.get("id"):
@@ -149,10 +152,11 @@ class LexicalService:
             matched = r.get("matched") or []
             w = float(r.get("w") or 0.0)
             title = r.get("title") or r["id"]
+            full_text = hydrator.hydrate(r.get("blob_key_text"), r.get("search_text") or "")
             items.append({
                 "id": r["id"],
                 "title": title,
-                "text": self.enrich_chunk_text_for_facts(title, r.get("text") or ""),
+                "text": self.enrich_chunk_text_for_facts(title, full_text),
                 "page_start": r.get("page_start"),
                 "score": 0.88 + 0.06 * min(len(matched), 4) + 0.01 * min(w, 20),
                 "related": ["via:keyword_search"],
@@ -202,7 +206,8 @@ class LexicalService:
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
-              coalesce(n.search_text, '') AS text,
+              n.blob_key_text AS blob_key_text,
+              coalesce(n.search_text, '') AS search_text,
               n.page_start AS page_start,
               phrase_hits,
               coalesce(d.title, d.id) AS doc_title
@@ -215,12 +220,14 @@ class LexicalService:
             tenant_id=tenant_id,
         )
 
+        hydrator = BlobHydrator()
         items: list[dict] = []
         for r in rows:
             if not r.get("id"):
                 continue
             title = r.get("title") or r["id"]
-            text = self.enrich_chunk_text_for_facts(title, r.get("text") or "")
+            full_text = hydrator.hydrate(r.get("blob_key_text"), r.get("search_text") or "")
+            text = self.enrich_chunk_text_for_facts(title, full_text)
             score = 0.9 + 0.08 * int(r.get("phrase_hits") or 0)
             if len(text) < 1200:
                 score += 0.12

@@ -19,6 +19,7 @@ from ....document.page_numbers import parse_page_number_from_query
 from ....document.page_vision import compact_visual_content
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
+from ....storage.hydrator import BlobHydrator
 from ..cypher_scope import _doc_scope_cypher
 from ..query_intent import FIG_CAPTION_RE as _FIG_CAPTION_RE
 from ..query_intent import is_page_question, is_visual_page_question
@@ -369,7 +370,8 @@ class PageStrategy:
               }}) AS regions,
               collect(DISTINCT {{
                 title: coalesce(s.title, ''),
-                text: coalesce(s.search_text, '')
+                blob_key_text: s.blob_key_text,
+                search_text: coalesce(s.search_text, '')
               }}) AS sections
             """,
             doc_id=doc_id,
@@ -393,10 +395,11 @@ class PageStrategy:
         if visual:
             parts.extend(["", "## Visual content (tables/figures)", visual])
 
+        hydrator = BlobHydrator()
         for sec in row.get("sections") or []:
             if not sec or not sec.get("title"):
                 continue
-            body = (sec.get("text") or "").strip()
+            body = hydrator.hydrate(sec.get("blob_key_text"), sec.get("search_text") or "").strip()
             if body:
                 parts.extend(["", f"## Related section: {sec['title']}", body[:2500]])
 

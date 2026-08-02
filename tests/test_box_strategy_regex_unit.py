@@ -52,8 +52,8 @@ def test_exact_title_match_outranks_a_longer_unrelated_box(box):
     """The real-world failure case: a short, exact "Box 9" match must beat
     a longer "Box 8" chunk once title-match scoring actually works."""
     rows = [
-        {"id": "n_box8", "title": "Box 8", "text": "Box 8\n\n" + ("filler " * 100)},
-        {"id": "n_box9", "title": "Box 9", "text": "Box 9\n\nShort real content."},
+        {"id": "n_box8", "title": "Box 8", "search_text": "Box 8\n\n" + ("filler " * 100)},
+        {"id": "n_box9", "title": "Box 9", "search_text": "Box 9\n\nShort real content."},
     ]
     session = _FakeSession(rows)
     items = box._structural_box_content(session, "What is Box 9 about?", 9, "")
@@ -62,8 +62,8 @@ def test_exact_title_match_outranks_a_longer_unrelated_box(box):
 
 def test_text_match_beats_no_match_when_titles_are_generic(box):
     rows = [
-        {"id": "n_untitled", "title": "", "text": "General discussion with no box reference here " * 5},
-        {"id": "n_mentions9", "title": "", "text": "Box 9 covers the PowerBI dashboard templates."},
+        {"id": "n_untitled", "title": "", "search_text": "General discussion with no box reference here " * 5},
+        {"id": "n_mentions9", "title": "", "search_text": "Box 9 covers the PowerBI dashboard templates."},
     ]
     session = _FakeSession(rows)
     items = box._structural_box_content(session, "What is Box 9 about?", 9, "")
@@ -71,7 +71,7 @@ def test_text_match_beats_no_match_when_titles_are_generic(box):
 
 
 def test_heading_synthesis_prefers_title_when_it_names_the_box(box):
-    rows = [{"id": "n1", "title": "Box 3: Example", "text": "Box 3: Example\n\nSome content about box 3."}]
+    rows = [{"id": "n1", "title": "Box 3: Example", "search_text": "Box 3: Example\n\nSome content about box 3."}]
     session = _FakeSession(rows)
     items = box._structural_box_headings(session, "list all boxes", "")
     assert items[0]["title"] == "Box 3: Example"

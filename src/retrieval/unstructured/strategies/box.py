@@ -16,6 +16,7 @@ from typing import Any, Optional
 from ....auth.roles import UserContext
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
+from ....storage.hydrator import BlobHydrator
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import _doc_scope_cypher
 from ..executor import DocumentQueryExecutor
@@ -109,7 +110,8 @@ class BoxStrategy:
             RETURN
               coalesce(n.id,'') AS id,
               coalesce(n.title,'') AS title,
-              coalesce(n.search_text,'') AS text,
+              n.blob_key_text AS blob_key_text,
+              coalesce(n.search_text,'') AS search_text,
               n.page_start AS page_start
             LIMIT 250
             """,
@@ -118,11 +120,12 @@ class BoxStrategy:
             tenant_id=tenant_id,
         )
 
+        hydrator = BlobHydrator()
         found: dict[int, dict] = {}
         for r in rows:
             rid = r.get("id") or ""
             title = (r.get("title") or "").strip()
-            text = (r.get("text") or "").strip()
+            text = hydrator.hydrate(r.get("blob_key_text"), r.get("search_text") or "").strip()
             hay = f"{title}\n{text}"
             for num in self._exec.extract_box_numbers(hay):
                 if num in found:
@@ -173,7 +176,8 @@ class BoxStrategy:
             RETURN
               coalesce(n.id,'') AS id,
               coalesce(n.title,'') AS title,
-              coalesce(n.search_text,'') AS text,
+              n.blob_key_text AS blob_key_text,
+              coalesce(n.search_text,'') AS search_text,
               n.page_start AS page_start
             LIMIT 20
             """,
@@ -183,11 +187,12 @@ class BoxStrategy:
             tenant_id=tenant_id,
         )
 
+        hydrator = BlobHydrator()
         items: list[dict] = []
         for r in rows:
             rid = r.get("id") or ""
             title = (r.get("title") or "").strip()
-            text = (r.get("text") or "").strip()
+            text = hydrator.hydrate(r.get("blob_key_text"), r.get("search_text") or "").strip()
             if not rid or not (title or text):
                 continue
             # Prefer chunks whose title explicitly contains Box N. (Regex

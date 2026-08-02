@@ -11,6 +11,7 @@ from typing import Any, Optional
 from ....auth.roles import UserContext
 from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
+from ....storage.hydrator import BlobHydrator
 from ..cypher_scope import _node_scope_cypher
 from ..executor import DocumentQueryExecutor
 from ..query_intent import is_toc_question
@@ -238,6 +239,7 @@ class TocStrategy:
               AND trim(coalesce(s.title, '')) <> ''
             RETURN
               trim(s.title) AS title,
+              s.blob_key_text AS blob_key_text,
               coalesce(s.search_text, '') AS text,
               coalesce(s.order, 0) AS ord
             ORDER BY ord
@@ -245,11 +247,15 @@ class TocStrategy:
             doc_id=doc_id,
             tenant_id=tenant_id,
         )
+        hydrator = BlobHydrator()
         for r in rows:
             if section_title_is_toc(r.get("title") or ""):
-                body = (r.get("text") or "").strip()
+                full_text = hydrator.hydrate(r.get("blob_key_text"), r.get("text") or "")
+                body = full_text.strip()
                 if len(body) >= 30:
-                    return dict(r)
+                    result = dict(r)
+                    result["text"] = full_text
+                    return result
         return None
 
     def _toc_outline_fallback(

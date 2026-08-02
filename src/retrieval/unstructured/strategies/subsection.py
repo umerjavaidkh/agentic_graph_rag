@@ -12,6 +12,7 @@ from typing import Any, Optional
 from ....auth.roles import UserContext
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
+from ....storage.hydrator import BlobHydrator
 from ..cypher_scope import _doc_scope_cypher
 from ..executor import DocumentQueryExecutor
 from ..services.document_resolver import DocumentResolver
@@ -214,6 +215,7 @@ class SubsectionStrategy:
               s.id AS sid,
               s.title AS stitle,
               coalesce(s.summary, '') AS ssummary,
+              s.blob_key_text AS sblob_key,
               coalesce(s.search_text, '') AS stext,
               s.page_start AS spage_start
             LIMIT 1
@@ -225,7 +227,8 @@ class SubsectionStrategy:
         if not row:
             return None
         summary = (row.get("ssummary") or "").strip()
-        text = summary if summary else (row.get("stext") or "").strip()[:_MULTI_REF_EXCERPT_CHARS]
+        full_text = BlobHydrator().hydrate(row.get("sblob_key"), row.get("stext") or "")
+        text = summary if summary else full_text.strip()[:_MULTI_REF_EXCERPT_CHARS]
         if not text:
             return None
         return {
@@ -269,9 +272,11 @@ class SubsectionStrategy:
             RETURN
               s.id AS sid,
               s.title AS stitle,
+              s.blob_key_text AS sblob_key,
               coalesce(s.search_text,'') AS stext,
               s.page_start AS spage_start,
-              collect({{id: c.id, title: c.title, text: coalesce(c.search_text,''), page_start: c.page_start}}) AS children
+              collect({{id: c.id, title: c.title, blob_key_text: c.blob_key_text,
+                        text: coalesce(c.search_text,''), page_start: c.page_start}}) AS children
             LIMIT 1
             """,
             doc_id=doc_id,
@@ -281,10 +286,11 @@ class SubsectionStrategy:
         if not row:
             return [], {}, doc_id, doc_title
 
+        hydrator = BlobHydrator()
         parent = {
             "id": row.get("sid") or "",
             "title": (row.get("stitle") or "").strip(),
-            "text": (row.get("stext") or "").strip(),
+            "text": hydrator.hydrate(row.get("sblob_key"), row.get("stext") or "").strip(),
             "page_start": row.get("spage_start"),
             "score": 1.0,
             "related": ["via:section_lookup"],
@@ -298,7 +304,7 @@ class SubsectionStrategy:
             items.append({
                 "id": c["id"],
                 "title": c["title"],
-                "text": (c.get("text") or "").strip(),
+                "text": hydrator.hydrate(c.get("blob_key_text"), c.get("text") or "").strip(),
                 "page_start": c.get("page_start"),
                 "score": 1.0,
                 "related": ["via:subsections"],
