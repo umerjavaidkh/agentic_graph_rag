@@ -526,16 +526,19 @@ class TestExporterBatch:
         from src.exporter.exporter import Neo4jExporter
         node = self._make_node()
         d = Neo4jExporter._node_to_param_dict(node)
-        for key in ("id", "title", "text", "logical_doc_id", "revision_id",
-                    "lifecycle_status", "entities"):
+        for key in ("id", "title", "search_text", "vector_id", "logical_doc_id",
+                    "revision_id", "lifecycle_status", "entities"):
             assert key in d, f"Missing key: {key}"
 
-    def test_node_to_param_dict_excludes_embedding(self):
-        """Embeddings are authoritative in the vector store only (see
-        _dual_write_chunk) -- Neo4j must never receive n.embedding."""
+    def test_node_to_param_dict_excludes_text_and_embedding(self):
+        """text/embedding are authoritative in the blob/vector stores only
+        (see _dual_write_chunk) -- Neo4j must never receive either as of
+        the phase-3 write-side strip (docs/DESIGN_unstructured_graph_v2.md).
+        search_text/blob_key_text/vector_id are what Neo4j keeps instead."""
         from src.exporter.exporter import Neo4jExporter
         node = self._make_node()
         d = Neo4jExporter._node_to_param_dict(node)
+        assert "text" not in d
         assert "embedding" not in d
 
     def test_node_to_param_dict_no_node_type_enum(self):
