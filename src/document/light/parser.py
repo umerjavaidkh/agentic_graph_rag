@@ -29,6 +29,7 @@ from ..patterns import (
     REFERENCE_PATTERN,
     is_standalone_number,
     number_depth,
+    parent_number,
     parse_numbered_title,
     slug,
 )
@@ -862,6 +863,19 @@ class LightPdfParser:
                     current_section = None
                     heading_stack = [(0, document_id), (level, node_id)]
                     link_contains(document_id, node_id)
+
+                    # Chapters need to be in number_map too, not just
+                    # sections -- otherwise _link_number_hierarchy's
+                    # post-pass can never find a numbered CHAPTER as a
+                    # parent (e.g. "Item 1A" looking up "Item 1"), which
+                    # matters whenever unnumbered body text between the
+                    # chapter heading and its first numbered subsection
+                    # gets wrapped into an auto "Preamble" section -- the
+                    # streaming heading-stack nests the subsection under
+                    # that Preamble instead of the chapter, and only the
+                    # post-pass can correct it.
+                    if section_number:
+                        number_map[section_number] = node_id
                 else:
                     global_section_idx += 1
                     node_id = f"{document_id}_section_{chapter_idx}_{global_section_idx}"
@@ -1046,10 +1060,9 @@ class LightPdfParser:
             if e.rel_type == RelType.CONTAINS
         }
         for num, node_id in number_map.items():
-            parts = num.split(".")
-            if len(parts) < 2:
+            parent_num = parent_number(num)
+            if parent_num is None:
                 continue
-            parent_num = ".".join(parts[:-1])
             parent_id = number_map.get(parent_num)
             if parent_id and parent_id != node_id:
                 key = (parent_id, node_id)
