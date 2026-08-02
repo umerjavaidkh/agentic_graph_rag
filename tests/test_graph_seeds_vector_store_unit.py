@@ -68,7 +68,7 @@ def test_vector_seed_via_vector_store_hydrates_from_neo4j(service, monkeypatch):
         {"query": lambda self, embedding, top_k=10, filters=None: [("id1", 0.9), ("id2", 0.5)]},
     )()
     monkeypatch.setattr(graph_seeds_mod, "get_vector_store", lambda: fake_store)
-    monkeypatch.setattr(graph_seeds_mod, "BlobHydrator", _FakeHydrator)
+    monkeypatch.setattr(graph_seeds_mod, "get_hydrator", _FakeHydrator)
 
     session = _FakeSession(
         [
@@ -108,7 +108,7 @@ def test_vector_seed_via_vector_store_drops_ids_missing_from_neo4j(service, monk
         {"query": lambda self, *a, **k: [("id1", 0.9), ("stale_id", 0.8)]},
     )()
     monkeypatch.setattr(graph_seeds_mod, "get_vector_store", lambda: fake_store)
-    monkeypatch.setattr(graph_seeds_mod, "BlobHydrator", _FakeHydrator)
+    monkeypatch.setattr(graph_seeds_mod, "get_hydrator", _FakeHydrator)
 
     # Neo4j only returns id1 — stale_id has no matching node (e.g. purged on supersede).
     session = _FakeSession(

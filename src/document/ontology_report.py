@@ -15,7 +15,7 @@ from typing import Optional
 from ..config.settings import CHAT_MODEL
 from ..model_providers.factory import get_chat_provider
 from ..storage.blob.factory import get_blob_store
-from ..storage.hydrator import BlobHydrator
+from ..storage.hydrator import get_hydrator
 from .ontology_validation import (
     ONTOLOGY_ACCURACY_TARGET,
     extract_toc_ground_truth,
@@ -87,7 +87,7 @@ def _sample_edges(session, logical_doc_id: str, revision_id: str, n: int) -> lis
         rel_types=list(_SEMANTIC_REL_TYPES),
         n=n,
     )
-    hydrator = BlobHydrator()
+    hydrator = get_hydrator()
     return [
         {
             "source_text": hydrator.hydrate(r["source_blob_key"]),
@@ -112,7 +112,7 @@ def _sample_entities(session, logical_doc_id: str, revision_id: str, n: int) -> 
         revision_id=revision_id,
         n=n,
     )
-    hydrator = BlobHydrator()
+    hydrator = get_hydrator()
     out: list[dict] = []
     for r in rows:
         text = hydrator.hydrate(r["source_blob_key"])

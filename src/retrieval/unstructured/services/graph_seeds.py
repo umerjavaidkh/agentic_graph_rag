@@ -11,7 +11,7 @@ import logging
 from ....config.settings import EMBEDDING_MODEL, VECTOR_STORE_BACKEND
 from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
-from ....storage.hydrator import BlobHydrator
+from ....storage.hydrator import get_hydrator
 from ....storage.vector.factory import get_vector_store
 from ..constants import _GRAPH_REL_TYPES, _TEXT_NODE_LABELS
 from ....model_providers.factory import get_embedding_provider
@@ -144,7 +144,7 @@ class GraphSeedService:
                 tenant_id=tenant_id,
             )
             by_id = {r["id"]: r for r in rows if r["id"]}
-            hydrator = BlobHydrator()
+            hydrator = get_hydrator()
             results = [
                 {
                     "id": id,

@@ -11,7 +11,7 @@ from typing import Any, Optional
 from ....auth.roles import UserContext
 from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
-from ....storage.hydrator import BlobHydrator
+from ....storage.hydrator import get_hydrator
 from ..cypher_scope import _node_scope_cypher
 from ..executor import DocumentQueryExecutor
 from ..query_intent import is_toc_question
@@ -247,7 +247,7 @@ class TocStrategy:
             doc_id=doc_id,
             tenant_id=tenant_id,
         )
-        hydrator = BlobHydrator()
+        hydrator = get_hydrator()
         for r in rows:
             if section_title_is_toc(r.get("title") or ""):
                 full_text = hydrator.hydrate(r.get("blob_key_text"), r.get("text") or "")

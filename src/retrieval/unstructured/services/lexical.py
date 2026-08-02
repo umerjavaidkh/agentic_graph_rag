@@ -11,7 +11,7 @@ from typing import Optional
 
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
-from ....storage.hydrator import BlobHydrator
+from ....storage.hydrator import get_hydrator
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import _doc_scope_cypher
 from ..text_utils import _extract_urls
@@ -144,7 +144,7 @@ class LexicalService:
             weight=weight,
         )
 
-        hydrator = BlobHydrator()
+        hydrator = get_hydrator()
         items: list[dict] = []
         for r in rows:
             if not r.get("id"):
@@ -220,7 +220,7 @@ class LexicalService:
             tenant_id=tenant_id,
         )
 
-        hydrator = BlobHydrator()
+        hydrator = get_hydrator()
         items: list[dict] = []
         for r in rows:
             if not r.get("id"):

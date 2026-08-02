@@ -16,7 +16,7 @@ from typing import Any, Optional
 from ....auth.roles import UserContext
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
-from ....storage.hydrator import BlobHydrator
+from ....storage.hydrator import get_hydrator
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import _doc_scope_cypher
 from ..executor import DocumentQueryExecutor
@@ -120,7 +120,7 @@ class BoxStrategy:
             tenant_id=tenant_id,
         )
 
-        hydrator = BlobHydrator()
+        hydrator = get_hydrator()
         found: dict[int, dict] = {}
         for r in rows:
             rid = r.get("id") or ""
@@ -187,7 +187,7 @@ class BoxStrategy:
             tenant_id=tenant_id,
         )
 
-        hydrator = BlobHydrator()
+        hydrator = get_hydrator()
         items: list[dict] = []
         for r in rows:
             rid = r.get("id") or ""

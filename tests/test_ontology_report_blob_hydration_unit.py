@@ -51,7 +51,7 @@ class _FakeHydrator:
 def test_sample_edges_hydrates_source_and_target_from_blob_key(monkeypatch):
     monkeypatch.setattr(
         ontology_report_mod,
-        "BlobHydrator",
+        "get_hydrator",
         lambda: _FakeHydrator({"blob/a": "full source text", "blob/b": "full target text"}),
     )
     session = _FakeSession(
@@ -83,7 +83,7 @@ def test_sample_edges_hydrates_source_and_target_from_blob_key(monkeypatch):
 
 
 def test_sample_edges_missing_blob_key_degrades_to_empty_string(monkeypatch):
-    monkeypatch.setattr(ontology_report_mod, "BlobHydrator", lambda: _FakeHydrator({}))
+    monkeypatch.setattr(ontology_report_mod, "get_hydrator", lambda: _FakeHydrator({}))
     session = _FakeSession(
         [{"source_blob_key": None, "target_blob_key": "blob/missing", "rel_type": "SAME_CATEGORY", "shared": ""}]
     )
@@ -97,7 +97,7 @@ def test_sample_edges_missing_blob_key_degrades_to_empty_string(monkeypatch):
 def test_sample_entities_hydrates_source_text_from_blob_key(monkeypatch):
     monkeypatch.setattr(
         ontology_report_mod,
-        "BlobHydrator",
+        "get_hydrator",
         lambda: _FakeHydrator({"blob/node1": "node one full text"}),
     )
     session = _FakeSession(
@@ -114,7 +114,7 @@ def test_sample_entities_hydrates_source_text_from_blob_key(monkeypatch):
 
 def test_sample_entities_respects_n_cap_after_flattening(monkeypatch):
     monkeypatch.setattr(
-        ontology_report_mod, "BlobHydrator", lambda: _FakeHydrator({"blob/node1": "text"})
+        ontology_report_mod, "get_hydrator", lambda: _FakeHydrator({"blob/node1": "text"})
     )
     session = _FakeSession(
         [{"source_blob_key": "blob/node1", "entities": ["a", "b", "c", "d", "e"]}]

@@ -19,7 +19,7 @@ from ....document.page_numbers import parse_page_number_from_query
 from ....document.page_vision import compact_visual_content
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
-from ....storage.hydrator import BlobHydrator
+from ....storage.hydrator import get_hydrator
 from ..cypher_scope import _doc_scope_cypher
 from ..query_intent import FIG_CAPTION_RE as _FIG_CAPTION_RE
 from ..query_intent import is_page_question, is_visual_page_question
@@ -395,7 +395,7 @@ class PageStrategy:
         if visual:
             parts.extend(["", "## Visual content (tables/figures)", visual])
 
-        hydrator = BlobHydrator()
+        hydrator = get_hydrator()
         for sec in row.get("sections") or []:
             if not sec or not sec.get("title"):
                 continue

@@ -12,7 +12,7 @@ from typing import Any, Optional
 from ....auth.roles import UserContext
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
-from ....storage.hydrator import BlobHydrator
+from ....storage.hydrator import get_hydrator
 from ..cypher_scope import _doc_scope_cypher
 from ..executor import DocumentQueryExecutor
 from ..services.document_resolver import DocumentResolver
@@ -227,7 +227,7 @@ class SubsectionStrategy:
         if not row:
             return None
         summary = (row.get("ssummary") or "").strip()
-        full_text = BlobHydrator().hydrate(row.get("sblob_key"), row.get("stext") or "")
+        full_text = get_hydrator().hydrate(row.get("sblob_key"), row.get("stext") or "")
         text = summary if summary else full_text.strip()[:_MULTI_REF_EXCERPT_CHARS]
         if not text:
             return None
@@ -286,7 +286,7 @@ class SubsectionStrategy:
         if not row:
             return [], {}, doc_id, doc_title
 
-        hydrator = BlobHydrator()
+        hydrator = get_hydrator()
         parent = {
             "id": row.get("sid") or "",
             "title": (row.get("stitle") or "").strip(),
