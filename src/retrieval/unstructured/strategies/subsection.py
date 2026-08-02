@@ -214,7 +214,7 @@ class SubsectionStrategy:
               s.id AS sid,
               s.title AS stitle,
               coalesce(s.summary, '') AS ssummary,
-              coalesce(s.text, '') AS stext,
+              coalesce(s.search_text, '') AS stext,
               s.page_start AS spage_start
             LIMIT 1
             """,
@@ -269,9 +269,9 @@ class SubsectionStrategy:
             RETURN
               s.id AS sid,
               s.title AS stitle,
-              coalesce(s.text,'') AS stext,
+              coalesce(s.search_text,'') AS stext,
               s.page_start AS spage_start,
-              collect({{id: c.id, title: c.title, text: coalesce(c.text,''), page_start: c.page_start}}) AS children
+              collect({{id: c.id, title: c.title, text: coalesce(c.search_text,''), page_start: c.page_start}}) AS children
             LIMIT 1
             """,
             doc_id=doc_id,

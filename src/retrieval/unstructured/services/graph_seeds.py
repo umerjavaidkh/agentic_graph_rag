@@ -68,14 +68,14 @@ class GraphSeedService:
                 f"""
                 CALL db.index.vector.queryNodes('section_embedding', $index_limit, $embedding)
                 YIELD node AS n, score
-                WHERE coalesce(n.text, '') <> ''
+                WHERE coalesce(n.search_text, '') <> ''
                   AND {lifecycle_active("n")}
                   AND {tenant_filter("n")}
                   AND {_document_filter("n", document_id)}
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
-                  coalesce(n.text, '') AS text,
+                  coalesce(n.search_text, '') AS text,
                   coalesce(labels(n)[0], '') AS node_label,
                   n.page_start AS page_start,
                   score
@@ -182,7 +182,7 @@ class GraphSeedService:
                 f"""
                 CALL db.index.fulltext.queryNodes('node_text_index', $q, {{limit: $index_limit}})
                 YIELD node AS n, score
-                WHERE coalesce(n.text, '') <> ''
+                WHERE coalesce(n.search_text, '') <> ''
                   AND {lifecycle_active("n")}
                   AND {tenant_filter("n")}
                   AND {_document_filter("n", document_id)}
@@ -190,7 +190,7 @@ class GraphSeedService:
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
-                  coalesce(n.text, '') AS text,
+                  coalesce(n.search_text, '') AS text,
                   coalesce(labels(n)[0], '') AS node_label,
                   n.page_start AS page_start,
                   score
@@ -239,14 +239,14 @@ class GraphSeedService:
                 MATCH (seed)-[r]-(related)
                 WHERE type(r) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
-                  AND coalesce(related.text, '') <> ''
+                  AND coalesce(related.search_text, '') <> ''
                   AND {lifecycle_active("related")}
                   AND {tenant_filter("related")}
                   AND {_document_filter("related", document_id)}
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
                   coalesce(related.title, '') AS title,
-                  coalesce(related.text, '') AS text,
+                  coalesce(related.search_text, '') AS text,
                   coalesce(labels(related)[0], '') AS node_label,
                   related.page_start AS page_start,
                   type(r) AS rel_type,
@@ -265,7 +265,7 @@ class GraphSeedService:
                 WHERE type(r1) IN $rel_types
                   AND type(r2) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
-                  AND coalesce(related.text, '') <> ''
+                  AND coalesce(related.search_text, '') <> ''
                   AND {lifecycle_active("related")}
                   AND {tenant_filter("related")}
                   AND {_document_filter("related", document_id)}
@@ -273,7 +273,7 @@ class GraphSeedService:
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
                   coalesce(related.title, '') AS title,
-                  coalesce(related.text, '') AS text,
+                  coalesce(related.search_text, '') AS text,
                   coalesce(labels(related)[0], '') AS node_label,
                   related.page_start AS page_start,
                   type(r1) + '->' + type(r2) AS rel_type,

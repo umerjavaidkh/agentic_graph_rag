@@ -137,7 +137,7 @@ def query_final_snapshot_sync(session, logical_doc_id: str, revision_id: str) ->
         MATCH (n) WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
         RETURN n.id AS id, labels(n) AS labels, n.title AS title, n.order AS order,
                n.depth AS depth, n.page_start AS page_start, n.page_end AS page_end,
-               size(coalesce(n.text, '')) AS text_len, size(coalesce(n.entities, [])) AS n_entities,
+               size(coalesce(n.search_text, '')) AS text_len, size(coalesce(n.entities, [])) AS n_entities,
                n.embedding IS NOT NULL AS has_embedding, n.region_kind AS region_kind
         """,
         logical_doc_id=logical_doc_id, revision_id=revision_id,

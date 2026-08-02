@@ -471,11 +471,11 @@ class Neo4jExporter:
         statements = [
             "CREATE FULLTEXT INDEX node_text_index IF NOT EXISTS "
             "FOR (n:Book|Chapter|Section|Page|Region|Concept) "
-            "ON EACH [n.title, n.text, n.visual_content]",
+            "ON EACH [n.title, n.search_text, n.visual_content]",
             "CREATE FULLTEXT INDEX page_visual_index IF NOT EXISTS "
-            "FOR (n:Page) ON EACH [n.visual_content, n.title, n.text, n.document_page]",
+            "FOR (n:Page) ON EACH [n.visual_content, n.title, n.search_text, n.document_page]",
             "CREATE FULLTEXT INDEX region_tag_index IF NOT EXISTS "
-            "FOR (n:Region) ON EACH [n.title, n.text, n.region_tags, n.region_kind]",
+            "FOR (n:Region) ON EACH [n.title, n.search_text, n.region_tags, n.region_kind]",
             "CREATE FULLTEXT INDEX page_number_index IF NOT EXISTS "
             "FOR (n:Page) ON EACH [n.document_page, n.page_tags, n.title]",
             "CREATE INDEX section_order IF NOT EXISTS FOR (n:Section) ON (n.order)",

@@ -81,13 +81,13 @@ class LexicalService:
               AND {tenant_filter("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.text, '') <> ''
+              AND coalesce(n.search_text, '') <> ''
               AND (
                 EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
                 OR n.id STARTS WITH d.id + '_'
               )
             UNWIND $keywords AS k
-            WITH k, n WHERE toLower(n.text) CONTAINS k
+            WITH k, n WHERE toLower(n.search_text) CONTAINS k
             RETURN k AS keyword, count(DISTINCT n) AS df
             """,
             doc_id=doc_id,
@@ -114,24 +114,24 @@ class LexicalService:
               AND {tenant_filter("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.text, '') <> ''
+              AND coalesce(n.search_text, '') <> ''
               AND (
                 EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
                 OR n.id STARTS WITH d.id + '_'
               )
             WITH n,
-              [k IN $keywords WHERE toLower(n.text) CONTAINS k] AS matched
+              [k IN $keywords WHERE toLower(n.search_text) CONTAINS k] AS matched
             WHERE size(matched) >= $min_hits
             WITH n, matched,
               reduce(s = 0.0, k IN matched | s + coalesce($weight[k], 0.0)) AS w
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
-              coalesce(n.text, '') AS text,
+              coalesce(n.search_text, '') AS text,
               n.page_start AS page_start,
               matched,
               w
-            ORDER BY w DESC, size(coalesce(n.text, '')) ASC
+            ORDER BY w DESC, size(coalesce(n.search_text, '')) ASC
             LIMIT 6
             """,
             doc_id=doc_id,
@@ -191,22 +191,22 @@ class LexicalService:
               AND {tenant_filter("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.text, '') <> ''
+              AND coalesce(n.search_text, '') <> ''
               AND (
                 EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
                 OR n.id STARTS WITH d.id + '_'
               )
-              AND any(phrase IN $phrases WHERE toLower(n.text) CONTAINS phrase)
+              AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
             WITH n, d,
-              size([p IN $phrases WHERE toLower(n.text) CONTAINS p]) AS phrase_hits
+              size([p IN $phrases WHERE toLower(n.search_text) CONTAINS p]) AS phrase_hits
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
-              coalesce(n.text, '') AS text,
+              coalesce(n.search_text, '') AS text,
               n.page_start AS page_start,
               phrase_hits,
               coalesce(d.title, d.id) AS doc_title
-            ORDER BY phrase_hits DESC, size(coalesce(n.text, '')) ASC
+            ORDER BY phrase_hits DESC, size(coalesce(n.search_text, '')) ASC
             LIMIT 6
             """,
             doc_id=doc_id,

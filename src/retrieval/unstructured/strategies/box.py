@@ -104,12 +104,12 @@ class BoxStrategy:
               )
               AND (
                 (n.title IS NOT NULL AND toLower(n.title) CONTAINS 'box')
-                OR (n.text IS NOT NULL AND toLower(n.text) CONTAINS 'box')
+                OR (n.search_text IS NOT NULL AND toLower(n.search_text) CONTAINS 'box')
               )
             RETURN
               coalesce(n.id,'') AS id,
               coalesce(n.title,'') AS title,
-              coalesce(n.text,'') AS text,
+              coalesce(n.search_text,'') AS text,
               n.page_start AS page_start
             LIMIT 250
             """,
@@ -168,12 +168,12 @@ class BoxStrategy:
               )
               AND (
                 (n.title IS NOT NULL AND toLower(n.title) CONTAINS $box_phrase)
-                OR (n.text IS NOT NULL AND toLower(n.text) CONTAINS $box_phrase)
+                OR (n.search_text IS NOT NULL AND toLower(n.search_text) CONTAINS $box_phrase)
               )
             RETURN
               coalesce(n.id,'') AS id,
               coalesce(n.title,'') AS title,
-              coalesce(n.text,'') AS text,
+              coalesce(n.search_text,'') AS text,
               n.page_start AS page_start
             LIMIT 20
             """,
@@ -244,10 +244,10 @@ class BoxStrategy:
               AND {tenant_filter("d")}
             MATCH (p:Page)
             WHERE p.id STARTS WITH d.id + '_page_'
-              AND toLower(coalesce(p.text, '')) CONTAINS $box_phrase
+              AND toLower(coalesce(p.search_text, '')) CONTAINS $box_phrase
               AND {tenant_filter("p")}
-            RETURN p.id AS id, p.title AS title, p.text AS text, p.pdf_page AS pdf_page
-            ORDER BY size(coalesce(p.text, '')) DESC
+            RETURN p.id AS id, p.title AS title, p.search_text AS text, p.pdf_page AS pdf_page
+            ORDER BY size(coalesce(p.search_text, '')) DESC
             LIMIT 3
             """,
             doc_id=doc_id,

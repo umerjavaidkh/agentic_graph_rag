@@ -58,7 +58,7 @@ class _FakeSession:
 
     def run(self, cypher, **kwargs):
         self.queries.append(cypher)
-        if "p.pdf_page AS pdf_page, p.text AS page_text" in cypher:
+        if "p.pdf_page AS pdf_page, p.search_text AS page_text" in cypher:
             return _FakeResult(self.figure_rows)
         return _FakeResult([self.page_row] if self.page_row else [])
 
