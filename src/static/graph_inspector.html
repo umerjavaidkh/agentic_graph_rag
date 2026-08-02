@@ -454,13 +454,65 @@
         .style('display', document.getElementById('show_edge_labels').checked ? null : 'none')
         .text(d => d.rel_type);
 
+      // Adjacency, built once per render, so drag/focus don't rescan all
+      // edges per node -- just the touching set.
+      const touchingEdges = new Map();
+      for (const e of renderEdges) {
+        (touchingEdges.get(e.source_id) || touchingEdges.set(e.source_id, []).get(e.source_id)).push(e);
+        (touchingEdges.get(e.target_id) || touchingEdges.set(e.target_id, []).get(e.target_id)).push(e);
+      }
+
+      function redrawEdgesTouching(nodeId) {
+        const touching = new Set(touchingEdges.get(nodeId) || []);
+        edgeSel.filter(e => touching.has(e))
+          .attr('d', e => edgePath(byId.get(e.source_id), byId.get(e.target_id), structuralOnly));
+        currentEdgeLabelSel.filter(e => touching.has(e))
+          .attr('transform', e => edgeLabelTransform(byId.get(e.source_id), byId.get(e.target_id), structuralOnly));
+      }
+
+      // Manual repositioning, not a re-run of the layout simulation --
+      // node.x/y are just overwritten and dependent edges redrawn, same
+      // idiom Neo4j Browser uses to let you drag a node out of a dense
+      // cluster without disturbing the rest of the layout.
+      const drag = d3.drag()
+        .on('start', function () { d3.select(this).raise(); })
+        .on('drag', function (event, d) {
+          d.x = event.x; d.y = event.y;
+          d3.select(this).attr('transform', `translate(${d.x},${d.y})`);
+          redrawEdgesTouching(d.id);
+        });
+
+      function clearFocus() {
+        nodeSel.attr('opacity', 1);
+        edgeSel.attr('opacity', d => (d.axis === 2 ? 0.5 : 0.8));
+        currentEdgeLabelSel.style('display', document.getElementById('show_edge_labels').checked ? null : 'none');
+      }
+
       const nodeSel = g.selectAll('g.graph-node')
         .data(nodes)
         .enter()
         .append('g')
         .attr('class', 'graph-node')
         .attr('transform', d => `translate(${d.x},${d.y})`)
+        .call(drag)
         .on('click', (event, d) => { event.stopPropagation(); showNodeDetail(d); })
+        .on('dblclick', (event, d) => {
+          // No backend round-trip: the full snapshot is already loaded, so
+          // "expand" here means reveal-by-dimming everything except d and
+          // its direct neighbors, rather than fetching anything new.
+          event.stopPropagation();
+          const neighborIds = new Set([d.id]);
+          for (const e of (touchingEdges.get(d.id) || [])) {
+            neighborIds.add(e.source_id); neighborIds.add(e.target_id);
+          }
+          nodeSel.attr('opacity', n => (neighborIds.has(n.id) ? 1 : 0.12));
+          edgeSel.attr('opacity', e => (neighborIds.has(e.source_id) && neighborIds.has(e.target_id) ? 1 : 0.05));
+          currentEdgeLabelSel.style('display', e =>
+            (neighborIds.has(e.source_id) && neighborIds.has(e.target_id))
+              ? (document.getElementById('show_edge_labels').checked ? null : 'none')
+              : 'none'
+          );
+        })
         .on('mouseenter', function (event, d) { d3.select(this).select('circle').attr('r', (NODE_RADIUS[d.type] || 5.5) * 1.35); })
         .on('mouseleave', function (event, d) { d3.select(this).select('circle').attr('r', NODE_RADIUS[d.type] || 5.5); });
 
@@ -475,6 +527,7 @@
 
       svg.on('click', () => {
         document.getElementById('detail_body').innerHTML = '<div class="detail-empty">Click a node or edge to inspect it.</div>';
+        clearFocus();
       });
 
       // Zoom/pan is entirely event-driven (wheel/drag), not tied to any
@@ -516,7 +569,7 @@
 
       const hint = document.createElement('div');
       hint.className = 'graph-hint';
-      hint.textContent = 'Scroll to zoom · drag to pan · click a node/edge for detail';
+      hint.textContent = 'Scroll to zoom · drag canvas to pan, drag a node to move it · click for detail · double-click a node to focus its neighbors';
       container.appendChild(hint);
     }
 
