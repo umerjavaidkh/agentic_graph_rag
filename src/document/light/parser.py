@@ -24,6 +24,7 @@ from ...config.settings import (
     PDF_PLUMBER_PAGE_TIMEOUT_SEC,
 )
 from ...models import DKGEdge, DKGNode, NodeType, RelType
+from ..ir import Block, DocumentIR, PageBlock
 from ..ocr import get_ocr_backend
 from ..page_numbers import enrich_page_nodes
 from ..patterns import (
@@ -153,6 +154,82 @@ class LightPdfParser:
             return self._build_from_extracts(extracts, source.stem, len(doc))
         finally:
             doc.close()
+
+    def parse_ir(self, source: str | Path) -> DocumentIR:
+        """Produce this document's storage-agnostic IR -- extraction phase
+        only, no graph construction (see docs/DESIGN_unstructured_graph_v2.md
+        §3). `parse()` above still calls the legacy _build_from_toc/
+        _build_from_extracts path directly for now; this method exists so
+        Axis1StructuralBuilder (src/graph/axis1_structural.py) can consume
+        IR instead of parser-private types, without every call site
+        switching over at once."""
+        source = Path(source)
+        if source.suffix.lower() != ".pdf":
+            raise ValueError("Only PDF ingestion is supported by the lightweight parser.")
+
+        doc = fitz.open(str(source))
+        try:
+            extracts = self._extract_pages(source, doc)
+            self._flag_repeated_headers(extracts)
+            toc = self._usable_toc(doc)
+            return self._to_document_ir(extracts, toc, source.stem, len(doc)).finalize()
+        finally:
+            doc.close()
+
+    def _block_to_ir(self, b: _PdfBlock) -> Block:
+        """Backend hook: convert one extracted _PdfBlock to its IR Block.
+        Base impl copies matching fields plus the two generic veto flags
+        already present on _PdfBlock (in_table_region/is_repeated_header)
+        into `extra`. Subclasses override to add backend-specific hints
+        (rtldoc's role classification, table_aware's table-fragment text
+        heuristic) that today live in per-class `_is_heading` overrides --
+        see RtldocPdfParser._block_to_ir / TableAwarePdfParser._block_to_ir."""
+        extra: dict = {}
+        if b.in_table_region:
+            extra["in_table_region"] = True
+        if b.is_repeated_header:
+            extra["is_repeated_header"] = True
+        return Block(
+            text=b.text,
+            page=b.page,
+            bbox=b.bbox,
+            page_size=b.page_size,
+            max_font_size=b.max_font_size,
+            avg_font_size=b.avg_font_size,
+            bold=b.bold,
+            source=b.source,
+            kind=b.kind,
+            low_confidence=b.low_confidence,
+            extra=extra,
+        )
+
+    def _to_document_ir(
+        self,
+        extracts: list[_PageExtract],
+        toc: list[tuple[int, str, int]] | None,
+        source_name: str,
+        page_count: int,
+    ) -> DocumentIR:
+        pages: list[PageBlock] = []
+        for extract in extracts:
+            pages.append(PageBlock(
+                page=extract.page,
+                text=extract.text,
+                # regions are independently-constructed _PdfBlock copies
+                # (see _regions_from_blocks), not the same objects as
+                # entries in .blocks -- converted separately here for the
+                # same reason, matching existing _PageExtract semantics.
+                blocks=[self._block_to_ir(b) for b in extract.blocks],
+                regions=[self._block_to_ir(r) for r in extract.regions],
+                confidence=extract.confidence,
+                low_confidence=extract.low_confidence,
+            ))
+        return DocumentIR(
+            source_name=source_name,
+            page_count=page_count,
+            pages=pages,
+            toc=toc,
+        )
 
     def _usable_toc(self, doc: fitz.Document) -> list[tuple[int, str, int]] | None:
         """Return the PDF's own embedded outline/bookmarks (level, title,
