@@ -61,6 +61,9 @@
     .graph-node { cursor: pointer; }
     .graph-node:hover circle { filter: drop-shadow(0 2px 5px rgba(15,23,42,0.5)); }
     .graph-edge { fill: none; stroke-linecap: round; transition: opacity 0.12s ease, stroke-width 0.12s ease; }
+    .edge-label { font-size: 7.5px; font-weight: 700; letter-spacing: 0.02em; text-anchor: middle; paint-order: stroke; stroke: #f8fafc; stroke-width: 3px; stroke-linejoin: round; pointer-events: none; text-transform: uppercase; }
+    .edge-toggle { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: #475569; margin-top: 0.6rem; font-weight: 600; }
+    .edge-toggle input { width: auto; margin: 0; }
     .zoom-controls { position: absolute; bottom: 14px; right: 14px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
     .zoom-btn { width: 30px; height: 30px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff; color: #334155; font-size: 1rem; font-weight: 700; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
     .zoom-btn:hover { background: #f1f5f9; }
@@ -109,6 +112,7 @@
       </div>
 
       <button id="load_btn" type="button">Load graph</button>
+      <label class="edge-toggle"><input type="checkbox" id="show_edge_labels" checked /> Show relationship names on edges</label>
       <div id="error_banner"></div>
 
       <div class="stats" id="stats" style="display:none;">
@@ -164,6 +168,7 @@
     let currentStage = 'x1_structural';
     let currentZoom = null;   // d3.zoom behavior, kept so the +/- buttons can drive it
     let currentSvg = null;
+    let currentEdgeLabelSel = null;  // <text class="edge-label"> selection, kept so the toggle checkbox can show/hide without a full re-render
 
     function ctx() {
       return {
@@ -397,6 +402,28 @@
       currentSvg = svg;
       const g = svg.append('g');
 
+      // One arrowhead marker per rel_type color actually present, so
+      // directed edges read like Neo4j Browser's arrow+label relationships
+      // instead of undirected lines. Marker id is derived from rel_type
+      // (already identifier-safe) rather than the color, so it stays
+      // legible in the DOM and stable across snapshots.
+      const usedRelTypes = Array.from(new Set(renderEdges.map(d => d.rel_type)));
+      const defs = svg.append('defs');
+      defs.selectAll('marker')
+        .data(usedRelTypes)
+        .enter()
+        .append('marker')
+        .attr('id', d => `arrow-${markerSafeId(d)}`)
+        .attr('viewBox', '0 0 10 10')
+        .attr('refX', 9)
+        .attr('refY', 5)
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .attr('orient', 'auto-start-reverse')
+        .append('path')
+        .attr('d', 'M0,0 L10,5 L0,10 Z')
+        .attr('fill', d => EDGE_COLORS[d] || '#cbd5e1');
+
       const edgeSel = g.selectAll('path.graph-edge')
         .data(renderEdges)
         .enter()
@@ -407,12 +434,25 @@
         .attr('stroke-width', d => (d.axis === 2 ? Math.min(1.2 + (d.weight || 1) * 0.35, 4) : 1.4))
         .attr('stroke-dasharray', d => (EDGE_DASH.has(d.rel_type) ? '3,3' : null))
         .attr('opacity', d => (d.axis === 2 ? 0.5 : 0.8))
+        .attr('marker-end', d => `url(#arrow-${markerSafeId(d.rel_type)})`)
         .style('cursor', 'pointer')
         .on('click', (event, d) => { event.stopPropagation(); showEdgeDetail(d); })
         .on('mouseenter', function () { d3.select(this).attr('opacity', 1).attr('stroke-width', 4); })
         .on('mouseleave', function (event, d) {
           d3.select(this).attr('opacity', d.axis === 2 ? 0.5 : 0.8).attr('stroke-width', d.axis === 2 ? Math.min(1.2 + (d.weight || 1) * 0.35, 4) : 1.4);
         });
+
+      // Relationship-name label at each edge's midpoint, matching Neo4j
+      // Browser's convention of printing the rel type on the line itself
+      // rather than only surfacing it in a side panel on click.
+      currentEdgeLabelSel = g.selectAll('text.edge-label')
+        .data(renderEdges)
+        .enter()
+        .append('text')
+        .attr('class', 'edge-label')
+        .attr('transform', d => edgeLabelTransform(byId.get(d.source_id), byId.get(d.target_id), structuralOnly))
+        .style('display', document.getElementById('show_edge_labels').checked ? null : 'none')
+        .text(d => d.rel_type);
 
       const nodeSel = g.selectAll('g.graph-node')
         .data(nodes)
@@ -489,6 +529,32 @@
       return `M${a.x},${a.y} C${a.x},${midY} ${b.x},${midY} ${b.x},${b.y}`;
     }
 
+    // marker id must be a valid CSS/DOM identifier; rel_type values
+    // (CONTAINS, SHARES_ENTITY, ...) already are, this just guards
+    // against any unexpected character rather than assuming it.
+    function markerSafeId(relType) {
+      return String(relType || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_');
+    }
+
+    function edgeLabelTransform(a, b, curved) {
+      if (!a || !b) return '';
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      if (curved) {
+        // Hierarchical tree edges are bezier curves, not straight lines --
+        // rotating text along a curve reads worse than just offsetting it
+        // beside the curve's midpoint and keeping it horizontal.
+        return `translate(${mx + 6},${my - 3})`;
+      }
+      // Straight (force-layout) edges: rotate the label to run along the
+      // line like Neo4j Browser does, flipping upside-down segments right
+      // side up so the text never reads inverted.
+      let angle = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+      if (angle > 90) angle -= 180;
+      if (angle < -90) angle += 180;
+      return `translate(${mx},${my - 4}) rotate(${angle})`;
+    }
+
     function field(k, v) {
       return `<div class="detail-field"><div class="k">${k}</div><div class="v">${v}</div></div>`;
     }
@@ -525,6 +591,9 @@
     });
     document.getElementById('load_btn').addEventListener('click', loadGraph);
     document.getElementById('refresh_docs').addEventListener('click', loadDocPicker);
+    document.getElementById('show_edge_labels').addEventListener('change', (e) => {
+      if (currentEdgeLabelSel) currentEdgeLabelSel.style('display', e.target.checked ? null : 'none');
+    });
 
     loadDocPicker();
   </script>
