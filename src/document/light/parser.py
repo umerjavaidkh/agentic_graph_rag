@@ -6,6 +6,7 @@ where text/table extraction confidence is low.
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -114,6 +115,25 @@ class _PageExtract:
     used_pdfplumber: bool = False
 
 
+# Repeated-header/footer detection thresholds — both required, so a real
+# heading reused a few times across independent chapters of a long
+# document (e.g. "Overview" appearing 3 times in a 200-page report) isn't
+# mistaken for a running header. Running headers/footers overwhelmingly
+# clear both: printed on most pages, at a near-identical vertical position
+# every time (a real heading's page position varies with content flow).
+# Moved here from table_aware/parser.py (where this was originally built
+# and used only to veto heading misclassification) so every backend gets
+# it, and so the flagged text is actually excluded from page/section
+# bodies -- not just from heading detection. Previously the flag was set
+# AFTER each page's .text had already been joined, so it never actually
+# kept repeated headers out of what gets embedded/NER'd; only out of what
+# got classified as a heading.
+_REPEAT_MIN_PAGES = 3
+_REPEAT_MIN_PAGE_FRACTION = 0.15
+_REPEAT_Y_TOLERANCE_PT = 20.0
+_REPEAT_HEADER_WS_RE = re.compile(r"\s+")
+
+
 class LightPdfParser:
     """Converts PDFs into the internal document graph."""
 
@@ -126,6 +146,7 @@ class LightPdfParser:
         doc = fitz.open(str(source))
         try:
             extracts = self._extract_pages(source, doc)
+            self._flag_repeated_headers(extracts)
             toc = self._usable_toc(doc)
             if toc is not None:
                 return self._build_from_toc(extracts, toc, source.stem, len(doc))
@@ -423,6 +444,53 @@ class LightPdfParser:
 
     def _join_blocks(self, blocks: list[_PdfBlock]) -> str:
         return "\n\n".join(b.text.strip() for b in blocks if b.text.strip())
+
+    @staticmethod
+    def _normalize_for_repeat_check(text: str) -> str:
+        joined = " ".join(ln.strip() for ln in (text or "").splitlines() if ln.strip())
+        return _REPEAT_HEADER_WS_RE.sub(" ", joined).strip().lower()
+
+    def _flag_repeated_headers(self, extracts: list[_PageExtract]) -> None:
+        """Flag blocks that repeat across most of the document at a
+        consistent vertical position (running headers/footers -- a company
+        name, document title, or confidentiality notice printed on every
+        page) and strip them out of each page's .text so they don't
+        pollute NER/embeddings, not just heading detection."""
+        total_pages = len(extracts)
+        if total_pages < _REPEAT_MIN_PAGES:
+            return
+
+        # normalized text -> list of (page, y0, block)
+        groups: dict[str, list[tuple[int, float, _PdfBlock]]] = defaultdict(list)
+        for extract in extracts:
+            for block in extract.blocks:
+                if block.kind != "text" or block.low_confidence or not block.bbox:
+                    continue
+                norm = self._normalize_for_repeat_check(block.text)
+                if not (3 <= len(norm) <= 160) or len(norm.split()) > 18:
+                    continue
+                groups[norm].append((extract.page, block.bbox[1], block))
+
+        min_pages_needed = max(_REPEAT_MIN_PAGES, int(total_pages * _REPEAT_MIN_PAGE_FRACTION))
+        touched_pages: set[int] = set()
+        for occurrences in groups.values():
+            distinct_pages = {p for p, _, _ in occurrences}
+            if len(distinct_pages) < min_pages_needed:
+                continue
+            y_values = [y for _, y, _ in occurrences]
+            if max(y_values) - min(y_values) > _REPEAT_Y_TOLERANCE_PT:
+                continue  # position varies too much to be a running header/footer
+            for page, _, block in occurrences:
+                block.is_repeated_header = True
+                touched_pages.add(page)
+
+        if not touched_pages:
+            return
+        for extract in extracts:
+            if extract.page in touched_pages:
+                extract.text = self._join_blocks(
+                    [b for b in extract.blocks if not b.is_repeated_header]
+                )
 
     def _normalize_text(self, text: str) -> str:
         lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in (text or "").splitlines()]
@@ -792,6 +860,12 @@ class LightPdfParser:
         heading_font_threshold = self._heading_font_threshold(blocks)
 
         for block in blocks:
+            if block.is_repeated_header:
+                # A running header/footer (company name, doc title,
+                # confidentiality notice) repeated on most pages -- never a
+                # real heading, and excluded from section body text so it
+                # doesn't pollute NER/embeddings (see _flag_repeated_headers).
+                continue
             text = block.text
             page_no = block.page
             is_heading = self._is_heading(block, heading_font_threshold)
