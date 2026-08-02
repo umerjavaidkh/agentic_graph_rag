@@ -767,3 +767,11 @@ Determine the relationship. Return ONLY valid JSON:
                     pass
 
         return edges
+
+
+# Alias for GraphConstructionService (docs/DESIGN_unstructured_graph_v2.md
+# §4/§8): Axis2Builder already implements GraphAxisBuilder's `build(nodes,
+# run_llm_pass=...)` shape exactly, so this is a name, not a rewrite --
+# renaming/moving the class outright would touch the 9 existing call sites
+# for no behavioral benefit.
+Axis2IdeaBuilder = Axis2Builder
