@@ -66,13 +66,16 @@ class QdrantVectorStore(VectorStore):
                 must=[FieldCondition(key=k, match=MatchValue(value=v)) for k, v in filters.items()]
             )
 
-        results = self._client.search(
+        # `.search()` was removed in newer qdrant-client releases (>=1.10) in
+        # favor of `.query_points()`, which wraps hits in a QueryResponse
+        # instead of returning a bare list.
+        response = self._client.query_points(
             collection_name=self.collection_name,
-            query_vector=embedding,
+            query=embedding,
             limit=top_k,
             query_filter=query_filter,
         )
-        return [(hit.payload.get("_source_id", str(hit.id)), hit.score) for hit in results]
+        return [(hit.payload.get("_source_id", str(hit.id)), hit.score) for hit in response.points]
 
     def delete(self, id: str) -> None:
         self._client.delete(

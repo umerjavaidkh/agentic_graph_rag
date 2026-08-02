@@ -206,16 +206,26 @@ def test_process_unstructured_uses_injected_exporter_factory(tmp_input_file, mon
     assert job.neo4j_load_status == "skipped"
 
 
-def test_manager_defaults_are_settings_driven_factories():
+def test_manager_defaults_are_settings_driven_factories(monkeypatch):
     # No kwargs beyond store: production call sites (api.py/tasks.py) construct
     # IngestionManager(store=...) unchanged, and everything else resolves via
     # get_model_provider()/get_blob_store()/get_vector_store() defaults.
-    manager = IngestionManager(store=InMemoryJobStore())
+    # Force the in-memory/local defaults so this doesn't require a real Qdrant/
+    # MinIO endpoint when the local/deployed .env configures those backends.
+    import src.config.settings as settings_mod
+    import src.storage.vector.factory as vector_factory_mod
 
-    assert manager.blob_store is not None
-    assert manager.vector_store is not None
-    assert manager.model_provider is not None
-    assert manager.parser_factory is not None
+    monkeypatch.setattr(settings_mod, "VECTOR_STORE_BACKEND", "memory")
+    vector_factory_mod._store_singleton = None
+    try:
+        manager = IngestionManager(store=InMemoryJobStore())
+
+        assert manager.blob_store is not None
+        assert manager.vector_store is not None
+        assert manager.model_provider is not None
+        assert manager.parser_factory is not None
+    finally:
+        vector_factory_mod._store_singleton = None
 
 
 def test_process_unstructured_rejects_unsupported_extension(monkeypatch):

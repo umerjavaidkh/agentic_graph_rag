@@ -6,6 +6,8 @@ building — constructed after RankingService in the service bundle.
 """
 from __future__ import annotations
 
+import logging
+
 from ....config.settings import EMBEDDING_MODEL, VECTOR_STORE_BACKEND
 from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
@@ -13,6 +15,9 @@ from ....storage.vector.factory import get_vector_store
 from ..constants import _GRAPH_REL_TYPES, _TEXT_NODE_LABELS
 from ....model_providers.factory import get_embedding_provider
 from .ranking import RankingService
+
+
+logger = logging.getLogger(__name__)
 
 
 def _document_filter(alias: str, document_id: str) -> str:
@@ -42,8 +47,11 @@ class GraphSeedService:
     ) -> list[dict]:
         # The in-process "memory" VectorStore doesn't survive across worker/API
         # process boundaries, so only a real shared external store (Qdrant) is
-        # trustworthy as the similarity-search read path; otherwise fall back
-        # to Neo4j's native vector index, which dual-write keeps populated.
+        # trustworthy as the similarity-search read path. The Neo4j-native
+        # branch below is a fallback for that in-memory/dev case; nodes no
+        # longer carry n.embedding at all once VECTOR_STORE_BACKEND=qdrant is
+        # the deployed backend (embeddings live only in the vector store), so
+        # this fallback naturally returns no hits in that configuration.
         if VECTOR_STORE_BACKEND == "qdrant":
             return self.vector_seed_via_vector_store(session, embedding, limit, tenant_id, document_id)
         try:
@@ -118,7 +126,7 @@ class GraphSeedService:
                 f"""
                 UNWIND $ids AS nid
                 MATCH (n) WHERE n.id = nid
-                WHERE coalesce(n.text, '') <> ''
+                  AND coalesce(n.text, '') <> ''
                   AND {lifecycle_active("n")}
                   AND {tenant_filter("n")}
                 RETURN
@@ -147,6 +155,11 @@ class GraphSeedService:
             results.sort(key=lambda r: r["score"], reverse=True)
             return results
         except Exception:
+            # Swallowed rather than raised so one query never 500s over a
+            # retrieval-quality path, but silent-empty here previously hid a
+            # real bug (qdrant-client API drift) for an unbounded time —
+            # always log so a broken vector store is visible in practice.
+            logger.exception("vector_seed_via_vector_store failed; returning no vector hits")
             return []
 
     def fulltext_seed(

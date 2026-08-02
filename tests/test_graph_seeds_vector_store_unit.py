@@ -68,6 +68,10 @@ def test_vector_seed_via_vector_store_hydrates_from_neo4j(service, monkeypatch):
     assert [r["id"] for r in results] == ["id1", "id2"]
     assert results[0]["score"] == 0.9
     assert results[0]["text"] == "Text 1"
+    # Two consecutive WHERE clauses on the same MATCH is a Cypher syntax error
+    # (`_FakeSession` never validates the query, so this regressed silently
+    # until exercised against a real Neo4j) -- must be a single WHERE with AND.
+    assert session.last_cypher.count("WHERE") == 1
 
 
 def test_vector_seed_via_vector_store_empty_hits_returns_empty(service, monkeypatch):

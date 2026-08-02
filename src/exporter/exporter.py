@@ -363,7 +363,6 @@ class Neo4jExporter:
             "entities": node.entities,
             "cluster_id": node.cluster_id,
             "summary": node.summary,
-            "embedding": node.embedding,
             "visual_content": node.visual_content,
             "pdf_page": node.pdf_page,
             "document_page": node.document_page,
@@ -404,7 +403,7 @@ class Neo4jExporter:
             "SET n.title = $title, n.text = $text, n.order = $order,"
             " n.page_start = $page_start, n.page_end = $page_end,"
             " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
-            " n.embedding = $embedding, n.visual_content = $visual_content,"
+            " n.visual_content = $visual_content,"
             " n.pdf_page = $pdf_page, n.document_page = $document_page,"
             " n.page_tags = $page_tags,"
             " n.region_kind = $region_kind, n.region_tags = $region_tags,"
@@ -421,7 +420,6 @@ class Neo4jExporter:
             depth=node.depth,
             entities=node.entities,
             cluster_id=node.cluster_id,
-            embedding=node.embedding,
             visual_content=node.visual_content,
             pdf_page=node.pdf_page,
             document_page=node.document_page,
@@ -520,7 +518,7 @@ class Neo4jExporter:
             " SET n.title = $title, n.text = $text, n.order = $order,"
             " n.page_start = $page_start, n.page_end = $page_end,"
             " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
-            " n.embedding = $embedding, n.visual_content = $visual_content,"
+            " n.visual_content = $visual_content,"
             " n.pdf_page = $pdf_page, n.document_page = $document_page,"
             " n.page_tags = $page_tags,"
             " n.region_kind = $region_kind, n.region_tags = $region_tags,"
@@ -536,7 +534,6 @@ class Neo4jExporter:
             depth=node.depth,
             entities=node.entities,
             cluster_id=node.cluster_id,
-            embedding=node.embedding,
             visual_content=node.visual_content,
             pdf_page=node.pdf_page,
             document_page=node.document_page,
@@ -747,15 +744,12 @@ YIELD rel RETURN count(rel);
             title_escaped = n.title.replace("'", "\\'")
             cluster       = f", n.cluster_id={n.cluster_id}" if n.cluster_id is not None else ""
             label = self._label_to_str(n.type)
-            # Embedding — stored as native float list, not string
-            embedding_str = json.dumps(n.embedding) if n.embedding else "null"
             lines.append(
                 f"MERGE (n:{label} {{id: '{n.id}'}})"
                 f" SET n.title='{title_escaped}', n.text='{text_escaped}',"
                 f" n.order={n.order}, n.page_start={n.page_start},"
                 f" n.page_end={n.page_end}, n.depth={n.depth},"
-                f" n.entities='{entities_str}'{cluster},"
-                f" n.embedding={embedding_str};"
+                f" n.entities='{entities_str}'{cluster};"
             )
 
         lines += ["\n// ── AXIS 1 — STRUCTURAL EDGES ───────────────"]
