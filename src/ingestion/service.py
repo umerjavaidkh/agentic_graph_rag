@@ -31,6 +31,7 @@ from ..config.settings import (
     REDIS_URL,
     STORE_INGESTION_ARTIFACTS,
 )
+from ..document.graph_snapshot import X1_STAGE, X2_STAGE, write_snapshot
 from ..document.versioning import (
     DocumentRevisionPlan,
     apply_revision_to_graph,
@@ -426,6 +427,26 @@ class IngestionManager:
             f"v{plan.version_number} hash={plan.content_hash[:12]}…",
         )
 
+        # X1 snapshot for the graph-inspector UI: the structural graph as
+        # it exists right after parsing + lineage stamping, before Axis-2
+        # touches anything. Transient in-memory state otherwise -- nothing
+        # else persists this shape once semantic enrichment adds its own
+        # edges on top, so it must be captured here or not at all. Never
+        # allowed to fail the ingestion job (a debugging aid, not a
+        # correctness requirement).
+        try:
+            write_snapshot(
+                self.blob_store,
+                X1_STAGE,
+                tenant_id=plan.tenant_id,
+                logical_doc_id=plan.logical_id,
+                revision_id=plan.revision_id,
+                nodes=nodes,
+                edges=edges,
+            )
+        except Exception as exc:
+            self._log(job, f"X1 graph snapshot skipped: {exc}")
+
         if (
             ENABLE_PAGE_VISION
             and OPENAI_API_KEY
@@ -457,6 +478,23 @@ class IngestionManager:
                 self._log(job, f"Added {len(semantic_edges)} semantic edges")
             except Exception as exc:
                 self._log(job, f"Semantic enrichment skipped: {exc}")
+
+            # X2 snapshot: structural + semantic edges together, right
+            # after Axis-2 finishes and before Neo4j load -- same
+            # best-effort, never-fails-the-job reasoning as the X1
+            # snapshot above.
+            try:
+                write_snapshot(
+                    self.blob_store,
+                    X2_STAGE,
+                    tenant_id=plan.tenant_id,
+                    logical_doc_id=plan.logical_id,
+                    revision_id=plan.revision_id,
+                    nodes=nodes,
+                    edges=edges,
+                )
+            except Exception as exc:
+                self._log(job, f"X2 graph snapshot skipped: {exc}")
 
             self._set_status(job, IngestionStatus.chapter_summarization, "Summarizing chapters")
             try:

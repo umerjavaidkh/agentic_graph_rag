@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Graph Inspector</title>
+  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, Arial, sans-serif; margin: 0; padding: 0; background: #f1f5f9; color: #1e293b; }
+    header { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 0.9rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 1.15rem; margin: 0; color: #1f2937; }
+    header nav a { color: #2563eb; text-decoration: none; font-size: 0.9rem; margin-left: 1rem; }
+    .layout { display: grid; grid-template-columns: 320px 1fr 340px; gap: 0; height: calc(100vh - 58px); }
+
+    .panel { background: #fff; border-right: 1px solid #e2e8f0; padding: 1.1rem; overflow-y: auto; }
+    .panel h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: #374151; }
+    label { display: block; margin-top: 0.75rem; font-weight: 600; font-size: 0.82rem; color: #374151; }
+    input[type=text], select { width: 100%; padding: 0.55rem 0.7rem; margin-top: 0.3rem; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.88rem; }
+    .row { display: flex; gap: 0.6rem; }
+    .row > * { flex: 1; }
+    .hint { font-size: 0.78rem; color: #64748b; margin-top: 0.25rem; }
+
+    .tabs { display: flex; gap: 0.4rem; margin-top: 0.85rem; }
+    .tab { flex: 1; padding: 0.5rem 0.4rem; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer; background: #f8fafc; font-weight: 600; font-size: 0.78rem; text-align: center; }
+    .tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .tab .stage-note { display: block; font-weight: 400; font-size: 0.68rem; opacity: 0.75; margin-top: 0.15rem; }
+
+    button { margin-top: 1rem; padding: 0.65rem 1rem; background: #2563eb; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.88rem; width: 100%; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    button.secondary { background: #64748b; }
+
+    .stats { margin-top: 1rem; padding-top: 0.9rem; border-top: 1px solid #e2e8f0; }
+    .stat-row { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 0.2rem 0; }
+    .stat-row .k { color: #64748b; }
+    .stat-row .v { font-weight: 700; color: #1e293b; }
+    .breakdown { margin-top: 0.5rem; font-size: 0.78rem; }
+    .breakdown-row { display: flex; justify-content: space-between; padding: 0.12rem 0; color: #475569; }
+    .swatch { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-right: 0.4rem; }
+
+    #graph-canvas { width: 100%; height: 100%; background: #fafafa; }
+    .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: #94a3b8; font-size: 0.95rem; text-align: center; padding: 2rem; }
+    .error-banner { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.82rem; margin-top: 0.75rem; }
+
+    .detail-panel h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: #374151; }
+    .detail-empty { color: #94a3b8; font-size: 0.85rem; }
+    .detail-field { margin-bottom: 0.65rem; }
+    .detail-field .k { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #94a3b8; font-weight: 700; }
+    .detail-field .v { font-size: 0.88rem; color: #1e293b; margin-top: 0.15rem; word-break: break-word; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; color: #fff; }
+    pre.props { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.5rem; font-size: 0.76rem; overflow-x: auto; white-space: pre-wrap; }
+
+    .legend { margin-top: 1.5rem; padding-top: 0.9rem; border-top: 1px solid #e2e8f0; }
+    .legend-item { display: flex; align-items: center; font-size: 0.78rem; color: #475569; margin-bottom: 0.3rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Graph Inspector <span style="font-weight:400;color:#94a3b8;font-size:0.85rem;">— X1 / X2 / final construction stages</span></h1>
+    <nav>
+      <a href="/upload">Upload</a>
+      <a href="/chat">Chat</a>
+    </nav>
+  </header>
+
+  <div class="layout">
+    <div class="panel">
+      <h2>Document</h2>
+      <label>Role</label>
+      <select id="role"><option value="admin" selected>admin</option></select>
+      <label>User ID</label>
+      <input type="text" id="user_id" value="admin_001" />
+
+      <label>Logical document</label>
+      <select id="doc_picker"></select>
+      <div class="hint" id="doc_hint">Loading ingested documents…</div>
+      <button class="secondary" id="refresh_docs" type="button">Refresh list</button>
+
+      <label>Stage</label>
+      <div class="tabs">
+        <div class="tab active" data-stage="x1_structural">X1<span class="stage-note">structural</span></div>
+        <div class="tab" data-stage="x2_semantic">X2<span class="stage-note">+ semantic</span></div>
+        <div class="tab" data-stage="final_neo4j">Final<span class="stage-note">Neo4j</span></div>
+      </div>
+
+      <button id="load_btn" type="button">Load graph</button>
+      <div id="error_banner"></div>
+
+      <div class="stats" id="stats" style="display:none;">
+        <div class="stat-row"><span class="k">Stage</span><span class="v" id="stat_stage">—</span></div>
+        <div class="stat-row"><span class="k">Nodes</span><span class="v" id="stat_nodes">0</span></div>
+        <div class="stat-row"><span class="k">Edges</span><span class="v" id="stat_edges">0</span></div>
+        <div class="breakdown" id="node_breakdown"></div>
+        <div class="breakdown" id="edge_breakdown"></div>
+      </div>
+
+      <div class="legend">
+        <div style="font-size:0.78rem;font-weight:700;color:#374151;margin-bottom:0.4rem;">Legend</div>
+        <div id="legend_items"></div>
+      </div>
+    </div>
+
+    <div>
+      <div id="graph-canvas"><div class="empty-state">Pick a document and stage, then "Load graph".</div></div>
+    </div>
+
+    <div class="panel detail-panel">
+      <h2>Details</h2>
+      <div id="detail_body"><div class="detail-empty">Click a node or edge to inspect it.</div></div>
+    </div>
+  </div>
+
+  <script>
+    const NODE_COLORS = {
+      Document: '#0f172a', Chapter: '#2563eb', Section: '#0ea5e9', Page: '#94a3b8',
+      Region: '#f59e0b', Concept: '#a855f7', DocRevision: '#64748b', Unknown: '#cbd5e1',
+    };
+    const EDGE_COLORS = {
+      CONTAINS: '#94a3b8', PART_OF: '#cbd5e1', PRECEDES: '#e2e8f0', FOLLOWS: '#e2e8f0', ROOT: '#e2e8f0',
+      SHARES_ENTITY: '#16a34a', SAME_CATEGORY: '#a855f7', SEMANTICALLY_SIMILAR: '#f59e0b',
+      CONTRADICTS: '#dc2626', ELABORATES: '#0ea5e9', PREREQUISITE_OF: '#0284c7', MENTIONS: '#c026d3',
+    };
+    const EDGE_DASH = new Set(['SEMANTICALLY_SIMILAR', 'SAME_CATEGORY', 'SHARES_ENTITY', 'CONTRADICTS', 'ELABORATES', 'PREREQUISITE_OF', 'MENTIONS']);
+    // PART_OF and FOLLOWS are always created as the exact inverse of
+    // CONTAINS and PRECEDES respectively (see light/parser.py's
+    // link_contains and its sequential-edge counterpart) -- every
+    // CONTAINS(parent,child) has a matching PART_OF(child,parent), same
+    // count, same pairs. Feeding vis-network's hierarchical "directed"
+    // layout both directions of the same structural fact creates 2-cycles
+    // between every parent/child, which collapses level assignment: a
+    // real snapshot (42 nodes) rendered as a ~12px-tall sliver instead of
+    // a tree, with individual nodes shrunk to sub-pixel and invisible.
+    // Excluded from the RENDERED graph only -- renderStats/renderLegend
+    // still read the full, undeduped snapshot.edges so counts stay honest.
+    const LAYOUT_INVERSE_DUPLICATES = new Set(['PART_OF', 'FOLLOWS']);
+    // Floor on fit()'s computed zoom -- see the fitAndClampScale comment
+    // at its call site for why this exists.
+    const MIN_VISIBLE_SCALE = 0.4;
+
+    let network = null;
+    let currentSnapshot = null;
+    let currentStage = 'x1_structural';
+
+    function ctx() {
+      return {
+        user_id: (document.getElementById('user_id').value || 'admin_001').trim(),
+        role: document.getElementById('role').value || 'admin',
+      };
+    }
+
+    function qs(params) {
+      return new URLSearchParams(params).toString();
+    }
+
+    async function loadDocPicker() {
+      const hint = document.getElementById('doc_hint');
+      const picker = document.getElementById('doc_picker');
+      hint.textContent = 'Loading ingested documents…';
+      try {
+        const c = ctx();
+        const resp = await fetch(`/ingest/quality?${qs({ user_id: c.user_id, role: c.role, limit: 200 })}`);
+        if (!resp.ok) throw new Error(`${resp.status} ${await resp.text()}`);
+        const docs = await resp.json();
+        picker.innerHTML = '';
+        if (!docs.length) {
+          hint.textContent = 'No ingested documents found for this tenant.';
+          return;
+        }
+        for (const d of docs) {
+          const opt = document.createElement('option');
+          opt.value = d.logical_doc_id;
+          opt.textContent = `${d.title || d.logical_doc_id} (v${d.version_number ?? '?'})`;
+          picker.appendChild(opt);
+        }
+        hint.textContent = `${docs.length} document(s).`;
+      } catch (err) {
+        hint.textContent = `Failed to load documents: ${err.message}`;
+      }
+    }
+
+    function setStage(stage) {
+      currentStage = stage;
+      document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.stage === stage));
+    }
+
+    function showError(msg) {
+      const banner = document.getElementById('error_banner');
+      banner.innerHTML = msg ? `<div class="error-banner">${msg}</div>` : '';
+    }
+
+    function endpointFor(docId, stage, c) {
+      const base = stage === 'final_neo4j'
+        ? `/documents/${encodeURIComponent(docId)}/graph-final`
+        : `/documents/${encodeURIComponent(docId)}/graph-snapshot/${stage}`;
+      return `${base}?${qs({ user_id: c.user_id, role: c.role })}`;
+    }
+
+    async function loadGraph() {
+      const docId = document.getElementById('doc_picker').value;
+      if (!docId) { showError('Pick a document first.'); return; }
+      showError('');
+      const btn = document.getElementById('load_btn');
+      btn.disabled = true;
+      btn.textContent = 'Loading…';
+      try {
+        const c = ctx();
+        const resp = await fetch(endpointFor(docId, currentStage, c));
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({}));
+          throw new Error(body.detail || `${resp.status} ${resp.statusText}`);
+        }
+        const snapshot = await resp.json();
+        currentSnapshot = snapshot;
+        renderStats(snapshot);
+        renderGraph(snapshot);
+        renderLegend(snapshot);
+      } catch (err) {
+        showError(err.message);
+        document.getElementById('graph-canvas').innerHTML =
+          `<div class="empty-state">Couldn't load this stage.<br/>${err.message}</div>`;
+        document.getElementById('stats').style.display = 'none';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Load graph';
+      }
+    }
+
+    function renderStats(snapshot) {
+      document.getElementById('stats').style.display = 'block';
+      document.getElementById('stat_stage').textContent = snapshot.stage;
+      document.getElementById('stat_nodes').textContent = snapshot.node_count;
+      document.getElementById('stat_edges').textContent = snapshot.edge_count;
+
+      const nodeCounts = {};
+      for (const n of snapshot.nodes) nodeCounts[n.type] = (nodeCounts[n.type] || 0) + 1;
+      const nodeBox = document.getElementById('node_breakdown');
+      nodeBox.innerHTML = '<div style="font-weight:700;margin-top:0.4rem;">Node types</div>' +
+        Object.entries(nodeCounts).sort((a, b) => b[1] - a[1]).map(([t, c]) =>
+          `<div class="breakdown-row"><span><span class="swatch" style="background:${NODE_COLORS[t] || NODE_COLORS.Unknown}"></span>${t}</span><span>${c}</span></div>`
+        ).join('');
+
+      const edgeCounts = {};
+      for (const e of snapshot.edges) edgeCounts[e.rel_type] = (edgeCounts[e.rel_type] || 0) + 1;
+      const edgeBox = document.getElementById('edge_breakdown');
+      edgeBox.innerHTML = '<div style="font-weight:700;margin-top:0.6rem;">Edge types</div>' +
+        Object.entries(edgeCounts).sort((a, b) => b[1] - a[1]).map(([t, c]) => {
+          const note = LAYOUT_INVERSE_DUPLICATES.has(t) ? ' <span class="hint" style="display:inline;">(hidden, dup.)</span>' : '';
+          return `<div class="breakdown-row"><span><span class="swatch" style="background:${EDGE_COLORS[t] || '#cbd5e1'}"></span>${t}${note}</span><span>${c}</span></div>`;
+        }).join('');
+    }
+
+    function renderLegend(snapshot) {
+      const types = new Set(snapshot.nodes.map(n => n.type));
+      const rels = new Set(snapshot.edges.map(e => e.rel_type));
+      let html = '';
+      for (const t of types) {
+        html += `<div class="legend-item"><span class="swatch" style="background:${NODE_COLORS[t] || NODE_COLORS.Unknown}"></span>${t} node</div>`;
+      }
+      for (const r of rels) {
+        html += `<div class="legend-item"><span class="swatch" style="background:${EDGE_COLORS[r] || '#cbd5e1'}"></span>${r}</div>`;
+      }
+      document.getElementById('legend_items').innerHTML = html;
+    }
+
+    function nodeLabel(n) {
+      const title = (n.title || n.id || '').split('\n')[0];
+      return title.length > 28 ? title.slice(0, 27) + '…' : title;
+    }
+
+    function renderGraph(snapshot) {
+      const container = document.getElementById('graph-canvas');
+      container.innerHTML = '';
+
+      if (!snapshot.nodes.length) {
+        container.innerHTML = '<div class="empty-state">This stage has no nodes.</div>';
+        return;
+      }
+
+      const nodeIds = new Set(snapshot.nodes.map(n => n.id));
+      const visNodes = new vis.DataSet(snapshot.nodes.map(n => ({
+        id: n.id,
+        label: nodeLabel(n),
+        color: { background: NODE_COLORS[n.type] || NODE_COLORS.Unknown, border: '#1e293b' },
+        font: { color: '#fff', size: 11 },
+        shape: n.type === 'Document' ? 'diamond' : 'dot',
+        size: n.type === 'Document' ? 22 : n.type === 'Chapter' ? 16 : 10,
+        _data: n,
+      })));
+
+      // Edges referencing a node outside this stage's set (shouldn't
+      // normally happen, but a partial/failed snapshot write is possible)
+      // are dropped rather than crashing vis-network on a dangling ref.
+      const visEdges = new vis.DataSet(
+        snapshot.edges
+          .filter(e => nodeIds.has(e.source_id) && nodeIds.has(e.target_id))
+          .filter(e => !LAYOUT_INVERSE_DUPLICATES.has(e.rel_type))
+          .map((e, i) => ({
+            id: `e${i}`,
+            from: e.source_id,
+            to: e.target_id,
+            color: { color: EDGE_COLORS[e.rel_type] || '#cbd5e1', opacity: e.axis === 2 ? 0.55 : 0.9 },
+            dashes: EDGE_DASH.has(e.rel_type),
+            width: e.axis === 2 ? Math.min(1 + (e.weight || 1) * 0.4, 4) : 1,
+            arrows: e.axis === 1 ? 'to' : undefined,
+            smooth: { type: 'continuous' },
+            _data: e,
+          }))
+      );
+
+      const structuralOnly = snapshot.edges.every(e => e.axis === 1) || currentStage === 'x1_structural';
+      const options = {
+        physics: structuralOnly
+          ? { enabled: false }
+          : { solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -60, springLength: 90, avoidOverlap: 0.6 }, stabilization: { iterations: 150 } },
+        layout: structuralOnly
+          ? { hierarchical: { direction: 'UD', sortMethod: 'directed', nodeSpacing: 55, levelSeparation: 90 } }
+          : {},
+        interaction: { hover: true, tooltipDelay: 150 },
+        edges: { smooth: true },
+      };
+
+      network = new vis.Network(container, { nodes: visNodes, edges: visEdges }, options);
+      // vis-network does not auto-fit the viewport to the data -- without
+      // this, a hierarchical layout's nodes render far outside the
+      // initial view (the canvas stays centered/zoomed on the origin),
+      // which looked like nothing had rendered at all even though the
+      // Network instance held every node/edge correctly. `stabilized`
+      // fires once for physics-driven layouts (X2); hierarchical layouts
+      // with physics disabled (X1/structural-only) never fire it, so fit
+      // immediately for those instead of waiting on an event that won't come.
+      //
+      // A second, less obvious problem: a wide hierarchical tree (e.g. 30
+      // Section siblings on one level) makes fit()'s computed scale drop
+      // to ~0.15-0.18 to fit the whole width -- at that scale a 10-22px
+      // node radius renders at 1.5-3px, visually indistinguishable from
+      // nothing at normal viewing/screenshot resolution even though every
+      // pixel is genuinely painted (confirmed directly against the canvas
+      // pixel buffer). MIN_VISIBLE_SCALE floors the zoom so nodes stay a
+      // legible size -- the tradeoff is the full tree may not fit in the
+      // initial view, which is fine: vis-network supports pan/zoom
+      // natively, the normal way to explore a graph too wide for one screen.
+      const fitAndClampScale = () => {
+        network.fit({ animation: false });
+        if (network.getScale() < MIN_VISIBLE_SCALE) {
+          const center = network.getViewPosition();
+          network.moveTo({ position: center, scale: MIN_VISIBLE_SCALE, animation: false });
+        }
+      };
+      if (structuralOnly) {
+        fitAndClampScale();
+      } else {
+        network.once('stabilized', fitAndClampScale);
+      }
+      network.on('click', (params) => {
+        if (params.nodes.length) {
+          showNodeDetail(visNodes.get(params.nodes[0])._data);
+        } else if (params.edges.length) {
+          showEdgeDetail(visEdges.get(params.edges[0])._data);
+        } else {
+          document.getElementById('detail_body').innerHTML = '<div class="detail-empty">Click a node or edge to inspect it.</div>';
+        }
+      });
+    }
+
+    function field(k, v) {
+      return `<div class="detail-field"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    }
+
+    function showNodeDetail(n) {
+      const color = NODE_COLORS[n.type] || NODE_COLORS.Unknown;
+      let html = `<span class="badge" style="background:${color}">${n.type}</span>`;
+      html += field('ID', n.id);
+      html += field('Title', (n.title || '').replace(/\n/g, ' / ') || '—');
+      html += field('Depth', n.depth ?? '—');
+      html += field('Order', n.order ?? '—');
+      html += field('Pages', n.page_start != null ? `${n.page_start}–${n.page_end}` : '—');
+      html += field('Text length', n.text_len ?? '—');
+      html += field('Entities extracted', n.n_entities ?? 0);
+      html += field('Has embedding', n.has_embedding ? 'yes' : 'no');
+      if (n.region_kind) html += field('Region kind', n.region_kind);
+      document.getElementById('detail_body').innerHTML = html;
+    }
+
+    function showEdgeDetail(e) {
+      const color = EDGE_COLORS[e.rel_type] || '#cbd5e1';
+      let html = `<span class="badge" style="background:${color}">${e.rel_type}</span>`;
+      html += field('Source', e.source_id);
+      html += field('Target', e.target_id);
+      html += field('Axis', e.axis === 1 ? '1 (structural)' : e.axis === 2 ? '2 (semantic)' : e.axis);
+      html += field('Weight', e.weight);
+      html += field('Confidence', `${e.confidence} (${e.confidence_tier || 'n/a'})`);
+      html += field('Properties', `<pre class="props">${JSON.stringify(e.properties || {}, null, 2)}</pre>`);
+      document.getElementById('detail_body').innerHTML = html;
+    }
+
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => setStage(tab.dataset.stage));
+    });
+    document.getElementById('load_btn').addEventListener('click', loadGraph);
+    document.getElementById('refresh_docs').addEventListener('click', loadDocPicker);
+
+    loadDocPicker();
+  </script>
+</body>
+</html>
