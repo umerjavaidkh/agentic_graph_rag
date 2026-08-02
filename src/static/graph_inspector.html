@@ -4,14 +4,23 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Graph Inspector</title>
-  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+  <script src="https://unpkg.com/d3@7/dist/d3.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     body { font-family: system-ui, Arial, sans-serif; margin: 0; padding: 0; background: #f1f5f9; color: #1e293b; }
     header { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 0.9rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
     header h1 { font-size: 1.15rem; margin: 0; color: #1f2937; }
     header nav a { color: #2563eb; text-decoration: none; font-size: 0.9rem; margin-left: 1rem; }
-    .layout { display: grid; grid-template-columns: 320px 1fr 340px; gap: 0; height: calc(100vh - 58px); }
+    /* minmax() on every column, not fixed px -- a fixed "320px 1fr 340px"
+       computes 1fr as ~0 once the viewport is narrower than 320+340=660px
+       (a real laptop/split-screen window width, not an edge case), which
+       silently squeezed the graph canvas to an invisible sliver while the
+       side panels still rendered fine -- looked exactly like "no graph"
+       even though the graph was drawing correctly inside a ~5px column.
+       overflow-x on the layout itself is the fallback below the combined
+       minimums (280+400+300=980px), so the canvas always gets real,
+       usable width -- scroll instead of squeeze. */
+    .layout { display: grid; grid-template-columns: minmax(280px, 320px) minmax(400px, 1fr) minmax(300px, 340px); gap: 0; height: calc(100vh - 58px); overflow-x: auto; }
 
     .panel { background: #fff; border-right: 1px solid #e2e8f0; padding: 1.1rem; overflow-y: auto; }
     .panel h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: #374151; }
@@ -38,8 +47,24 @@
     .breakdown-row { display: flex; justify-content: space-between; padding: 0.12rem 0; color: #475569; }
     .swatch { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-right: 0.4rem; }
 
-    #graph-canvas { width: 100%; height: 100%; background: #fafafa; }
+    #graph-canvas {
+      width: 100%; height: 100%; position: relative; overflow: hidden;
+      background-color: #f8fafc;
+      background-image: radial-gradient(circle, #d8dee9 1px, transparent 1px);
+      background-size: 22px 22px;
+    }
+    #graph-canvas svg { display: block; cursor: grab; }
+    #graph-canvas svg:active { cursor: grabbing; }
     .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: #94a3b8; font-size: 0.95rem; text-align: center; padding: 2rem; }
+    .graph-node circle { stroke: #fff; stroke-width: 1.5px; filter: drop-shadow(0 1px 2px rgba(15,23,42,0.35)); transition: r 0.12s ease, filter 0.12s ease; }
+    .graph-node text { font-size: 9.5px; font-weight: 600; fill: #1e293b; paint-order: stroke; stroke: #f8fafc; stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+    .graph-node { cursor: pointer; }
+    .graph-node:hover circle { filter: drop-shadow(0 2px 5px rgba(15,23,42,0.5)); }
+    .graph-edge { fill: none; stroke-linecap: round; transition: opacity 0.12s ease, stroke-width 0.12s ease; }
+    .zoom-controls { position: absolute; bottom: 14px; right: 14px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
+    .zoom-btn { width: 30px; height: 30px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff; color: #334155; font-size: 1rem; font-weight: 700; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .zoom-btn:hover { background: #f1f5f9; }
+    .graph-hint { position: absolute; top: 10px; left: 12px; font-size: 0.72rem; color: #94a3b8; background: rgba(255,255,255,0.85); padding: 0.25rem 0.55rem; border-radius: 6px; z-index: 5; }
     .error-banner { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.82rem; margin-top: 0.75rem; }
 
     .detail-panel h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: #374151; }
@@ -133,13 +158,12 @@
     // Excluded from the RENDERED graph only -- renderStats/renderLegend
     // still read the full, undeduped snapshot.edges so counts stay honest.
     const LAYOUT_INVERSE_DUPLICATES = new Set(['PART_OF', 'FOLLOWS']);
-    // Floor on fit()'s computed zoom -- see the fitAndClampScale comment
-    // at its call site for why this exists.
-    const MIN_VISIBLE_SCALE = 0.4;
+    const NODE_RADIUS = { Document: 12, Chapter: 8.5, Section: 5.5, Page: 4, Region: 5, Concept: 5.5, DocRevision: 4.5 };
 
-    let network = null;
     let currentSnapshot = null;
     let currentStage = 'x1_structural';
+    let currentZoom = null;   // d3.zoom behavior, kept so the +/- buttons can drive it
+    let currentSvg = null;
 
     function ctx() {
       return {
@@ -267,9 +291,80 @@
       return title.length > 28 ? title.slice(0, 27) + '…' : title;
     }
 
+    // Rendering is plain SVG via D3, not vis-network's canvas. Switched
+    // after extensive debugging of a vis-network issue where the Network
+    // instance held fully correct node/edge/position data immediately
+    // (confirmed directly against the canvas pixel buffer) but the
+    // container stayed visibly blank -- traced to vis-network's internal
+    // render/stabilization loop depending on requestAnimationFrame, which
+    // is throttled/suspended in some automated and backgrounded-tab
+    // contexts, with no reliable app-level workaround. SVG elements are
+    // part of the DOM the instant they're appended -- there is no
+    // separate "paint later" step to race with, so this whole class of
+    // bug isn't reachable here. Layout math itself is also done
+    // synchronously (d3.tree() for X1, d3-force ticked manually for X2/
+    // Final) rather than relying on an animated simulation loop.
+
+    function layoutHierarchical(nodes, edges) {
+      const parentOf = new Map();
+      for (const e of edges) {
+        if (e.rel_type === 'CONTAINS') parentOf.set(e.target_id, e.source_id);
+      }
+      const stratifyInput = nodes.map(n => ({ id: n.id, parentId: parentOf.get(n.id) || null }));
+      const roots = stratifyInput.filter(d => !d.parentId);
+      let data = stratifyInput;
+      if (roots.length > 1) {
+        // Disconnected pieces (shouldn't normally happen in a real
+        // structural snapshot) -- synthesize a virtual root so d3.stratify
+        // doesn't throw on "multiple roots", rather than failing to render.
+        data = [
+          { id: '__root__', parentId: null },
+          ...stratifyInput.map(d => (d.parentId ? d : { ...d, parentId: '__root__' })),
+        ];
+      }
+      let root;
+      try {
+        root = d3.stratify()(data);
+      } catch {
+        return layoutGrid(nodes); // malformed/cyclic parentage -- fall back rather than crash
+      }
+      d3.tree().nodeSize([46, 78])(root);
+      const byId = new Map(nodes.map(n => [n.id, n]));
+      root.each(d => {
+        if (d.data.id === '__root__') return;
+        const n = byId.get(d.data.id);
+        n.x = d.x; n.y = d.y;
+      });
+      // Any node d3.stratify() couldn't place (shouldn't happen given the
+      // virtual-root fallback above, but cheap insurance) gets a grid spot
+      // instead of silently rendering at (undefined, undefined).
+      let gi = 0;
+      for (const n of nodes) {
+        if (n.x == null) { n.x = (gi % 8) * 50; n.y = 700 + Math.floor(gi / 8) * 50; gi++; }
+      }
+    }
+
+    function layoutGrid(nodes) {
+      const perRow = Math.ceil(Math.sqrt(nodes.length));
+      nodes.forEach((n, i) => { n.x = (i % perRow) * 60; n.y = Math.floor(i / perRow) * 60; });
+    }
+
+    function layoutForce(nodes, edges) {
+      const links = edges.map(e => ({ source: e.source_id, target: e.target_id }));
+      const sim = d3.forceSimulation(nodes)
+        .force('link', d3.forceLink(links).id(d => d.id).distance(48).strength(0.25))
+        .force('charge', d3.forceManyBody().strength(-90))
+        .force('center', d3.forceCenter(0, 0))
+        .force('collide', d3.forceCollide(d => (NODE_RADIUS[d.type] || 5) + 6))
+        .stop();
+      for (let i = 0; i < 260; i++) sim.tick();
+    }
+
     function renderGraph(snapshot) {
       const container = document.getElementById('graph-canvas');
       container.innerHTML = '';
+      currentSvg = null;
+      currentZoom = null;
 
       if (!snapshot.nodes.length) {
         container.innerHTML = '<div class="empty-state">This stage has no nodes.</div>';
@@ -277,89 +372,121 @@
       }
 
       const nodeIds = new Set(snapshot.nodes.map(n => n.id));
-      const visNodes = new vis.DataSet(snapshot.nodes.map(n => ({
-        id: n.id,
-        label: nodeLabel(n),
-        color: { background: NODE_COLORS[n.type] || NODE_COLORS.Unknown, border: '#1e293b' },
-        font: { color: '#fff', size: 11 },
-        shape: n.type === 'Document' ? 'diamond' : 'dot',
-        size: n.type === 'Document' ? 22 : n.type === 'Chapter' ? 16 : 10,
-        _data: n,
-      })));
-
       // Edges referencing a node outside this stage's set (shouldn't
       // normally happen, but a partial/failed snapshot write is possible)
-      // are dropped rather than crashing vis-network on a dangling ref.
-      const visEdges = new vis.DataSet(
-        snapshot.edges
-          .filter(e => nodeIds.has(e.source_id) && nodeIds.has(e.target_id))
-          .filter(e => !LAYOUT_INVERSE_DUPLICATES.has(e.rel_type))
-          .map((e, i) => ({
-            id: `e${i}`,
-            from: e.source_id,
-            to: e.target_id,
-            color: { color: EDGE_COLORS[e.rel_type] || '#cbd5e1', opacity: e.axis === 2 ? 0.55 : 0.9 },
-            dashes: EDGE_DASH.has(e.rel_type),
-            width: e.axis === 2 ? Math.min(1 + (e.weight || 1) * 0.4, 4) : 1,
-            arrows: e.axis === 1 ? 'to' : undefined,
-            smooth: { type: 'continuous' },
-            _data: e,
-          }))
-      );
+      // are dropped rather than crashing the layout on a dangling ref.
+      const renderEdges = snapshot.edges
+        .filter(e => nodeIds.has(e.source_id) && nodeIds.has(e.target_id))
+        .filter(e => !LAYOUT_INVERSE_DUPLICATES.has(e.rel_type));
 
-      const structuralOnly = snapshot.edges.every(e => e.axis === 1) || currentStage === 'x1_structural';
-      const options = {
-        physics: structuralOnly
-          ? { enabled: false }
-          : { solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -60, springLength: 90, avoidOverlap: 0.6 }, stabilization: { iterations: 150 } },
-        layout: structuralOnly
-          ? { hierarchical: { direction: 'UD', sortMethod: 'directed', nodeSpacing: 55, levelSeparation: 90 } }
-          : {},
-        interaction: { hover: true, tooltipDelay: 150 },
-        edges: { smooth: true },
-      };
+      // Mutable per-render copies -- x/y get written onto these directly.
+      const nodes = snapshot.nodes.map(n => ({ ...n }));
+      const byId = new Map(nodes.map(n => [n.id, n]));
 
-      network = new vis.Network(container, { nodes: visNodes, edges: visEdges }, options);
-      // vis-network does not auto-fit the viewport to the data -- without
-      // this, a hierarchical layout's nodes render far outside the
-      // initial view (the canvas stays centered/zoomed on the origin),
-      // which looked like nothing had rendered at all even though the
-      // Network instance held every node/edge correctly. `stabilized`
-      // fires once for physics-driven layouts (X2); hierarchical layouts
-      // with physics disabled (X1/structural-only) never fire it, so fit
-      // immediately for those instead of waiting on an event that won't come.
-      //
-      // A second, less obvious problem: a wide hierarchical tree (e.g. 30
-      // Section siblings on one level) makes fit()'s computed scale drop
-      // to ~0.15-0.18 to fit the whole width -- at that scale a 10-22px
-      // node radius renders at 1.5-3px, visually indistinguishable from
-      // nothing at normal viewing/screenshot resolution even though every
-      // pixel is genuinely painted (confirmed directly against the canvas
-      // pixel buffer). MIN_VISIBLE_SCALE floors the zoom so nodes stay a
-      // legible size -- the tradeoff is the full tree may not fit in the
-      // initial view, which is fine: vis-network supports pan/zoom
-      // natively, the normal way to explore a graph too wide for one screen.
-      const fitAndClampScale = () => {
-        network.fit({ animation: false });
-        if (network.getScale() < MIN_VISIBLE_SCALE) {
-          const center = network.getViewPosition();
-          network.moveTo({ position: center, scale: MIN_VISIBLE_SCALE, animation: false });
-        }
-      };
+      const structuralOnly = currentStage === 'x1_structural';
       if (structuralOnly) {
-        fitAndClampScale();
+        layoutHierarchical(nodes, renderEdges);
       } else {
-        network.once('stabilized', fitAndClampScale);
+        layoutForce(nodes, renderEdges);
       }
-      network.on('click', (params) => {
-        if (params.nodes.length) {
-          showNodeDetail(visNodes.get(params.nodes[0])._data);
-        } else if (params.edges.length) {
-          showEdgeDetail(visEdges.get(params.edges[0])._data);
-        } else {
-          document.getElementById('detail_body').innerHTML = '<div class="detail-empty">Click a node or edge to inspect it.</div>';
-        }
+
+      const width = container.clientWidth || 600;
+      const height = container.clientHeight || 600;
+
+      const svg = d3.select(container).append('svg').attr('width', width).attr('height', height);
+      currentSvg = svg;
+      const g = svg.append('g');
+
+      const edgeSel = g.selectAll('path.graph-edge')
+        .data(renderEdges)
+        .enter()
+        .append('path')
+        .attr('class', 'graph-edge')
+        .attr('d', d => edgePath(byId.get(d.source_id), byId.get(d.target_id), structuralOnly))
+        .attr('stroke', d => EDGE_COLORS[d.rel_type] || '#cbd5e1')
+        .attr('stroke-width', d => (d.axis === 2 ? Math.min(1.2 + (d.weight || 1) * 0.35, 4) : 1.4))
+        .attr('stroke-dasharray', d => (EDGE_DASH.has(d.rel_type) ? '3,3' : null))
+        .attr('opacity', d => (d.axis === 2 ? 0.5 : 0.8))
+        .style('cursor', 'pointer')
+        .on('click', (event, d) => { event.stopPropagation(); showEdgeDetail(d); })
+        .on('mouseenter', function () { d3.select(this).attr('opacity', 1).attr('stroke-width', 4); })
+        .on('mouseleave', function (event, d) {
+          d3.select(this).attr('opacity', d.axis === 2 ? 0.5 : 0.8).attr('stroke-width', d.axis === 2 ? Math.min(1.2 + (d.weight || 1) * 0.35, 4) : 1.4);
+        });
+
+      const nodeSel = g.selectAll('g.graph-node')
+        .data(nodes)
+        .enter()
+        .append('g')
+        .attr('class', 'graph-node')
+        .attr('transform', d => `translate(${d.x},${d.y})`)
+        .on('click', (event, d) => { event.stopPropagation(); showNodeDetail(d); })
+        .on('mouseenter', function (event, d) { d3.select(this).select('circle').attr('r', (NODE_RADIUS[d.type] || 5.5) * 1.35); })
+        .on('mouseleave', function (event, d) { d3.select(this).select('circle').attr('r', NODE_RADIUS[d.type] || 5.5); });
+
+      nodeSel.append('circle')
+        .attr('r', d => NODE_RADIUS[d.type] || 5.5)
+        .attr('fill', d => NODE_COLORS[d.type] || NODE_COLORS.Unknown);
+
+      nodeSel.append('text')
+        .attr('x', d => (NODE_RADIUS[d.type] || 5.5) + 4)
+        .attr('y', 3.5)
+        .text(d => nodeLabel(d));
+
+      svg.on('click', () => {
+        document.getElementById('detail_body').innerHTML = '<div class="detail-empty">Click a node or edge to inspect it.</div>';
       });
+
+      // Zoom/pan is entirely event-driven (wheel/drag), not tied to any
+      // animation loop -- the class of issue documented above only
+      // affected the INITIAL unattended paint, not user-triggered
+      // interaction, so d3-zoom is safe to use here even for the same
+      // environment that broke vis-network's own render loop.
+      const zoom = d3.zoom().scaleExtent([0.08, 6]).on('zoom', (event) => g.attr('transform', event.transform));
+      svg.call(zoom);
+      currentZoom = zoom;
+
+      // Fit the initial view to the data -- computed directly from node
+      // positions, applied as a single immediate transform (no
+      // .transition()), so the first frame the user sees is already
+      // correctly framed.
+      const pad = 40;
+      const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
+      const [minX, maxX] = [Math.min(...xs), Math.max(...xs)];
+      const [minY, maxY] = [Math.min(...ys), Math.max(...ys)];
+      const dataW = Math.max(1, maxX - minX), dataH = Math.max(1, maxY - minY);
+      const scale = Math.min(2, (width - pad * 2) / dataW, (height - pad * 2) / dataH);
+      const clampedScale = Math.max(0.15, Math.min(scale, 2));
+      const tx = width / 2 - clampedScale * (minX + maxX) / 2;
+      const ty = height / 2 - clampedScale * (minY + maxY) / 2;
+      svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(clampedScale));
+
+      const controls = document.createElement('div');
+      controls.className = 'zoom-controls';
+      controls.innerHTML = `
+        <button class="zoom-btn" id="zoom_in" type="button" title="Zoom in">+</button>
+        <button class="zoom-btn" id="zoom_out" type="button" title="Zoom out">&minus;</button>
+        <button class="zoom-btn" id="zoom_reset" type="button" title="Fit to view">&#8634;</button>`;
+      container.appendChild(controls);
+      document.getElementById('zoom_in').addEventListener('click', () => svg.transition().duration(150).call(zoom.scaleBy, 1.4));
+      document.getElementById('zoom_out').addEventListener('click', () => svg.transition().duration(150).call(zoom.scaleBy, 1 / 1.4));
+      document.getElementById('zoom_reset').addEventListener('click', () => {
+        svg.transition().duration(200).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(clampedScale));
+      });
+
+      const hint = document.createElement('div');
+      hint.className = 'graph-hint';
+      hint.textContent = 'Scroll to zoom · drag to pan · click a node/edge for detail';
+      container.appendChild(hint);
+    }
+
+    function edgePath(a, b, curved) {
+      if (!a || !b) return '';
+      if (!curved) return `M${a.x},${a.y} L${b.x},${b.y}`;
+      // Gentle vertical curve for the hierarchical tree -- reads as an
+      // organic tree connector instead of rigid straight segments.
+      const midY = (a.y + b.y) / 2;
+      return `M${a.x},${a.y} C${a.x},${midY} ${b.x},${midY} ${b.x},${b.y}`;
     }
 
     function field(k, v) {
