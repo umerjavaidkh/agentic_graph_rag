@@ -3,15 +3,27 @@ axis2.py — Semantic relationship discovery (Axis 2).
 
 Builds:
     SEMANTICALLY_SIMILAR  — embedding cosine similarity
-    SHARES_ENTITY         — shared NER entities between nodes
-    SAME_CATEGORY         — KMeans cluster membership
+    SHARES_ENTITY         — shared NER entities, IDF-weighted by document
+                             rarity (a shared entity mentioned in only 2
+                             nodes counts far more than one mentioned in 40)
+    SAME_CATEGORY         — KMeans over entity co-occurrence vectors when
+                             enough nodes carry entities (a signal distinct
+                             from SEMANTICALLY_SIMILAR's raw embeddings,
+                             not a coarser copy of it); falls back to the
+                             embeddings themselves when too few nodes have
+                             entities for that signal to mean anything
     CONTRADICTS           — LLM reasoning pass (expensive, optional)
     ELABORATES            — LLM reasoning pass (expensive, optional)
     PREREQUISITE_OF       — LLM reasoning pass (expensive, optional)
 
 Design principles:
   - Cheap relationships (SIMILAR, SHARES_ENTITY, SAME_CATEGORY) run always
-  - Expensive LLM relationships run only on top-k candidate pairs
+  - Expensive LLM relationships run on top-k embedding-similar pairs PLUS a
+    reserved slice of "entity-bridge" pairs (tied by a rare shared entity
+    but not already embedding-similar) — pure similarity-ranked sampling
+    misses cross-topic logical relationships (two sections that discuss the
+    same named thing in different phrasing) that entity co-occurrence
+    surfaces instead.
   - NER and LLM-pair calls are parallelised with bounded ThreadPoolExecutors
   - All relationships are Axis 2 flagged
 """
@@ -288,15 +300,19 @@ class Axis2Builder:
         edges += self._build_similarity_edges(nodes)
 
         # 4. SHARES_ENTITY
-        edges += self._build_entity_edges(nodes)
+        entity_edges = self._build_entity_edges(nodes)
+        edges += entity_edges
 
         # 5. SAME_CATEGORY (clustering)
         nodes, edges_cat = self._build_category_edges(nodes)
         edges += edges_cat
 
-        # 6. LLM pass — CONTRADICTS / ELABORATES / PREREQUISITE_OF (parallel)
+        # 6. LLM pass — CONTRADICTS / ELABORATES / PREREQUISITE_OF (parallel).
+        # entity_edges is passed through so the candidate sampler can draw
+        # part of its budget from entity-bridge pairs, not just top-cosine
+        # ones (see module docstring).
         if run_llm_pass and self.client:
-            edges += self._build_llm_edges(nodes)
+            edges += self._build_llm_edges(nodes, entity_edges=entity_edges)
 
         return nodes, edges
 
@@ -476,16 +492,33 @@ class Axis2Builder:
         # sections are part of the same filing". See _informative_entities.
         informative = _informative_entities(entity_to_nodes, len(entity_nodes))
 
-        pair_counts: dict[Tuple[int, int], int] = {}
+        # IDF-style rarity weight per entity, not a flat "1 per shared
+        # entity" count: two sections sharing an entity mentioned in only 2
+        # nodes document-wide is a far stronger signal than sharing one
+        # mentioned in 40, even after the genericity filter above has
+        # already dropped the most extreme (>40%-of-nodes) offenders --
+        # among the entities that DO pass that filter, rarity still varies
+        # a lot and should be reflected in edge weight, not just presence.
+        # Smoothed idf(e) = log((N+1)/(freq(e)+1)) + 1 is always >= 1 (a
+        # single shared entity never drags an edge below the previous
+        # flat-count floor), rising as the entity gets rarer.
+        idf = {
+            e: float(np.log((len(entity_nodes) + 1) / (len(idxs) + 1)) + 1)
+            for e, idxs in entity_to_nodes.items()
+            if e in informative
+        }
+
+        pair_scores: dict[Tuple[int, int], float] = {}
         for entity, idx_list in entity_to_nodes.items():
             if entity not in informative:
                 continue
+            weight = idf[entity]
             for a, b in itertools.combinations(sorted(idx_list), 2):
-                pair_counts[(a, b)] = pair_counts.get((a, b), 0) + 1
+                pair_scores[(a, b)] = pair_scores.get((a, b), 0.0) + weight
 
-        candidates = [(i, j, float(c)) for (i, j), c in pair_counts.items()]
+        candidates = [(i, j, score) for (i, j), score in pair_scores.items()]
         cap = AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
-        for i, j, _count in _cap_edges_by_degree(candidates, cap):
+        for i, j, score in _cap_edges_by_degree(candidates, cap):
             a, b = entity_nodes[i], entity_nodes[j]
             shared = (node_entity_sets[i] & node_entity_sets[j]) & informative
             if not shared:
@@ -494,9 +527,9 @@ class Axis2Builder:
                 source_id  = a.id,
                 target_id  = b.id,
                 rel_type   = RelType.SHARES_ENTITY,
-                weight     = len(shared),
+                weight     = round(score, 4),
                 axis       = 2,
-                properties = {"shared_entities": list(shared)},
+                properties = {"shared_entities": list(shared), "rarity_score": round(score, 4)},
             ))
 
         return edges
@@ -509,19 +542,50 @@ class Axis2Builder:
     ) -> tuple[list[DKGNode], list[DKGEdge]]:
         from sklearn.cluster import KMeans
 
-        embedded = [n for n in nodes if n.embedding is not None]
         edges: list[DKGEdge] = []
 
-        if len(embedded) < 3:
+        # Cluster on entity co-occurrence when enough nodes carry entities,
+        # not the same raw embeddings SEMANTICALLY_SIMILAR already uses --
+        # clustering the identical vector space just produces a coarser
+        # copy of that edge type (same geometry, fewer/blurrier edges),
+        # not an independent signal. Entity co-occurrence is a genuinely
+        # different axis: two sections can be embedding-dissimilar (very
+        # different phrasing/length) yet co-cluster here because they both
+        # revolve around the same named things. Falls back to embeddings
+        # when too few nodes have entities for a co-occurrence signal to
+        # mean anything (small documents, or a chat provider unavailable
+        # so NER never ran) -- same fallback shape as before this change,
+        # not a behavior regression for that case.
+        target_nodes = [n for n in nodes if n.entities]
+        vocab = sorted({e.lower() for n in target_nodes for e in n.entities})
+        signal = "entity_cooccurrence"
+        if len(target_nodes) < 3 or len(vocab) < 2:
+            target_nodes = [n for n in nodes if n.embedding is not None]
+            signal = "embedding"
+
+        if len(target_nodes) < 3:
             return nodes, edges
 
+        if signal == "entity_cooccurrence":
+            vocab_index = {term: i for i, term in enumerate(vocab)}
+            raw = np.zeros((len(target_nodes), len(vocab)), dtype=np.float32)
+            doc_freq = np.zeros(len(vocab), dtype=np.float32)
+            for row, node in enumerate(target_nodes):
+                touched = {vocab_index[e.lower()] for e in node.entities}
+                for idx in touched:
+                    raw[row, idx] += 1
+                    doc_freq[idx] += 1
+            idf = np.log((len(target_nodes) + 1) / (doc_freq + 1)) + 1
+            vecs = raw * idf
+        else:
+            vecs = np.array([n.embedding for n in target_nodes], dtype=np.float32)
+
         # Auto k: sqrt of node count, min 2 max 10
-        k = N_CLUSTERS or max(2, min(10, int(len(embedded) ** 0.5)))
-        vecs = np.array([n.embedding for n in embedded], dtype=np.float32)
-        km   = KMeans(n_clusters=k, random_state=42, n_init="auto")
+        k = N_CLUSTERS or max(2, min(10, int(len(target_nodes) ** 0.5)))
+        km = KMeans(n_clusters=k, random_state=42, n_init="auto")
         labels = km.fit_predict(vecs)
 
-        for node, label in zip(embedded, labels):
+        for node, label in zip(target_nodes, labels):
             node.cluster_id = int(label)
 
         # Cluster count is capped at 10 regardless of corpus size (above),
@@ -534,8 +598,8 @@ class Axis2Builder:
         # cap each node to its top-k most-similar members of its OWN
         # cluster, computed on a per-cluster similarity submatrix (cheap --
         # clusters are far smaller than the full corpus).
-        clusters: dict[int, list[int]] = {}  # cluster_id -> indices into embedded
-        for idx, node in enumerate(embedded):
+        clusters: dict[int, list[int]] = {}  # cluster_id -> indices into target_nodes
+        for idx, node in enumerate(target_nodes):
             clusters.setdefault(node.cluster_id, []).append(idx)
 
         norms = np.linalg.norm(vecs, axis=1, keepdims=True)
@@ -555,13 +619,13 @@ class Axis2Builder:
                 if pair in seen:
                     continue
                 seen.add(pair)
-                a, b = embedded[pair[0]], embedded[pair[1]]
+                a, b = target_nodes[pair[0]], target_nodes[pair[1]]
                 edges.append(DKGEdge(
                     source_id  = a.id,
                     target_id  = b.id,
                     rel_type   = RelType.SAME_CATEGORY,
                     axis       = 2,
-                    properties = {"cluster_id": cluster_id},
+                    properties = {"cluster_id": cluster_id, "signal": signal},
                     confidence = SAME_CATEGORY_CONFIDENCE,
                     confidence_tier = EdgeConfidenceTier.AMBIGUOUS,
                 ))
@@ -571,10 +635,21 @@ class Axis2Builder:
     # ─────────────────────────────────────────
     # 6. LLM PASS — CONTRADICTS / ELABORATES / PREREQUISITE_OF (parallel)
     # ─────────────────────────────────────────
-    def _build_llm_edges(self, nodes: list[DKGNode]) -> list[DKGEdge]:
+    def _build_llm_edges(
+        self, nodes: list[DKGNode], entity_edges: Optional[list[DKGEdge]] = None
+    ) -> list[DKGEdge]:
         """
-        Runs only on top-k highest-similarity pairs (capped by AXIS2_MAX_LLM_PAIRS)
-        with bounded parallel LLM calls (AXIS2_LLM_PAIR_CONCURRENCY).
+        Runs on two candidate pools, both capped by AXIS2_MAX_LLM_PAIRS total,
+        with bounded parallel LLM calls (AXIS2_LLM_PAIR_CONCURRENCY):
+          - top-k highest embedding-similarity pairs (surface-similar
+            phrasing of the same idea)
+          - "entity-bridge" pairs from entity_edges (already computed,
+            rarity-weighted SHARES_ENTITY edges) that are NOT already
+            embedding-similar -- two sections can share a rare named
+            entity while phrasing it differently enough that cosine
+            similarity alone misses the relationship entirely. Without
+            this, pure similarity-ranked sampling only ever sees
+            paraphrase-level pairs and never cross-topic logical ones.
         """
         edges: list[DKGEdge] = []
         embedded = [n for n in nodes if n.embedding is not None]
@@ -586,17 +661,35 @@ class Axis2Builder:
         vecs  = vecs / (norms + 1e-10)
         sim   = vecs @ vecs.T
 
-        # Collect all candidate pairs above the threshold, sorted by similarity
-        # (highest first) then capped to AXIS2_MAX_LLM_PAIRS.
-        candidates: list[Tuple[float, int, int]] = []
+        sim_candidates: list[Tuple[float, int, int]] = []
         for i, j in itertools.combinations(range(len(embedded)), 2):
             score = float(sim[i, j])
             if score >= CONTRADICTION_THRESH:
-                candidates.append((score, i, j))
+                sim_candidates.append((score, i, j))
+        sim_candidates.sort(reverse=True)
 
-        # Sort descending by similarity and cap
-        candidates.sort(reverse=True)
-        candidates = candidates[:AXIS2_MAX_LLM_PAIRS]
+        bridge_candidates: list[Tuple[float, int, int]] = []
+        if entity_edges:
+            id_to_idx = {n.id: i for i, n in enumerate(embedded)}
+            seen_pairs = {(min(i, j), max(i, j)) for _, i, j in sim_candidates}
+            for e in entity_edges:
+                i, j = id_to_idx.get(e.source_id), id_to_idx.get(e.target_id)
+                if i is None or j is None:
+                    continue
+                pair = (min(i, j), max(i, j))
+                if pair in seen_pairs or float(sim[i, j]) >= CONTRADICTION_THRESH:
+                    continue  # already covered by the similarity pool
+                bridge_candidates.append((float(e.weight or 0.0), pair[0], pair[1]))
+            bridge_candidates.sort(reverse=True)
+
+        # Reserve up to a third of the fixed LLM-call budget for bridge
+        # pairs -- a single ranked-by-score list would always favor the
+        # similarity pool (it's the higher-scoring one by construction),
+        # crowding entity bridges out entirely regardless of how many exist.
+        budget = AXIS2_MAX_LLM_PAIRS
+        bridge_budget = min(len(bridge_candidates), budget // 3)
+        sim_budget = budget - bridge_budget
+        candidates = sim_candidates[:sim_budget] + bridge_candidates[:bridge_budget]
 
         if not candidates:
             return edges
