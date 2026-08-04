@@ -57,7 +57,7 @@ Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, A
 
 **Drop in a PDF, get a queryable graph.** Multiple files, concurrent submission, stable logical keys for versioning — same upload path whether it's one document or a batch.
 
-![Document Ingestion — upload single or batch documents](docs/images/document_upload.png)
+![Document Ingestion — upload single or batch documents](docs/images/document_ingestion.png)
 
 </td>
 <td width="50%">
