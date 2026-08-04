@@ -152,7 +152,15 @@ _KEYWORD_STOP = frozenset({
 
 _TOC_RE = re.compile(
     r"\b(table\s+of\s+contents?|\btoc\b|list\s+(?:all\s+)?(?:the\s+)?contents?|"
-    r"show\s+(?:me\s+)?(?:the\s+)?contents?|provide\s+(?:me\s+)?(?:all\s+)?(?:the\s+)?toc)\b",
+    r"show\s+(?:me\s+)?(?:the\s+)?contents?|provide\s+(?:me\s+)?(?:all\s+)?(?:the\s+)?toc|"
+    # Structural-outline phrasing that doesn't say "contents"/"toc" but
+    # means the same thing -- "what sections does this doc have", "list
+    # every heading" -- was falling through to the relevance-ranked hybrid
+    # strategy instead of TocStrategy, which is the only one that walks
+    # the graph in actual document order rather than by match score.
+    r"(?:list|show)\s+(?:me\s+)?(?:all\s+|every\s+)?(?:the\s+)?(?:sections?|headings?)\b|"
+    r"what\s+(?:sections?|headings?)\s+(?:does|do|is|are)\b|"
+    r"what\s+(?:are\s+the|is\s+the)\s+(?:sections?|headings?))\b",
     re.I,
 )
 

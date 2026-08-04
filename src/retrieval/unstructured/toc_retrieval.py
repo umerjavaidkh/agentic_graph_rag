@@ -150,7 +150,15 @@ def include_in_outline_fallback(title: str, depth: int, label: str) -> bool:
         return False
     if label == "Chapter":
         return True
-    if depth <= 1:
+    # depth<=1 only ever matched Chapter-tier nodes (Document=0, Chapter=1,
+    # Section=2+ per Axis1StructuralBuilder's convention) -- a document
+    # with no chapter tier at all (common for the heuristic/no-TOC parse
+    # path; flat SEC filings and short documents alike) has every heading
+    # sitting at depth 2, so this silently dropped all of them from the
+    # outline instead of falling back to the numbered/uppercase checks
+    # below. depth<=2 includes top-level Sections too; deeper numbered
+    # subsections (3+) still rely on the checks below, unchanged.
+    if depth <= 2:
         return True
     if _NUMBERED_OUTLINE_RE.match(t):
         return True
