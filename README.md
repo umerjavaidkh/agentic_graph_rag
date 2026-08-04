@@ -9,7 +9,7 @@
 
 **Every layer is a plug-in point, not a fixed pipeline.** Parsing, ingestion, and retrieval are each built behind a real interface — `DocumentParser`, `ModelProvider`/`BlobStore`/`VectorStore`, `StructuredStrategy`/`UnstructuredStrategy` — so you can bring your own PDF parser, embedding/LLM provider, storage backend, or retrieval strategy and register it, without forking or touching existing code. Retrieval alone already ships 6 unstructured + 2 structured strategies resolved by name at runtime; parsing ships 3 (a geometry-first default with correct RTL/bidi handling and vector-rule table detection, a plain PyMuPDF/pdfplumber fallback, and a table-aware variant that fixes real over-segmentation bugs found on live SEC filings). See [Pluggable by design](#pluggable-by-design) below for the exact seams and how to add your own.
 
-Agentic GraphRAG keeps **structured business data** and **unstructured documents** in the same graph database, with an explicit retrieval-mode switch — structured, unstructured, or hybrid — instead of an LLM guessing which one you meant. SQL-grade analytics *and* multi-hop reasoning over PDFs/DOCX, without separate vector DBs, ETL pipelines, or ad-hoc orchestration glue, and without a misrouted question silently producing the wrong kind of answer.
+Agentic GraphRAG keeps **structured business data** and **unstructured documents** in the same graph database, with an explicit retrieval-mode switch — structured, unstructured, or hybrid — instead of an LLM guessing which one you meant. SQL-grade analytics _and_ multi-hop reasoning over PDFs/DOCX, without separate vector DBs, ETL pipelines, or ad-hoc orchestration glue, and without a misrouted question silently producing the wrong kind of answer.
 
 It brings **your own** Neo4j schema and **your own** documents: the query router reads the live graph schema at runtime rather than hardcoding a demo domain, so it isn't tied to the bundled Northwind + Go.Data sample data used below.
 
@@ -53,11 +53,18 @@ Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, A
 </td>
 </tr>
 <tr>
-<td width="50%" colspan="2">
+<td width="50%">
 
 **Drop in a PDF, get a queryable graph.** Multiple files, concurrent submission, stable logical keys for versioning — same upload path whether it's one document or a batch.
 
-![Document ingestion — drag-and-drop PDF upload with versioning and job status](docs/images/document_ingestion.png)
+![Document Ingestion — upload single or batch documents](docs/images/document_upload.png)
+
+</td>
+<td width="50%">
+
+**Inspect graph construction at every pipeline stage.** Interactively explore and debug knowledge graph nodes, edge relationships, and entity schemas across structural (X1), semantic (X2), and final Neo4j stages directly in the UI.
+
+![Graph Inspector — interactive graph visualization across pipeline construction stages](docs/images/graph_inspector.png)
 
 </td>
 </tr>
@@ -65,36 +72,36 @@ Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, A
 
 ## Why this is different
 
-| Typical flat RAG | Agentic GraphRAG |
-|------------------|------------------|
-| One chunk index for everything | Dedicated graphs for tables vs. documents |
-| Similarity search only | Cypher for metrics + hybrid retrieval for PDFs |
-| Weak on counts, joins, time series | Aggregations, rankings, charts from live Neo4j |
-| Loses document structure | Hierarchy: Document → Chapter → Section → Page → Region |
-| Guesses when context is missing | Eval suite covers anti-hallucination and empty-result cases |
+| Typical flat RAG                   | Agentic GraphRAG                                            |
+| ---------------------------------- | ----------------------------------------------------------- |
+| One chunk index for everything     | Dedicated graphs for tables vs. documents                   |
+| Similarity search only             | Cypher for metrics + hybrid retrieval for PDFs              |
+| Weak on counts, joins, time series | Aggregations, rankings, charts from live Neo4j              |
+| Loses document structure           | Hierarchy: Document → Chapter → Section → Page → Region     |
+| Guesses when context is missing    | Eval suite covers anti-hallucination and empty-result cases |
 
-The same user session can ask *"Top 5 products by revenue in 1997"* (structured) and *"Which network deployed fellows to Greece and Kosovo?"* (unstructured, multi-hop) — you pick `structured`/`unstructured`/`hybrid` per query (dropdown in the UI, `retrieval_mode` in the API), RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
+The same user session can ask _"Top 5 products by revenue in 1997"_ (structured) and _"Which network deployed fellows to Greece and Kosovo?"_ (unstructured, multi-hop) — you pick `structured`/`unstructured`/`hybrid` per query (dropdown in the UI, `retrieval_mode` in the API), RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
 
 ### Pluggable by design
 
 Most RAG repos hardcode one parser, one embedding provider, and one retrieval path. Here every one of those is a named implementation of a real interface, resolved at runtime — not a hypothetical "you could refactor this later." These are the actual seams in the code today:
 
-| Seam | Interface | Registered implementations | Add your own |
-|------|-----------|------------------------------|---------------|
-| **Parsing** | `DocumentParser` Protocol — [`src/document/parser_base.py`](src/document/parser_base.py) | `RtldocPdfParser` (`.pdf:rtldoc`, **default**) — geometry-first extraction via [rtldoc](https://github.com/umerjavaidkh/rtldoc), no OCR/model; `LightPdfParser` (`.pdf:light`); `TableAwarePdfParser` (`.pdf:table-aware`) — [`src/document/parser_registry.py`](src/document/parser_registry.py), switch with `PDF_PARSER_BACKEND` | Implement `parse(source) -> (nodes, edges)`, call `register_parser(".pdf:yourname", YourParser)` |
-| **Retrieval (unstructured)** | `UnstructuredStrategy` Protocol — [`src/retrieval/unstructured/strategies/base.py`](src/retrieval/unstructured/strategies/base.py) | `structural_box_list`, `subsection_tree`, `structural_toc`, `structural_page`, `structural_filing_date`, `graph_rag_hybrid` | Implement `retrieve(...)`, call `register_unstructured("yourname", factory)` |
-| **Retrieval (structured)** | `StructuredStrategy` Protocol — [`src/retrieval/structured/strategies/base.py`](src/retrieval/structured/strategies/base.py) | `text2cypher`, `multistep` | Implement `retrieve(...)`, call `register_structured("yourname", factory)` |
-| **LLM (chat/synthesis)** | `ModelProvider` ABC — [`src/model_providers/base.py`](src/model_providers/base.py) | `OpenAIProvider`, `AnthropicProvider`, `GeminiProvider` — pick with `MODEL_PROVIDER` (`get_chat_provider()` in [`src/model_providers/factory.py`](src/model_providers/factory.py)) | Implement `chat_completion`/`chat_completion_stream`, register in `get_model_provider()` |
-| **Embeddings** | same `ModelProvider` ABC | `OpenAIProvider` only — always used regardless of `MODEL_PROVIDER` (Anthropic has no embeddings API; Qdrant's collection has a fixed dimension) — see `get_embedding_provider()` | Swapping embedding provider/dimension needs a matching Qdrant collection rebuild; not currently wired up |
-| **Blob storage** | `BlobStore` ABC — [`src/storage/blob/base.py`](src/storage/blob/base.py) | Local filesystem, MinIO | Implement `put`/`get`/`delete`/`exists`, wire into `get_blob_store()` |
-| **Vector storage** | `VectorStore` ABC — [`src/storage/vector/base.py`](src/storage/vector/base.py) | In-memory, Qdrant | Implement `upsert`/`query`/`delete`, wire into `get_vector_store()` |
+| Seam                         | Interface                                                                                                                          | Registered implementations                                                                                                                                                                                                                                                                                                          | Add your own                                                                                             |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Parsing**                  | `DocumentParser` Protocol — [`src/document/parser_base.py`](src/document/parser_base.py)                                           | `RtldocPdfParser` (`.pdf:rtldoc`, **default**) — geometry-first extraction via [rtldoc](https://github.com/umerjavaidkh/rtldoc), no OCR/model; `LightPdfParser` (`.pdf:light`); `TableAwarePdfParser` (`.pdf:table-aware`) — [`src/document/parser_registry.py`](src/document/parser_registry.py), switch with `PDF_PARSER_BACKEND` | Implement `parse(source) -> (nodes, edges)`, call `register_parser(".pdf:yourname", YourParser)`         |
+| **Retrieval (unstructured)** | `UnstructuredStrategy` Protocol — [`src/retrieval/unstructured/strategies/base.py`](src/retrieval/unstructured/strategies/base.py) | `structural_box_list`, `subsection_tree`, `structural_toc`, `structural_page`, `structural_filing_date`, `graph_rag_hybrid`                                                                                                                                                                                                         | Implement `retrieve(...)`, call `register_unstructured("yourname", factory)`                             |
+| **Retrieval (structured)**   | `StructuredStrategy` Protocol — [`src/retrieval/structured/strategies/base.py`](src/retrieval/structured/strategies/base.py)       | `text2cypher`, `multistep`                                                                                                                                                                                                                                                                                                          | Implement `retrieve(...)`, call `register_structured("yourname", factory)`                               |
+| **LLM (chat/synthesis)**     | `ModelProvider` ABC — [`src/model_providers/base.py`](src/model_providers/base.py)                                                 | `OpenAIProvider`, `AnthropicProvider`, `GeminiProvider` — pick with `MODEL_PROVIDER` (`get_chat_provider()` in [`src/model_providers/factory.py`](src/model_providers/factory.py))                                                                                                                                                  | Implement `chat_completion`/`chat_completion_stream`, register in `get_model_provider()`                 |
+| **Embeddings**               | same `ModelProvider` ABC                                                                                                           | `OpenAIProvider` only — always used regardless of `MODEL_PROVIDER` (Anthropic has no embeddings API; Qdrant's collection has a fixed dimension) — see `get_embedding_provider()`                                                                                                                                                    | Swapping embedding provider/dimension needs a matching Qdrant collection rebuild; not currently wired up |
+| **Blob storage**             | `BlobStore` ABC — [`src/storage/blob/base.py`](src/storage/blob/base.py)                                                           | Local filesystem, MinIO                                                                                                                                                                                                                                                                                                             | Implement `put`/`get`/`delete`/`exists`, wire into `get_blob_store()`                                    |
+| **Vector storage**           | `VectorStore` ABC — [`src/storage/vector/base.py`](src/storage/vector/base.py)                                                     | In-memory, Qdrant                                                                                                                                                                                                                                                                                                                   | Implement `upsert`/`query`/`delete`, wire into `get_vector_store()`                                      |
 
 Two consequences worth calling out:
 
 - **Parsing bugs get fixed as new strategies, not patches on the default.** `TableAwarePdfParser` was added after real ingestion-quality regressions surfaced on live SEC filings (table rows misread as headings, repeated running headers counted as chapters) — it's a second, independently-selectable implementation (`PDF_PARSER_BACKEND=table-aware`), A/B-compared against the default on the same documents before being trusted, not a silent behavior change to everyone's pipeline.
 - **Ingestion quality is measured, not assumed.** [`scripts/validate_ingestion.py`](scripts/validate_ingestion.py) and `GET /ingest/quality/{doc_id}` compute a cheap, LLM-free per-document report (text/NER/embedding coverage, orphan nodes, page continuity) straight from the ingested graph — the same tool that caught the regressions above, and how any new parser/provider gets evaluated before it's recommended.
 - **Schema-driven, not domain-hardcoded.** The query router reads the live Neo4j schema (`structured_entity_summary()`) at runtime instead of hardcoding a demo domain — bring your own graph and the routing adapts.
-- **LLMs are optional at ingestion, not required.** Parsing and structural graph construction (Document → Chapter → Section → Page → Region, all edges) are pure PDF-geometry heuristics — zero LLM calls, works with no API key at all. An LLM is only used for the *semantic* enrichment layer on top (entity extraction, `SHARES_ENTITY`/`SAME_CATEGORY` linking, optional `CONTRADICTS`/`ELABORATES` reasoning, chapter summaries) — and it degrades gracefully (structural graph still gets built, semantic step just gets skipped) if no chat-provider key is configured. When it does run, it defaults to a low-cost model (`gpt-4o-mini`, configurable via `AXIS2_MODEL`), not a frontier-tier model — ingesting a large corpus doesn't require frontier-model spend.
+- **LLMs are optional at ingestion, not required.** Parsing and structural graph construction (Document → Chapter → Section → Page → Region, all edges) are pure PDF-geometry heuristics — zero LLM calls, works with no API key at all. An LLM is only used for the _semantic_ enrichment layer on top (entity extraction, `SHARES_ENTITY`/`SAME_CATEGORY` linking, optional `CONTRADICTS`/`ELABORATES` reasoning, chapter summaries) — and it degrades gracefully (structural graph still gets built, semantic step just gets skipped) if no chat-provider key is configured. When it does run, it defaults to a low-cost model (`gpt-4o-mini`, configurable via `AXIS2_MODEL`), not a frontier-tier model — ingesting a large corpus doesn't require frontier-model spend.
 
 ## Architecture
 
@@ -135,76 +142,76 @@ cp .env.example .env          # add OPENAI_API_KEY (always required — embeddin
 docker compose up --build
 ```
 
-| Page | URL |
-|------|-----|
-| **Chat** | http://localhost:8000/chat |
-| **Upload** | http://localhost:8000/upload |
+| Page                         | URL                            |
+| ---------------------------- | ------------------------------ |
+| **Chat**                     | http://localhost:8000/chat     |
+| **Upload**                   | http://localhost:8000/upload   |
 | **Feedback + audit monitor** | http://localhost:8000/feedback |
-| **API docs** | http://localhost:8000/docs |
-| **Health** | http://localhost:8000/health |
+| **API docs**                 | http://localhost:8000/docs     |
+| **Health**                   | http://localhost:8000/health   |
 
 > Do **not** set `NEO4J_URI` in `.env` when using the bundled Docker Neo4j — it is wired automatically.
 
 Try it in `/chat` with the dev sidebar (`master` branch, no sign-in required):
 
-| Track | User ID | Role | Try asking |
-|-------|---------|------|------------|
-| Structured (needs Northwind sample loaded) | `regular_001` | `regular_office` | *Top 5 products by sales revenue in 1997?* |
-| Unstructured (needs a PDF ingested) | `public_001` | `public` | *List the table of contents from the document.* |
-| Hybrid | `compliance_001` | `compliance_officer` | *Show compliance incidents and summarize related policy.* |
-| Ingestion | `admin_001` | `admin` | use `/upload` |
+| Track                                      | User ID          | Role                 | Try asking                                                |
+| ------------------------------------------ | ---------------- | -------------------- | --------------------------------------------------------- |
+| Structured (needs Northwind sample loaded) | `regular_001`    | `regular_office`     | _Top 5 products by sales revenue in 1997?_                |
+| Unstructured (needs a PDF ingested)        | `public_001`     | `public`             | _List the table of contents from the document._           |
+| Hybrid                                     | `compliance_001` | `compliance_officer` | _Show compliance incidents and summarize related policy._ |
+| Ingestion                                  | `admin_001`      | `admin`              | use `/upload`                                             |
 
 Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstructured/`, or upload `sample_data_to_test/structured/northwind-data.cypher` with `ALLOW_CYPHER_INGEST=true`).
 
 ## Tech stack
 
-| Layer | Technology |
-|-------|------------|
-| Graph database | Neo4j 5.x |
-| AI orchestration | LangGraph |
-| API | FastAPI + Uvicorn |
+| Layer                                       | Technology                                                                     |
+| ------------------------------------------- | ------------------------------------------------------------------------------ |
+| Graph database                              | Neo4j 5.x                                                                      |
+| AI orchestration                            | LangGraph                                                                      |
+| API                                         | FastAPI + Uvicorn                                                              |
 | LLM (chat/synthesis, optional at ingestion) | OpenAI, Anthropic, or Gemini (`MODEL_PROVIDER`; default gpt-4o-mini, low-cost) |
-| Embeddings | OpenAI only, always (text-embedding-3-small) |
-| PDF parsing | PyMuPDF + pdfplumber |
-| Full-text storage (unstructured docs) | MinIO (blob store), pointed to from lean Neo4j nodes |
-| Vector storage | Qdrant, authoritative for embeddings |
-| Job queue | Redis + RQ *(optional — in-process fallback when unset)* |
-| Containers | Docker / Docker Compose |
+| Embeddings                                  | OpenAI only, always (text-embedding-3-small)                                   |
+| PDF parsing                                 | PyMuPDF + pdfplumber                                                           |
+| Full-text storage (unstructured docs)       | MinIO (blob store), pointed to from lean Neo4j nodes                           |
+| Vector storage                              | Qdrant, authoritative for embeddings                                           |
+| Job queue                                   | Redis + RQ _(optional — in-process fallback when unset)_                       |
+| Containers                                  | Docker / Docker Compose                                                        |
 
 ## Current status
 
-| Area | Status |
-|------|--------|
-| Dual-graph RAG (structured + documents + hybrid) via explicit retrieval-mode selection | ✅ |
-| Pluggable parser / retrieval strategy registries (see [Pluggable by design](#pluggable-by-design)) | ✅ |
-| Multi-provider chat/synthesis (OpenAI, Anthropic, Gemini) — embeddings always OpenAI | ✅ |
-| Scalable ingestion (Redis + RQ workers, versioning) | ✅ |
-| Ingestion-quality validation (`GET /ingest/quality`, LLM-free per-document report) | ✅ |
-| Source document viewer — click a citation, view the original PDF in a side panel | ✅ |
-| Bulk-question queue — paste several questions, answered one at a time in order | ✅ |
-| Multi-tenancy (property-based `tenant_id` isolation) | ✅ |
-| Audit log (who / what / when / result, admin API + dashboard) | ✅ |
-| Google OIDC auth, RBAC, per-user thread isolation | ✅ (`release/v1.0`) |
-| Streaming answers with charts, retrieval feedback loop | ✅ |
-| Chapter-level rollup summaries for broad "what does this document/chapter discuss" questions | ✅ |
+| Area                                                                                                                                                                                          | Status                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Dual-graph RAG (structured + documents + hybrid) via explicit retrieval-mode selection                                                                                                        | ✅                                                                                                       |
+| Pluggable parser / retrieval strategy registries (see [Pluggable by design](#pluggable-by-design))                                                                                            | ✅                                                                                                       |
+| Multi-provider chat/synthesis (OpenAI, Anthropic, Gemini) — embeddings always OpenAI                                                                                                          | ✅                                                                                                       |
+| Scalable ingestion (Redis + RQ workers, versioning)                                                                                                                                           | ✅                                                                                                       |
+| Ingestion-quality validation (`GET /ingest/quality`, LLM-free per-document report)                                                                                                            | ✅                                                                                                       |
+| Source document viewer — click a citation, view the original PDF in a side panel                                                                                                              | ✅                                                                                                       |
+| Bulk-question queue — paste several questions, answered one at a time in order                                                                                                                | ✅                                                                                                       |
+| Multi-tenancy (property-based `tenant_id` isolation)                                                                                                                                          | ✅                                                                                                       |
+| Audit log (who / what / when / result, admin API + dashboard)                                                                                                                                 | ✅                                                                                                       |
+| Google OIDC auth, RBAC, per-user thread isolation                                                                                                                                             | ✅ (`release/v1.0`)                                                                                      |
+| Streaming answers with charts, retrieval feedback loop                                                                                                                                        | ✅                                                                                                       |
+| Chapter-level rollup summaries for broad "what does this document/chapter discuss" questions                                                                                                  | ✅                                                                                                       |
 | Regression eval suite — 4 suites, 101 cases (Northwind structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ✅ 95/101 — remaining 6 are documented, known gaps (`notes` field in `eval/*.json`), not silent failures |
-| Storage split — lean Neo4j (structure + pointers only), full text in MinIO, embeddings in Qdrant, `Hydrator` seam on the read path | 🚧 in progress, merging |
-| Axis-2 semantic-edge precision (target ≥90% via sampled LLM-judge) | 🚧 in progress — structural graph (Axis-1) already scores ~99-100%, semantic linking is the open gap |
-| 1000-document corpus validation, then a tagged release | 🚧 in progress |
-| CI (tests on push/PR) | 🚧 in progress |
+| Storage split — lean Neo4j (structure + pointers only), full text in MinIO, embeddings in Qdrant, `Hydrator` seam on the read path                                                            | 🚧 in progress, merging                                                                                  |
+| Axis-2 semantic-edge precision (target ≥90% via sampled LLM-judge)                                                                                                                            | 🚧 in progress — structural graph (Axis-1) already scores ~99-100%, semantic linking is the open gap     |
+| 1000-document corpus validation, then a tagged release                                                                                                                                        | 🚧 in progress                                                                                           |
+| CI (tests on push/PR)                                                                                                                                                                         | 🚧 in progress                                                                                           |
 
 **Roadmap:** validate ingestion + retrieval quality across a 1000-document real-world corpus before cutting a tagged release; per-user short/long memory across threads; multi-language query & answer support; Kubernetes/Terraform deployment reference.
 
 ## Documentation
 
-| Doc | Covers |
-|-----|--------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Query path, ingestion pipeline, multi-tenancy, audit log, project layout |
+| Doc                                                                                  | Covers                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                                         | Query path, ingestion pipeline, multi-tenancy, audit log, project layout                                                                                                                                          |
 | [docs/INGESTION_RETRIEVAL_ARCHITECTURE.md](docs/INGESTION_RETRIEVAL_ARCHITECTURE.md) | Deep dive: how parsing, ingestion enrichment, and retrieval strategies are loosely coupled — diagrams for the parser registry, full ingestion pipeline, retrieval strategy dispatch, and the extension points map |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every environment variable, feedback loop workflow |
-| [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth branches, RBAC, seeded demo users, identity flow |
-| [docs/API.md](docs/API.md) | curl reference for every endpoint |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common setup issues, local dev without Docker |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md)                                       | Every environment variable, feedback loop workflow                                                                                                                                                                |
+| [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)                                     | Auth branches, RBAC, seeded demo users, identity flow                                                                                                                                                             |
+| [docs/API.md](docs/API.md)                                                           | curl reference for every endpoint                                                                                                                                                                                 |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                                   | Common setup issues, local dev without Docker                                                                                                                                                                     |
 
 Medium article: [Agentic Graph RAG — architecture and walkthrough](https://medium.com/p/0ee1f6baae26)
 
