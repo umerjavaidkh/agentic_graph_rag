@@ -1,8 +1,11 @@
 # Agentic GraphRAG
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Status: Development in Progress](https://img.shields.io/badge/status-development%20in%20progress-orange.svg)](#current-status)
 
-**One Neo4j graph. Two knowledge modes. Answers that flat RAG cannot reliably give.**
+> 🚧 **Development in progress.** Core structured + unstructured retrieval, ingestion, and the storage-split architecture below are working and covered by tests, but this is not yet a tagged release — see [Current status](#current-status) for exactly what's done vs. in flight.
+
+**One Neo4j graph. Two knowledge modes. Structured business data and unstructured documents under the same roof — answers that flat RAG cannot reliably give.**
 
 **Every layer is a plug-in point, not a fixed pipeline.** Parsing, ingestion, and retrieval are each built behind a real interface — `DocumentParser`, `ModelProvider`/`BlobStore`/`VectorStore`, `StructuredStrategy`/`UnstructuredStrategy` — so you can bring your own PDF parser, embedding/LLM provider, storage backend, or retrieval strategy and register it, without forking or touching existing code. Retrieval alone already ships 6 unstructured + 2 structured strategies resolved by name at runtime; parsing ships 3 (a geometry-first default with correct RTL/bidi handling and vector-rule table detection, a plain PyMuPDF/pdfplumber fallback, and a table-aware variant that fixes real over-segmentation bugs found on live SEC filings). See [Pluggable by design](#pluggable-by-design) below for the exact seams and how to add your own.
 
@@ -44,7 +47,7 @@ Most RAG repos hardcode one parser, one embedding provider, and one retrieval pa
 | **Retrieval (unstructured)** | `UnstructuredStrategy` Protocol — [`src/retrieval/unstructured/strategies/base.py`](src/retrieval/unstructured/strategies/base.py) | `structural_box_list`, `subsection_tree`, `structural_toc`, `structural_page`, `structural_filing_date`, `graph_rag_hybrid` | Implement `retrieve(...)`, call `register_unstructured("yourname", factory)` |
 | **Retrieval (structured)** | `StructuredStrategy` Protocol — [`src/retrieval/structured/strategies/base.py`](src/retrieval/structured/strategies/base.py) | `text2cypher`, `multistep` | Implement `retrieve(...)`, call `register_structured("yourname", factory)` |
 | **LLM (chat/synthesis)** | `ModelProvider` ABC — [`src/model_providers/base.py`](src/model_providers/base.py) | `OpenAIProvider`, `AnthropicProvider`, `GeminiProvider` — pick with `MODEL_PROVIDER` (`get_chat_provider()` in [`src/model_providers/factory.py`](src/model_providers/factory.py)) | Implement `chat_completion`/`chat_completion_stream`, register in `get_model_provider()` |
-| **Embeddings** | same `ModelProvider` ABC | `OpenAIProvider` only — always used regardless of `MODEL_PROVIDER` (Anthropic has no embeddings API; Neo4j's vector index has a fixed dimension) — see `get_embedding_provider()` | Swapping embedding provider/dimension needs a matching vector-index rebuild; not currently wired up |
+| **Embeddings** | same `ModelProvider` ABC | `OpenAIProvider` only — always used regardless of `MODEL_PROVIDER` (Anthropic has no embeddings API; Qdrant's collection has a fixed dimension) — see `get_embedding_provider()` | Swapping embedding provider/dimension needs a matching Qdrant collection rebuild; not currently wired up |
 | **Blob storage** | `BlobStore` ABC — [`src/storage/blob/base.py`](src/storage/blob/base.py) | Local filesystem, MinIO | Implement `put`/`get`/`delete`/`exists`, wire into `get_blob_store()` |
 | **Vector storage** | `VectorStore` ABC — [`src/storage/vector/base.py`](src/storage/vector/base.py) | In-memory, Qdrant | Implement `upsert`/`query`/`delete`, wire into `get_vector_store()` |
 
@@ -53,6 +56,7 @@ Two consequences worth calling out:
 - **Parsing bugs get fixed as new strategies, not patches on the default.** `TableAwarePdfParser` was added after real ingestion-quality regressions surfaced on live SEC filings (table rows misread as headings, repeated running headers counted as chapters) — it's a second, independently-selectable implementation (`PDF_PARSER_BACKEND=table-aware`), A/B-compared against the default on the same documents before being trusted, not a silent behavior change to everyone's pipeline.
 - **Ingestion quality is measured, not assumed.** [`scripts/validate_ingestion.py`](scripts/validate_ingestion.py) and `GET /ingest/quality/{doc_id}` compute a cheap, LLM-free per-document report (text/NER/embedding coverage, orphan nodes, page continuity) straight from the ingested graph — the same tool that caught the regressions above, and how any new parser/provider gets evaluated before it's recommended.
 - **Schema-driven, not domain-hardcoded.** The query router reads the live Neo4j schema (`structured_entity_summary()`) at runtime instead of hardcoding a demo domain — bring your own graph and the routing adapts.
+- **LLMs are optional at ingestion, not required.** Parsing and structural graph construction (Document → Chapter → Section → Page → Region, all edges) are pure PDF-geometry heuristics — zero LLM calls, works with no API key at all. An LLM is only used for the *semantic* enrichment layer on top (entity extraction, `SHARES_ENTITY`/`SAME_CATEGORY` linking, optional `CONTRADICTS`/`ELABORATES` reasoning, chapter summaries) — and it degrades gracefully (structural graph still gets built, semantic step just gets skipped) if no chat-provider key is configured. When it does run, it defaults to a low-cost model (`gpt-4o-mini`, configurable via `AXIS2_MODEL`), not a frontier-tier model — ingesting a large corpus doesn't require frontier-model spend.
 
 ## Architecture
 
@@ -65,15 +69,20 @@ flowchart TB
   S --> C[Text-to-Cypher → Neo4j]
   U --> V[Vector + full-text + graph expand]
   U --> T[TOC / page / fact lookup]
-  C --> N[(Neo4j)]
+  C --> N[(Neo4j — structure + pointers)]
   V --> N
   T --> N
+  N --> HY[Hydrator]
+  HY --> B[(MinIO — full text)]
+  HY --> QD[(Qdrant — embeddings)]
   S --> UI[Charts + tables + narrative]
   U --> UI
   H --> UI
 ```
 
 The mode is set explicitly per query — by the caller (UI dropdown or API's `retrieval_mode` field), not inferred by an LLM — so a question can't silently get routed to the wrong knowledge source.
+
+**Neo4j is a lean skeleton, not the content store.** For unstructured documents, Neo4j holds structure only — nodes (Document → Chapter → Section → Page → Region), `CONTAINS`/`PRECEDES` edges, titles, page numbers, entities, and a capped `search_text` snippet per node for lexical/graph matching. The **full page/section text lives in MinIO**, and **embeddings live in Qdrant** — Neo4j never stores either directly. Retrieval still runs entirely as Neo4j graph queries (vector seed lookup, full-text, graph expansion); only the final step — handing text to the LLM as context — goes through a `Hydrator` seam that resolves a node's blob pointer back to its full text (with a bounded in-process cache for repeat lookups within a query). This keeps the graph small and fast to query at scale while text/vectors live in stores built for them.
 
 Full write-up (query path, ingestion pipeline, multi-tenancy, audit log, project structure): **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
@@ -116,9 +125,11 @@ Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstruc
 | Graph database | Neo4j 5.x |
 | AI orchestration | LangGraph |
 | API | FastAPI + Uvicorn |
-| LLM (chat/synthesis) | OpenAI, Anthropic, or Gemini (`MODEL_PROVIDER`; default gpt-4o-mini) |
+| LLM (chat/synthesis, optional at ingestion) | OpenAI, Anthropic, or Gemini (`MODEL_PROVIDER`; default gpt-4o-mini, low-cost) |
 | Embeddings | OpenAI only, always (text-embedding-3-small) |
 | PDF parsing | PyMuPDF + pdfplumber |
+| Full-text storage (unstructured docs) | MinIO (blob store), pointed to from lean Neo4j nodes |
+| Vector storage | Qdrant, authoritative for embeddings |
 | Job queue | Redis + RQ *(optional — in-process fallback when unset)* |
 | Containers | Docker / Docker Compose |
 
@@ -139,6 +150,8 @@ Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstruc
 | Streaming answers with charts, retrieval feedback loop | ✅ |
 | Chapter-level rollup summaries for broad "what does this document/chapter discuss" questions | ✅ |
 | Regression eval suite — 4 suites, 101 cases (Northwind structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ✅ 95/101 — remaining 6 are documented, known gaps (`notes` field in `eval/*.json`), not silent failures |
+| Storage split — lean Neo4j (structure + pointers only), full text in MinIO, embeddings in Qdrant, `Hydrator` seam on the read path | 🚧 in progress, merging |
+| Axis-2 semantic-edge precision (target ≥90% via sampled LLM-judge) | 🚧 in progress — structural graph (Axis-1) already scores ~99-100%, semantic linking is the open gap |
 | 1000-document corpus validation, then a tagged release | 🚧 in progress |
 | CI (tests on push/PR) | 🚧 in progress |
 
