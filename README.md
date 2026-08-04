@@ -13,7 +13,7 @@ Agentic GraphRAG keeps **structured business data** and **unstructured documents
 
 It brings **your own** Neo4j schema and **your own** documents: the query router reads the live graph schema at runtime rather than hardcoding a demo domain, so it isn't tied to the bundled Northwind + Go.Data sample data used below.
 
-Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, Anthropic (Claude), or Gemini** — pick with `MODEL_PROVIDER`; embeddings always use OpenAI.
+Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, Anthropic (Claude), or Gemini** — pick with `MODEL_PROVIDER`; embeddings always use OpenAI. **Cost-effective by default, not just at ingestion**: chat/synthesis defaults to a low-cost model too (`gpt-4o-mini` on the default `openai` provider, `gemini-2.5-flash` on `gemini`) — not a frontier-tier model — so running the full pipeline end to end (ingest **and** chat) doesn't require frontier-model spend. Swap to a stronger model per-provider any time via `CHAT_MODEL` if you want it.
 
 ## Screenshots
 
