@@ -1,0 +1,909 @@
+"""graph/axis1_structural.py — Axis1StructuralBuilder: deterministic
+structural graph construction from a DocumentIR (docs/DESIGN_unstructured_
+graph_v2.md §4).
+
+Moved (not rewritten) from light/parser.py's `_usable_toc()` +
+`_build_from_toc()`/`_build_from_extracts()` -- the one graph-construction
+implementation all three parser backends previously reached only by
+inheriting LightPdfParser. Retyped from _PdfBlock/_PageExtract to
+Block/PageBlock/DocumentIR (field-for-field identical, see ir.py's own
+docstring) so it's reachable without subclassing a parser.
+
+`_is_heading` collapses what used to be three separate implementations
+(the base font/regex heuristic here, plus RtldocPdfParser's and
+TableAwarePdfParser's per-class overrides) into one, reading signals
+backends stamp into `Block.extra` at extraction time instead of reading
+per-instance parser state or subclassing this method:
+  - `extra["heading_hint"] == "heading"` (rtldoc's role classification,
+    only trusted when `block.source == "rtldoc"` -- a block that fell
+    back to base PyMuPDF extraction for one page carries no such hint)
+  - `extra["in_table_region"]` / `extra["is_repeated_header"]` /
+    `extra["table_fragment"]` (table_aware's three vetoes) -- never a
+    heading regardless of any other signal.
+"""
+from __future__ import annotations
+
+import re
+
+from ..document.ir import Block, DocumentIR, PageBlock
+from ..document.light.parser import _TABLE_OR_FIGURE
+from ..document.page_numbers import enrich_page_nodes
+from ..document.patterns import (
+    REFERENCE_PATTERN,
+    is_standalone_number,
+    number_depth,
+    parent_number,
+    parse_numbered_title,
+    slug,
+)
+from ..models import DKGEdge, DKGNode, NodeType, RelType
+from .chunker import Chunk
+
+_FIGURE_REF = re.compile(r"\bfigure\s+(\d+(?:\.\d+)?)\b", re.I)
+_TABLE_REF = re.compile(r"\btable\s+([a-z]?\d+(?:\.\d+)?)\b", re.I)
+_COMMON_HEADING = re.compile(
+    r"^(?:chapter|section|part|appendix|annex|box|table|figure)\b",
+    re.I,
+)
+_BOX_LABEL = re.compile(
+    r"^\s*Box\s+\d+(?:\.\d+)?(?:\s+\(continued\))?\s*$",
+    re.I,
+)
+
+
+def _build_region_tags(
+    kind: str,
+    text: str,
+    pdf_page: int,
+    index: int,
+    document_page: str | None = None,
+) -> list[str]:
+    tags = [f"kind:{kind}", f"pdf:{pdf_page}", f"region:{pdf_page}:{index}"]
+    if document_page:
+        tags.append(f"doc:{document_page.strip()}")
+
+    blob = (text or "").lower()
+    for ref in _TABLE_REF.findall(blob):
+        tags.append(f"table:{ref.lower()}")
+    for ref in _FIGURE_REF.findall(blob):
+        tags.append(f"figure:{ref.lower()}")
+    if kind == "table" and "table:" not in " ".join(tags):
+        tags.extend(["table", f"table:{index}"])
+    if kind == "figure":
+        tags.extend(["figure", f"figure:{index}"])
+    return list(dict.fromkeys(tags))
+
+
+def _region_title(kind: str, text: str, pdf_page: int, index: int) -> str:
+    first_line = (text or "").strip().splitlines()[0][:120] if text else ""
+    if first_line:
+        return first_line
+    label = "Table" if kind == "table" else "Figure"
+    return f"{label} {index} (PDF page {pdf_page})"
+
+
+# Chunk-bounded text kept on Neo4j nodes for Lucene/IDF lexical matching
+# once `text` itself is no longer written there (docs/DESIGN_unstructured_
+# graph_v2.md phase 3). Generous vs. the 800-char LLM-judge truncation
+# ontology_validation.py already applies, so lexical predicates see
+# meaningfully more than the judge does.
+_SEARCH_TEXT_CHAR_BUDGET = 2000
+
+
+def _derive_search_text(
+    title: str, page_buckets: dict[int, list[str]], page_start: int, page_end: int
+) -> str:
+    """Chunk-bounded body text for a Chapter/Section node -- same page-range
+    walk as the full aggregated `.text` these nodes already build, capped at
+    _SEARCH_TEXT_CHAR_BUDGET instead of unbounded. Page/Region nodes don't
+    need this: their `.text` is already chunk-sized (one StructuralChunker
+    chunk per page), so `search_text = text` verbatim there, zero loss."""
+    parts: list[str] = []
+    budget = _SEARCH_TEXT_CHAR_BUDGET
+    for pno in range(page_start, page_end + 1):
+        for chunk_text in page_buckets.get(pno, []):
+            if budget <= 0:
+                break
+            parts.append(chunk_text[:budget])
+            budget -= len(chunk_text)
+        if budget <= 0:
+            break
+    body = "\n\n".join(p for p in parts if p.strip())
+    return f"{title}\n\n{body}".strip() if body else title
+
+
+def _page_buckets_from_chunks(chunks: list[Chunk]) -> dict[int, list[str]]:
+    """Page node bodies build from `chunks`, not directly from
+    `DocumentIR.pages` -- the default StructuralChunker is informationally
+    identical (one chunk per page) so this is behavior-preserving today,
+    but it means a future non-default Chunker changes Page-node
+    granularity without this builder itself changing."""
+    buckets: dict[int, list[str]] = {}
+    for c in chunks:
+        for p in (c.source_pages or [c.page_start]):
+            buckets.setdefault(p, [])
+            if c.text:
+                buckets[p].append(c.text)
+    return buckets
+
+
+class Axis1StructuralBuilder:
+    """Converts a DocumentIR into the structural (Axis 1) node/edge graph."""
+
+    def build(
+        self, ir: DocumentIR, chunks: list[Chunk]
+    ) -> tuple[list[DKGNode], list[DKGEdge]]:
+        if ir.toc is not None:
+            return self._build_from_toc(ir, chunks)
+        return self._build_from_extracts(ir, chunks)
+
+    # ─────────────────────────────────────────
+    # TOC-driven construction
+    # ─────────────────────────────────────────
+    def _build_from_toc(
+        self, ir: DocumentIR, chunks: list[Chunk]
+    ) -> tuple[list[DKGNode], list[DKGEdge]]:
+        """Build the chapter/section graph directly from the PDF's own
+        embedded outline instead of guessing from font size/bold/regex —
+        see LightPdfParser._usable_toc's docstring for why. Reuses
+        everything else unchanged (page nodes, region nodes, sequential
+        edges, reference detection) — only chapter/section construction
+        differs from _build_from_extracts.
+        """
+        doc_name, page_count, toc = ir.source_name, ir.page_count, ir.toc
+        nodes: list[DKGNode] = []
+        edges: list[DKGEdge] = []
+
+        document_id = f"doc_{slug(doc_name)}"
+        document_node = DKGNode(
+            id=document_id,
+            type=NodeType.DOCUMENT,
+            title=doc_name,
+            text=doc_name,
+            search_text=doc_name,
+            order=0,
+            page_start=1,
+            page_end=max(1, page_count),
+            depth=0,
+        )
+        nodes.append(document_node)
+
+        page_buckets = _page_buckets_from_chunks(chunks)
+
+        def link_contains(parent_id: str, child_id: str) -> None:
+            edges.append(DKGEdge(parent_id, child_id, RelType.CONTAINS, axis=1))
+            edges.append(DKGEdge(child_id, parent_id, RelType.PART_OF, axis=1))
+
+        # Non-breaking spaces (\xa0) between "Chapter" and its number are
+        # common in PDF-authoring-tool-generated outlines; harmless in the
+        # title text itself but tidied here for a nicer display title.
+        #
+        # A PDF's own outline can contain a dangling/unresolvable bookmark
+        # -- PyMuPDF reports its page as -1 rather than raising. Previously
+        # clamped via max(1, page), which is exactly wrong: it turns an
+        # invalid entry into a phantom chapter starting at page 1, and since
+        # it's often the last entry (nothing after it to bound page_end),
+        # that phantom swallows the entire remaining document into one
+        # node's text. Verified live: a real textbook's outline ends with
+        # [1, "<filename>.pdf", -1] (broken link, likely PDF-authoring-tool
+        # junk, not anything about this book's content) followed by
+        # [2, "Blank Page", 2] -- clamping produced a ~2.4M-character
+        # "chapter" spanning pages 1-998 plus an equally huge child section,
+        # which is what actually blew past the LLM's token budget, not
+        # chapter size alone. Dropping invalid entries instead of clamping
+        # them is the general fix -- any PDF with a broken outline bookmark
+        # hits this, not just this one document.
+        #
+        # A second, related case: after dropping that entry, the very next
+        # one ("Blank Page", page 2) becomes the new *last* entry even
+        # though its page number is LESS than the chapter before it (page
+        # 11) -- both are remnants of the same broken-outline cluster. A
+        # well-formed nested outline's page numbers are monotonically
+        # non-decreasing in outline order; an entry whose page goes
+        # backward relative to everything accepted so far is itself
+        # evidence of corruption, not a legitimate structural marker (a
+        # subsection is never printed before the chapter that contains it
+        # started). Drop those too, tracking the running max as entries are
+        # accepted rather than requiring perfect global sortedness up
+        # front.
+        raw_entries = [
+            (level, re.sub(r"\s+", " ", (title or "").replace("\xa0", " ")).strip(), page)
+            for level, title, page in toc
+            if page is not None and page >= 1
+        ]
+        entries: list[tuple[int, str, int]] = []
+        max_page_seen = 0
+        for level, title, page in raw_entries:
+            if page < max_page_seen:
+                continue
+            entries.append((level, title, page))
+            max_page_seen = page
+
+        chapter_nodes: list[DKGNode] = []
+        section_nodes: list[DKGNode] = []
+        heading_stack: list[tuple[int, str]] = [(0, document_id)]
+        chapter_idx = 0
+        global_section_idx = 0
+        doc_order = 0
+
+        for i, (level, title, page_start) in enumerate(entries):
+            page_end = page_count
+            for nxt_level, _nxt_title, nxt_page in entries[i + 1 :]:
+                if nxt_level <= level:
+                    page_end = max(page_start, nxt_page - 1)
+                    break
+
+            body_parts: list[str] = []
+            for pno in range(page_start, page_end + 1):
+                body_parts.extend(page_buckets.get(pno, []))
+            body_text = "\n\n".join(t for t in body_parts if t.strip())
+            full_text = f"{title}\n\n{body_text}".strip() if body_text else title
+            search_text = _derive_search_text(title, page_buckets, page_start, page_end)
+
+            doc_order += 1
+            while len(heading_stack) > 1 and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            parent_id = heading_stack[-1][1]
+
+            if level == 1:
+                chapter_idx += 1
+                global_section_idx = 0
+                node_id = f"{document_id}_chapter_{chapter_idx}"
+                node = DKGNode(
+                    id=node_id,
+                    type=NodeType.CHAPTER,
+                    title=title,
+                    text=full_text,
+                    search_text=search_text,
+                    order=doc_order,
+                    page_start=page_start,
+                    page_end=page_end,
+                    depth=1,
+                )
+                nodes.append(node)
+                chapter_nodes.append(node)
+                link_contains(document_id, node_id)
+            else:
+                global_section_idx += 1
+                node_id = f"{document_id}_section_{chapter_idx}_{global_section_idx}"
+                node = DKGNode(
+                    id=node_id,
+                    type=NodeType.SECTION,
+                    title=title,
+                    text=full_text,
+                    search_text=search_text,
+                    order=doc_order,
+                    page_start=page_start,
+                    page_end=page_end,
+                    depth=level,
+                )
+                nodes.append(node)
+                section_nodes.append(node)
+                link_contains(parent_id, node_id)
+            heading_stack.append((level, node_id))
+
+        all_page_numbers = set(range(1, page_count + 1)) | set(page_buckets.keys())
+        page_nodes = self._build_page_nodes(
+            page_buckets,
+            edges,
+            chapter_nodes,
+            section_nodes,
+            document_id,
+            all_page_numbers=all_page_numbers,
+        )
+        enrich_page_nodes(page_nodes, section_nodes)
+        nodes.extend(page_nodes)
+
+        region_nodes = self._build_region_nodes(ir.pages, page_nodes, edges, document_id)
+        nodes.extend(region_nodes)
+
+        self._add_sequential_edges(chapter_nodes, edges)
+        self._add_sequential_edges(section_nodes, edges)
+        self._add_sequential_edges(page_nodes, edges)
+        self._detect_reference_edges(nodes, edges)
+
+        print(
+            f"   📐 Structure (from embedded PDF outline): {len(chapter_nodes)} chapters, "
+            f"{len(section_nodes)} sections (nested CONTAINS), {len(page_nodes)} pages, "
+            f"{len(region_nodes)} regions"
+        )
+        return nodes, edges
+
+    # ─────────────────────────────────────────
+    # Heuristic (font/regex) construction
+    # ─────────────────────────────────────────
+    def _build_from_extracts(
+        self, ir: DocumentIR, chunks: list[Chunk]
+    ) -> tuple[list[DKGNode], list[DKGEdge]]:
+        doc_name, page_count = ir.source_name, ir.page_count
+        nodes: list[DKGNode] = []
+        edges: list[DKGEdge] = []
+
+        document_id = f"doc_{slug(doc_name)}"
+        document_node = DKGNode(
+            id=document_id,
+            type=NodeType.DOCUMENT,
+            title=doc_name,
+            text=doc_name,
+            search_text=doc_name,
+            order=0,
+            page_start=1,
+            page_end=max(1, page_count),
+            depth=0,
+        )
+        nodes.append(document_node)
+
+        blocks = self._resolve_number_prefixes(
+            [b for page in ir.pages for b in page.blocks if b.text.strip()]
+        )
+
+        chapter_nodes: list[DKGNode] = []
+        section_nodes: list[DKGNode] = []
+        page_buckets = _page_buckets_from_chunks(chunks)
+
+        current_chapter: DKGNode | None = None
+        current_section: DKGNode | None = None
+        current_section_texts: list[str] = []
+
+        chapter_idx = 0
+        global_section_idx = 0
+        doc_order = 0
+
+        # (structural_level, node_id) — parent = nearest entry with lower level
+        heading_stack: list[tuple[int, str]] = [(0, document_id)]
+        number_map: dict[str, str] = {}
+
+        def finalize_section() -> None:
+            nonlocal current_section, current_section_texts
+            if current_section and current_section_texts:
+                body = "\n\n".join(current_section_texts)
+                current_section.text = (
+                    f"{current_section.title}\n\n{body}"
+                    if body.strip()
+                    else current_section.title
+                )
+                current_section_texts = []
+
+        def link_contains(parent_id: str, child_id: str) -> None:
+            edges.append(DKGEdge(parent_id, child_id, RelType.CONTAINS, axis=1))
+            edges.append(DKGEdge(child_id, parent_id, RelType.PART_OF, axis=1))
+
+        def structural_level(
+            is_chapter: bool,
+            title: str,
+            section_number: str | None,
+        ) -> int:
+            """Map heading to a comparable depth for parent stack (higher = deeper)."""
+            if is_chapter:
+                return 1
+            if section_number:
+                # e.g. "4.5" → depth 2; under chapter (+1) → at least 2
+                nd = number_depth(section_number)
+                base = nd + (1 if current_chapter else 0)
+                return max(2, base)
+            return 2
+
+        def parent_id_for_level(level: int) -> str:
+            while len(heading_stack) > 1 and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            return heading_stack[-1][1]
+
+        heading_font_threshold = self._heading_font_threshold(blocks)
+
+        for block in blocks:
+            if block.extra.get("is_repeated_header"):
+                # A running header/footer (company name, doc title,
+                # confidentiality notice) repeated on most pages -- never a
+                # real heading, and excluded from section body text so it
+                # doesn't pollute NER/embeddings (see
+                # LightPdfParser._flag_repeated_headers).
+                continue
+            text = block.text
+            page_no = block.page
+            is_heading = self._is_heading(block, heading_font_threshold)
+            # Box subtitle lines (large font) are body under "Box N", not new sections.
+            if (
+                is_heading
+                and current_section is not None
+                and self._is_box_label(current_section.title)
+                and not self._is_box_label(text)
+            ):
+                is_heading = False
+
+            if is_heading:
+                finalize_section()
+
+                section_number, title = parse_numbered_title(text)
+                is_chapter = bool(section_number and number_depth(section_number) == 1)
+                level = structural_level(is_chapter, title, section_number)
+
+                # Nest a genuinely deeper numbered sub-heading under its
+                # numbered parent (e.g. "4.5.1" under "4.5") even when
+                # structural_level's own computation would otherwise put
+                # them at the same nominal level. Only fires when BOTH
+                # headings carry a real number to compare depths against —
+                # deliberately does NOT nest two consecutive non-numbered
+                # headings ("PART I" -> "PART II", "Note 1" -> "Note 2")
+                # under one another; those are siblings. An unconditional
+                # "nest whenever level <= top-of-stack" fallback used to
+                # live here, inherited unchanged from a since-removed
+                # Docling-based parser where it compensated for Docling
+                # emitting subsections at their parent's level — a quirk
+                # specific to that parser's layout model, not this one.
+                # Left in place here it forced EVERY non-numbered heading
+                # to nest one level under the previous one, producing a
+                # runaway chain as deep as the section count on any
+                # document whose real headings aren't dot-numbered.
+                if (
+                    not is_chapter
+                    and current_section is not None
+                    and heading_stack
+                    and level <= heading_stack[-1][0]
+                    and heading_stack[-1][1] == current_section.id
+                    and section_number
+                ):
+                    sn_parent, _ = parse_numbered_title(current_section.title)
+                    if sn_parent and number_depth(section_number) > number_depth(sn_parent):
+                        level = heading_stack[-1][0] + 1
+
+                parent_id = parent_id_for_level(level)
+                doc_order += 1
+
+                if is_chapter:
+                    chapter_idx += 1
+                    global_section_idx = 0
+                    node_id = f"{document_id}_chapter_{chapter_idx}"
+                    node = DKGNode(
+                        id=node_id,
+                        type=NodeType.CHAPTER,
+                        title=title,
+                        text=title,
+                        search_text=title,
+                        order=doc_order,
+                        page_start=page_no,
+                        page_end=page_no,
+                        depth=1,
+                    )
+                    nodes.append(node)
+                    chapter_nodes.append(node)
+                    current_chapter = node
+                    current_section = None
+                    heading_stack = [(0, document_id), (level, node_id)]
+                    link_contains(document_id, node_id)
+
+                    # Chapters need to be in number_map too, not just
+                    # sections -- otherwise _link_number_hierarchy's
+                    # post-pass can never find a numbered CHAPTER as a
+                    # parent (e.g. "Item 1A" looking up "Item 1"), which
+                    # matters whenever unnumbered body text between the
+                    # chapter heading and its first numbered subsection
+                    # gets wrapped into an auto "Preamble" section -- the
+                    # streaming heading-stack nests the subsection under
+                    # that Preamble instead of the chapter, and only the
+                    # post-pass can correct it.
+                    if section_number:
+                        number_map[section_number] = node_id
+                else:
+                    global_section_idx += 1
+                    node_id = f"{document_id}_section_{chapter_idx}_{global_section_idx}"
+                    full_title = (
+                        f"{section_number} {title}".strip()
+                        if section_number
+                        else title
+                    )
+                    node = DKGNode(
+                        id=node_id,
+                        type=NodeType.SECTION,
+                        title=full_title,
+                        text=full_title,
+                        search_text=full_title,
+                        order=doc_order,
+                        page_start=page_no,
+                        page_end=page_no,
+                        depth=level,
+                    )
+                    nodes.append(node)
+                    section_nodes.append(node)
+                    current_section = node
+                    heading_stack.append((level, node_id))
+                    link_contains(parent_id, node_id)
+
+                    if section_number:
+                        number_map[section_number] = node_id
+                        for i in range(1, len(section_number.split("."))):
+                            prefix = ".".join(section_number.split(".")[:i])
+                            if prefix not in number_map:
+                                number_map[prefix] = node_id
+
+                continue
+
+            clean = text.strip()
+            if not clean:
+                continue
+
+            if current_section is None:
+                doc_order += 1
+                global_section_idx += 1
+                node_id = f"{document_id}_section_{chapter_idx}_{global_section_idx}"
+                parent_id = current_chapter.id if current_chapter else document_id
+                node = DKGNode(
+                    id=node_id,
+                    type=NodeType.SECTION,
+                    title="Preamble",
+                    text="",
+                    search_text="Preamble",
+                    order=doc_order,
+                    page_start=page_no,
+                    page_end=page_no,
+                    depth=2,
+                )
+                nodes.append(node)
+                section_nodes.append(node)
+                current_section = node
+                heading_stack.append((2, node_id))
+                link_contains(parent_id, node_id)
+
+            prefix = "[Table] " if block.kind == "table" else ""
+            if block.low_confidence:
+                prefix = "[Low confidence extract] " + prefix
+            current_section_texts.append(prefix + clean)
+
+            if current_section and page_no > current_section.page_end:
+                current_section.page_end = page_no
+            if current_chapter and page_no > current_chapter.page_end:
+                current_chapter.page_end = page_no
+
+        finalize_section()
+        self._enrich_box_sections_from_pages(section_nodes, page_buckets)
+
+        # Chapter/Section page ranges keep growing as blocks stream in
+        # (page_end extended at lines above right up to the last block of
+        # each), so search_text can only be derived once every node's final
+        # page_start/page_end is settled -- one pass over both lists here,
+        # rather than threading it through finalize_section (which only
+        # ever closes out the SECTION half of this, chapters have no
+        # equivalent finalize step in this heuristic path).
+        for node in chapter_nodes + section_nodes:
+            node.search_text = _derive_search_text(
+                node.title, page_buckets, node.page_start, node.page_end
+            )
+
+        all_page_numbers = set(range(1, page_count + 1)) | set(page_buckets.keys())
+        page_nodes = self._build_page_nodes(
+            page_buckets,
+            edges,
+            chapter_nodes,
+            section_nodes,
+            document_id,
+            all_page_numbers=all_page_numbers,
+        )
+        enrich_page_nodes(page_nodes, section_nodes)
+        nodes.extend(page_nodes)
+
+        region_nodes = self._build_region_nodes(ir.pages, page_nodes, edges, document_id)
+        nodes.extend(region_nodes)
+
+        self._add_sequential_edges(chapter_nodes, edges)
+        self._add_sequential_edges(section_nodes, edges)
+        self._add_sequential_edges(page_nodes, edges)
+        self._detect_reference_edges(nodes, edges)
+        self._link_number_hierarchy(number_map, edges)
+
+        print(
+            f"   📐 Structure: {len(chapter_nodes)} chapters, "
+            f"{len(section_nodes)} sections (nested CONTAINS), {len(page_nodes)} pages, "
+            f"{len(region_nodes)} regions"
+        )
+        return nodes, edges
+
+    # ─────────────────────────────────────────
+    # Heading detection (collapsed from 3 per-class overrides -- see
+    # module docstring)
+    # ─────────────────────────────────────────
+    def _heading_font_threshold(self, blocks: list[Block]) -> float:
+        sizes = sorted(
+            b.avg_font_size or b.max_font_size
+            for b in blocks
+            if b.kind == "text" and (b.avg_font_size or b.max_font_size)
+        )
+        if not sizes:
+            return 999.0
+        median = sizes[len(sizes) // 2]
+        return median + 1.5
+
+    @staticmethod
+    def _is_box_label(title: str) -> bool:
+        line = " ".join(ln.strip() for ln in (title or "").splitlines() if ln.strip())
+        return bool(_BOX_LABEL.match(line)) or bool(
+            re.match(r"^Box\s+\d+", line, re.I) and len(line) <= 40
+        )
+
+    def _is_heading(self, block: Block, font_threshold: float) -> bool:
+        if block.kind != "text" or block.low_confidence:
+            return False
+
+        # Backend-supplied vetoes (table_aware's three signals) -- never a
+        # heading regardless of any other signal, checked before anything
+        # else so they can't be second-guessed by a font/regex match.
+        if block.extra.get("in_table_region"):
+            return False
+        if block.extra.get("is_repeated_header"):
+            return False
+        if block.extra.get("table_fragment"):
+            return False
+
+        # rtldoc's own role classification, when this block actually came
+        # from rtldoc (not a per-page PyMuPDF fallback, which carries no
+        # such hint) -- trust a positive call outright, no re-derivation.
+        # A negative/missing hint falls through to the same heuristic
+        # below as a rescue (rtldoc's classifier isn't infallible --
+        # verified live missing an 11pt-bold-vs-9pt-body heading).
+        if block.source == "rtldoc" and block.extra.get("heading_hint") == "heading":
+            return True
+
+        text = " ".join(ln.strip() for ln in block.text.splitlines() if ln.strip())
+        if not (3 <= len(text) <= 160):
+            return False
+        if len(text.split()) > 18:
+            return False
+        if _TABLE_OR_FIGURE.search(text) and len(text) > 80:
+            return False
+
+        section_number, title = parse_numbered_title(text)
+        if section_number and len(title) >= 2:
+            return True
+        if _COMMON_HEADING.search(text) and len(text.split()) <= 12:
+            return True
+        if block.bold and block.max_font_size >= font_threshold and len(text) <= 120:
+            return True
+        if block.max_font_size >= font_threshold + 1 and len(text.split()) <= 12:
+            return True
+        if self._uppercase_ratio(text) > 0.72 and 2 <= len(text.split()) <= 10:
+            return True
+        return False
+
+    def _uppercase_ratio(self, text: str) -> float:
+        letters = [ch for ch in text if ch.isalpha()]
+        if not letters:
+            return 0.0
+        return sum(1 for ch in letters if ch.isupper()) / len(letters)
+
+    def _enrich_box_sections_from_pages(
+        self,
+        section_nodes: list[DKGNode],
+        page_buckets: dict[int, list[str]],
+    ) -> None:
+        """Fill Box N sections when heading detection left only the label (no body)."""
+        for sec in section_nodes:
+            if not self._is_box_label(sec.title):
+                continue
+            title = (sec.title or "").strip()
+            body = (sec.text or "").strip()
+            if len(body) > len(title) + 80:
+                continue
+            page_no = sec.page_start or 1
+            page_text = "\n\n".join(page_buckets.get(page_no, []))
+            extracted = self._extract_box_body_from_page(page_text, title)
+            if extracted:
+                sec.text = f"{title}\n\n{extracted}"
+
+    @staticmethod
+    def _extract_box_body_from_page(page_text: str, box_title: str) -> str:
+        if not page_text.strip():
+            return ""
+        target = re.search(r"(\d+)", box_title or "")
+        if not target:
+            return ""
+        want = target.group(1)
+        lines = page_text.splitlines()
+        start: int | None = None
+        for i, ln in enumerate(lines):
+            m = re.match(r"^\s*Box\s+(\d+(?:\.\d+)?)", ln.strip(), re.I)
+            if m and m.group(1).split(".")[0] == want:
+                start = i
+                break
+        if start is None:
+            return ""
+        body_lines: list[str] = []
+        for ln in lines[start + 1 :]:
+            if re.match(r"^\s*Box\s+\d+", ln.strip(), re.I):
+                break
+            body_lines.append(ln)
+        return "\n".join(body_lines).strip()
+
+    # ─────────────────────────────────────────
+    # Shared helpers (pages, regions, edges)
+    # ─────────────────────────────────────────
+    def _build_region_nodes(
+        self,
+        pages: list[PageBlock],
+        page_nodes: list[DKGNode],
+        edges: list[DKGEdge],
+        document_id: str,
+    ) -> list[DKGNode]:
+        """Table/figure/box hints from PyMuPDF/pdfplumber → Region nodes linked to Page."""
+        page_by_pdf: dict[int, DKGNode] = {}
+        for pn in page_nodes:
+            key = pn.pdf_page or pn.order
+            page_by_pdf[key] = pn
+
+        region_nodes: list[DKGNode] = []
+        index_by_page: dict[int, int] = {}
+
+        for page in pages:
+            for region in page.regions:
+                page_no = region.page
+                index_by_page[page_no] = index_by_page.get(page_no, 0) + 1
+                idx = index_by_page[page_no]
+                kind = "table" if region.kind == "table" else "figure"
+                text = region.text
+
+                page_node = page_by_pdf.get(page_no)
+                doc_page = page_node.document_page if page_node else None
+                tags = _build_region_tags(kind, text, page_no, idx, doc_page)
+                title = _region_title(kind, text, page_no, idx)
+                node_id = f"{document_id}_region_{page_no}_{idx}"
+
+                node = DKGNode(
+                    id=node_id,
+                    type=NodeType.REGION,
+                    title=title,
+                    text=text or title,
+                    search_text=text or title,
+                    order=idx,
+                    page_start=page_no,
+                    page_end=page_no,
+                    pdf_page=page_no,
+                    document_page=doc_page,
+                    depth=100,
+                    region_kind=kind,
+                    region_tags=tags,
+                    bbox=region.bbox,
+                    bbox_page_size=region.page_size,
+                )
+                region_nodes.append(node)
+
+                page_id = page_node.id if page_node else f"{document_id}_page_{page_no}"
+                edges.append(DKGEdge(page_id, node_id, RelType.CONTAINS, axis=1))
+                edges.append(DKGEdge(node_id, page_id, RelType.PART_OF, axis=1))
+
+        return region_nodes
+
+    def _resolve_number_prefixes(self, blocks: list[Block]) -> list[Block]:
+        """Merge '4.5' + 'ENVIRONMENTAL PROTECTION' into one heading when needed."""
+        resolved: list[Block] = []
+        pending_number: str | None = None
+
+        for block in blocks:
+            if is_standalone_number(block.text):
+                pending_number = block.text.rstrip(".")
+                continue
+
+            if pending_number is not None:
+                if not is_standalone_number(block.text):
+                    block = Block(**{**block.__dict__, "text": f"{pending_number} {block.text}"})
+                pending_number = None
+
+            resolved.append(block)
+
+        return resolved
+
+    def _link_number_hierarchy(
+        self, number_map: dict[str, str], edges: list[DKGEdge]
+    ) -> None:
+        """Ensure numbered parent sections CONTAINS numbered children when inferred."""
+        existing = {
+            (e.source_id, e.target_id)
+            for e in edges
+            if e.rel_type == RelType.CONTAINS
+        }
+        for num, node_id in number_map.items():
+            parent_num = parent_number(num)
+            if parent_num is None:
+                continue
+            parent_id = number_map.get(parent_num)
+            if parent_id and parent_id != node_id:
+                key = (parent_id, node_id)
+                if key not in existing:
+                    edges.append(DKGEdge(parent_id, node_id, RelType.CONTAINS, axis=1))
+                    edges.append(DKGEdge(node_id, parent_id, RelType.PART_OF, axis=1))
+                    existing.add(key)
+
+    def _build_page_nodes(
+        self,
+        page_buckets: dict[int, list[str]],
+        edges: list[DKGEdge],
+        chapter_nodes: list[DKGNode],
+        section_nodes: list[DKGNode],
+        document_id: str,
+        all_page_numbers: set[int] | None = None,
+    ) -> list[DKGNode]:
+        page_nodes: list[DKGNode] = []
+        page_nos = sorted(set(page_buckets.keys()) | (all_page_numbers or set()))
+        for page_no in page_nos:
+            texts = page_buckets.get(page_no, [])
+            node_id = f"{document_id}_page_{page_no}"
+            page_text = "\n".join(texts) if texts else ""
+            node = DKGNode(
+                id=node_id,
+                type=NodeType.PAGE,
+                title=f"Page {page_no}",
+                text=page_text,
+                search_text=page_text,
+                order=page_no,
+                page_start=page_no,
+                page_end=page_no,
+                depth=99,
+            )
+            page_nodes.append(node)
+            parent_id = self._find_page_parent(
+                page_no, section_nodes, chapter_nodes, document_id
+            )
+            edges.append(DKGEdge(parent_id, node_id, RelType.CONTAINS, axis=1))
+            edges.append(DKGEdge(node_id, parent_id, RelType.PART_OF, axis=1))
+        return page_nodes
+
+    def _find_page_parent(
+        self,
+        page_no: int,
+        section_nodes: list[DKGNode],
+        chapter_nodes: list[DKGNode],
+        document_id: str,
+    ) -> str:
+        """Prefer deepest section spanning this page (nested structure)."""
+        candidates = [
+            s
+            for s in section_nodes
+            if s.page_start <= page_no <= s.page_end
+        ]
+        if candidates:
+            return max(candidates, key=lambda s: (s.depth, s.order)).id
+        for c in reversed(chapter_nodes):
+            if c.page_start <= page_no <= c.page_end:
+                return c.id
+        return document_id
+
+    def _add_sequential_edges(
+        self, nodes: list[DKGNode], edges: list[DKGEdge]
+    ) -> None:
+        ordered = sorted(nodes, key=lambda n: n.order)
+        for a, b in zip(ordered, ordered[1:]):
+            edges.append(DKGEdge(a.id, b.id, RelType.PRECEDES, axis=1))
+            edges.append(DKGEdge(b.id, a.id, RelType.FOLLOWS, axis=1))
+
+    def _detect_reference_edges(
+        self, nodes: list[DKGNode], edges: list[DKGEdge]
+    ) -> None:
+        title_lookup: dict[str, str] = {}
+        for n in nodes:
+            title_lookup[n.title.strip().lower()] = n.id
+            if n.type in (NodeType.CHAPTER, NodeType.SECTION):
+                title_lookup[f"{n.type.value.lower()} {n.order}"] = n.id
+            elif n.type == NodeType.REGION:
+                # Region titles are the caption's first line (e.g. "Table 3:
+                # Revenue by Segment") — too long to substring-match a short
+                # reference phrase like "see table 3", so alias the bare
+                # "table N"/"figure N" form the same way chapter/section do.
+                title_lower = (n.title or "").lower()
+                for ref in _TABLE_REF.findall(title_lower):
+                    title_lookup[f"table {ref.lower()}"] = n.id
+                for ref in _FIGURE_REF.findall(title_lower):
+                    title_lookup[f"figure {ref.lower()}"] = n.id
+
+        for node in nodes:
+            # Section bodies can be very large; references appear in titles/intros.
+            snippet = (node.text or "")[:8000]
+            for match in REFERENCE_PATTERN.findall(snippet):
+                ref_key = match.strip().lower()
+                for key, target_id in title_lookup.items():
+                    if key in ref_key and target_id != node.id:
+                        edges.append(
+                            DKGEdge(
+                                source_id=node.id,
+                                target_id=target_id,
+                                rel_type=RelType.REFERENCES,
+                                axis=2,
+                                properties={"matched_text": match.strip()},
+                            )
+                        )
+                        break

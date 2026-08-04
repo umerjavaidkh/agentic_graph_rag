@@ -2,9 +2,17 @@
 tests/test_ingestion_manager_di_unit.py — IngestionManager dependency injection.
 
 Proves _process_unstructured goes through injected parser/model-provider/
-blob-store/vector-store/exporter factories instead of hardcoded concrete
-classes, so ingestion can be exercised without a real PDF, OpenAI key,
-Neo4j, MinIO, or Qdrant.
+blob-store/vector-store/exporter/graph-service factories instead of
+hardcoded concrete classes, so ingestion can be exercised without a real
+PDF, OpenAI key, Neo4j, MinIO, or Qdrant.
+
+FakeGraphService stands in for GraphConstructionService the same way
+FakeParser stands in for a real parser -- since parsing and graph
+construction are two separate steps as of docs/DESIGN_unstructured_
+graph_v2.md phase 2 (src/graph/construction_service.py), a fake parser
+alone no longer bypasses construction; the fake graph service is what
+keeps these tests from touching the real Axis1StructuralBuilder/
+Axis2IdeaBuilder (and their OpenAI/embedding clients).
 
 Run with:
     python -m pytest tests/test_ingestion_manager_di_unit.py -v
@@ -95,7 +103,9 @@ from src.storage.vector.memory_store import InMemoryVectorStore
 
 
 class FakeParser:
-    """Records every source it was asked to parse; returns an empty graph."""
+    """Records every source it was asked to parse; returns an empty graph
+    (.parse()) or an empty IR (.parse_ir(), the path _process_unstructured
+    actually calls as of phase 2)."""
 
     def __init__(self):
         self.parsed_sources: list[str] = []
@@ -103,6 +113,30 @@ class FakeParser:
     def parse(self, source):
         self.parsed_sources.append(str(source))
         return [], []
+
+    def parse_ir(self, source):
+        from src.document.ir import DocumentIR
+
+        self.parsed_sources.append(str(source))
+        return DocumentIR(source_name=Path(source).stem, page_count=0).finalize()
+
+
+class FakeGraphService:
+    """Stand-in for GraphConstructionService — records the IR/nodes it was
+    asked to build from; returns an empty graph, same as FakeParser used to
+    when parsing and construction were one step."""
+
+    def __init__(self):
+        self.structure_calls: list = []
+        self.idea_calls: list = []
+
+    def build_structure(self, ir):
+        self.structure_calls.append(ir)
+        return [], [], []
+
+    def build_ideas(self, nodes, run_llm_pass=False):
+        self.idea_calls.append((nodes, run_llm_pass))
+        return nodes, []
 
 
 class FakeModelProvider(ModelProvider):
@@ -139,7 +173,10 @@ def _reset_fake_exporter():
     FakeExporter.instances.clear()
 
 
-def _make_manager(fake_parser: FakeParser) -> IngestionManager:
+def _make_manager(
+    fake_parser: FakeParser, fake_graph_service: "FakeGraphService | None" = None
+) -> IngestionManager:
+    graph_service = fake_graph_service or FakeGraphService()
     return IngestionManager(
         store=InMemoryJobStore(),
         parser_factory=lambda source: fake_parser,
@@ -147,6 +184,7 @@ def _make_manager(fake_parser: FakeParser) -> IngestionManager:
         blob_store=InMemoryBlobStoreForTest(),
         vector_store=InMemoryVectorStore(),
         exporter_factory=FakeExporter,
+        graph_service_factory=lambda: graph_service,
     )
 
 
@@ -206,16 +244,51 @@ def test_process_unstructured_uses_injected_exporter_factory(tmp_input_file, mon
     assert job.neo4j_load_status == "skipped"
 
 
-def test_manager_defaults_are_settings_driven_factories():
+def test_process_unstructured_uses_injected_graph_service(tmp_input_file, monkeypatch):
+    import src.ingestion.service as service_mod
+
+    monkeypatch.setattr(service_mod, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(service_mod, "AUTO_LOAD_TO_NEO4J", False)
+
+    fake_parser = FakeParser()
+    fake_graph_service = FakeGraphService()
+    manager = _make_manager(fake_parser, fake_graph_service)
+    job = IngestionJob(id="job-graph-service", type="unstructured", input_path=tmp_input_file)
+
+    manager._process_unstructured(job)
+
+    assert len(fake_graph_service.structure_calls) == 1
+    # CHAT_PROVIDER_API_KEY gates the build_ideas call the same way it gated
+    # the old inline Axis2Builder().build() call -- OPENAI_API_KEY="" above
+    # only covers the OpenAI provider; skip asserting on idea_calls here
+    # since whether it fires depends on which provider key is configured in
+    # the test environment, not on the DI seam under test.
+
+
+def test_manager_defaults_are_settings_driven_factories(monkeypatch):
     # No kwargs beyond store: production call sites (api.py/tasks.py) construct
     # IngestionManager(store=...) unchanged, and everything else resolves via
     # get_model_provider()/get_blob_store()/get_vector_store() defaults.
-    manager = IngestionManager(store=InMemoryJobStore())
+    # Force the in-memory/local defaults so this doesn't require a real Qdrant/
+    # MinIO endpoint when the local/deployed .env configures those backends.
+    import src.config.settings as settings_mod
+    import src.storage.vector.factory as vector_factory_mod
 
-    assert manager.blob_store is not None
-    assert manager.vector_store is not None
-    assert manager.model_provider is not None
-    assert manager.parser_factory is not None
+    monkeypatch.setattr(settings_mod, "VECTOR_STORE_BACKEND", "memory")
+    vector_factory_mod._store_singleton = None
+    try:
+        manager = IngestionManager(store=InMemoryJobStore())
+
+        assert manager.blob_store is not None
+        assert manager.vector_store is not None
+        assert manager.model_provider is not None
+        assert manager.parser_factory is not None
+        # None by default -- resolved lazily to the real GraphConstructionService
+        # inside _process_unstructured rather than imported at module top
+        # (see IngestionManager.__init__'s docstring comment).
+        assert manager.graph_service_factory is None
+    finally:
+        vector_factory_mod._store_singleton = None
 
 
 def test_process_unstructured_rejects_unsupported_extension(monkeypatch):

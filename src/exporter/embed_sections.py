@@ -17,7 +17,7 @@ def embed_all_sections():
 
     with driver.session() as session:
         # Get all sections
-        result = session.run("MATCH (s:Section) RETURN s.id AS id, s.text AS text")
+        result = session.run("MATCH (s:Section) RETURN s.id AS id, s.search_text AS text")
         sections = [r.data() for r in result]
 
         print(f"Generating embeddings for {len(sections)} sections...")

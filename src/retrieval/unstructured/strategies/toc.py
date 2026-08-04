@@ -11,6 +11,7 @@ from typing import Any, Optional
 from ....auth.roles import UserContext
 from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
+from ....storage.hydrator import get_hydrator
 from ..cypher_scope import _node_scope_cypher
 from ..executor import DocumentQueryExecutor
 from ..query_intent import is_toc_question
@@ -171,7 +172,7 @@ class TocStrategy:
             WHERE {_node_scope_cypher("p")}
               AND {lifecycle_active("p")}
               AND {tenant_filter("p")}
-              AND trim(coalesce(p.text, '')) <> ''
+              AND trim(coalesce(p.search_text, '')) <> ''
               AND (
                 ($pdf_page IS NOT NULL AND p.pdf_page = $pdf_page)
                 OR (
@@ -180,7 +181,7 @@ class TocStrategy:
                 )
               )
             RETURN
-              coalesce(p.text, '') AS text,
+              coalesce(p.search_text, '') AS text,
               p.pdf_page AS pdf_page,
               p.document_page AS document_page
             ORDER BY p.order
@@ -202,9 +203,9 @@ class TocStrategy:
             WHERE {_node_scope_cypher("p")}
               AND {lifecycle_active("p")}
               AND {tenant_filter("p")}
-              AND trim(coalesce(p.text, '')) <> ''
+              AND trim(coalesce(p.search_text, '')) <> ''
             RETURN
-              coalesce(p.text, '') AS text,
+              coalesce(p.search_text, '') AS text,
               p.pdf_page AS pdf_page,
               p.document_page AS document_page,
               coalesce(p.pdf_page, p.order, 9999) AS sort_key
@@ -238,18 +239,23 @@ class TocStrategy:
               AND trim(coalesce(s.title, '')) <> ''
             RETURN
               trim(s.title) AS title,
-              coalesce(s.text, '') AS text,
+              s.blob_key_text AS blob_key_text,
+              coalesce(s.search_text, '') AS text,
               coalesce(s.order, 0) AS ord
             ORDER BY ord
             """,
             doc_id=doc_id,
             tenant_id=tenant_id,
         )
+        hydrator = get_hydrator()
         for r in rows:
             if section_title_is_toc(r.get("title") or ""):
-                body = (r.get("text") or "").strip()
+                full_text = hydrator.hydrate(r.get("blob_key_text"), r.get("text") or "")
+                body = full_text.strip()
                 if len(body) >= 30:
-                    return dict(r)
+                    result = dict(r)
+                    result["text"] = full_text
+                    return result
         return None
 
     def _toc_outline_fallback(

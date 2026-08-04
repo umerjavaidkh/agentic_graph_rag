@@ -11,6 +11,7 @@ from typing import Optional
 
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
+from ....storage.hydrator import get_hydrator
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import _doc_scope_cypher
 from ..text_utils import _extract_urls
@@ -81,13 +82,13 @@ class LexicalService:
               AND {tenant_filter("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.text, '') <> ''
+              AND coalesce(n.search_text, '') <> ''
               AND (
                 EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
                 OR n.id STARTS WITH d.id + '_'
               )
             UNWIND $keywords AS k
-            WITH k, n WHERE toLower(n.text) CONTAINS k
+            WITH k, n WHERE toLower(n.search_text) CONTAINS k
             RETURN k AS keyword, count(DISTINCT n) AS df
             """,
             doc_id=doc_id,
@@ -114,24 +115,25 @@ class LexicalService:
               AND {tenant_filter("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.text, '') <> ''
+              AND coalesce(n.search_text, '') <> ''
               AND (
                 EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
                 OR n.id STARTS WITH d.id + '_'
               )
             WITH n,
-              [k IN $keywords WHERE toLower(n.text) CONTAINS k] AS matched
+              [k IN $keywords WHERE toLower(n.search_text) CONTAINS k] AS matched
             WHERE size(matched) >= $min_hits
             WITH n, matched,
               reduce(s = 0.0, k IN matched | s + coalesce($weight[k], 0.0)) AS w
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
-              coalesce(n.text, '') AS text,
+              n.blob_key_text AS blob_key_text,
+              coalesce(n.search_text, '') AS search_text,
               n.page_start AS page_start,
               matched,
               w
-            ORDER BY w DESC, size(coalesce(n.text, '')) ASC
+            ORDER BY w DESC, size(coalesce(n.search_text, '')) ASC
             LIMIT 6
             """,
             doc_id=doc_id,
@@ -142,6 +144,7 @@ class LexicalService:
             weight=weight,
         )
 
+        hydrator = get_hydrator()
         items: list[dict] = []
         for r in rows:
             if not r.get("id"):
@@ -149,10 +152,11 @@ class LexicalService:
             matched = r.get("matched") or []
             w = float(r.get("w") or 0.0)
             title = r.get("title") or r["id"]
+            full_text = hydrator.hydrate(r.get("blob_key_text"), r.get("search_text") or "")
             items.append({
                 "id": r["id"],
                 "title": title,
-                "text": self.enrich_chunk_text_for_facts(title, r.get("text") or ""),
+                "text": self.enrich_chunk_text_for_facts(title, full_text),
                 "page_start": r.get("page_start"),
                 "score": 0.88 + 0.06 * min(len(matched), 4) + 0.01 * min(w, 20),
                 "related": ["via:keyword_search"],
@@ -191,22 +195,23 @@ class LexicalService:
               AND {tenant_filter("d")}
             MATCH (n)
             WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.text, '') <> ''
+              AND coalesce(n.search_text, '') <> ''
               AND (
                 EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
                 OR n.id STARTS WITH d.id + '_'
               )
-              AND any(phrase IN $phrases WHERE toLower(n.text) CONTAINS phrase)
+              AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
             WITH n, d,
-              size([p IN $phrases WHERE toLower(n.text) CONTAINS p]) AS phrase_hits
+              size([p IN $phrases WHERE toLower(n.search_text) CONTAINS p]) AS phrase_hits
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
-              coalesce(n.text, '') AS text,
+              n.blob_key_text AS blob_key_text,
+              coalesce(n.search_text, '') AS search_text,
               n.page_start AS page_start,
               phrase_hits,
               coalesce(d.title, d.id) AS doc_title
-            ORDER BY phrase_hits DESC, size(coalesce(n.text, '')) ASC
+            ORDER BY phrase_hits DESC, size(coalesce(n.search_text, '')) ASC
             LIMIT 6
             """,
             doc_id=doc_id,
@@ -215,12 +220,14 @@ class LexicalService:
             tenant_id=tenant_id,
         )
 
+        hydrator = get_hydrator()
         items: list[dict] = []
         for r in rows:
             if not r.get("id"):
                 continue
             title = r.get("title") or r["id"]
-            text = self.enrich_chunk_text_for_facts(title, r.get("text") or "")
+            full_text = hydrator.hydrate(r.get("blob_key_text"), r.get("search_text") or "")
+            text = self.enrich_chunk_text_for_facts(title, full_text)
             score = 0.9 + 0.08 * int(r.get("phrase_hits") or 0)
             if len(text) < 1200:
                 score += 0.12

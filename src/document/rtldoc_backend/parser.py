@@ -12,10 +12,11 @@ page rtldoc successfully parses — headings are known outright, not
 inferred from typography.
 
 Registered as a separate backend (".pdf:rtldoc") via parser_registry.py,
-same pattern as TableAwarePdfParser: only _extract_pages (and _is_heading,
-here) are overridden — chapter/section nesting, page-node building, region
+same pattern as TableAwarePdfParser: only _extract_pages and _block_to_ir
+are overridden — chapter/section nesting, page-node building, region
 linking, sequential edges, reference detection, and number-hierarchy
-linking are all inherited from LightPdfParser unchanged.
+linking all live in Axis1StructuralBuilder (src/graph/axis1_structural.py)
+now, reached via the same DocumentIR every backend produces.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from pathlib import Path
 
 import fitz
 
+from ..ir import Block
 from ..light.parser import LightPdfParser, _PageExtract, _PdfBlock
 
 
@@ -99,6 +101,25 @@ class RtldocPdfParser(LightPdfParser):
             low_confidence=confidence < 0.35,
         )
 
+    @staticmethod
+    def _parse_style(style: str | None) -> tuple[float, bool]:
+        """rtldoc's Block.style is "{font}|{size}|{hex_color}|{flags}"
+        (flags contains "B" when bold, e.g. "Helvetica-Bold|11.0|000000|B").
+        Returns (font_size, bold), defaulting to (0.0, False) on anything
+        malformed rather than raising -- this is a best-effort geometric
+        signal, not required for correctness elsewhere."""
+        if not style:
+            return 0.0, False
+        parts = style.split("|")
+        if len(parts) < 4:
+            return 0.0, False
+        try:
+            size = float(parts[1])
+        except ValueError:
+            size = 0.0
+        bold = "B" in parts[3]
+        return size, bold
+
     def _convert_blocks(
         self, rtl_blocks: list, page_no: int, page: fitz.Page | None
     ) -> tuple[list[_PdfBlock], list[_PdfBlock]]:
@@ -115,11 +136,20 @@ class RtldocPdfParser(LightPdfParser):
                 kind = "figure"
             else:
                 kind = "text"
+            font_size, bold = self._parse_style(getattr(b, "style", None))
             pdf_block = _PdfBlock(
                 text=text,
                 page=page_no,
                 bbox=list(b.bbox) if b.bbox else None,
                 page_size=page_size,
+                # Populated from rtldoc's own Block.style so _is_heading's
+                # geometric rescue (below) has real data to check, not the
+                # dataclass defaults (0.0/False) every rtldoc-sourced block
+                # silently carried before this -- which made that rescue a
+                # permanent no-op.
+                max_font_size=font_size,
+                avg_font_size=font_size,
+                bold=bold,
                 source="rtldoc",
                 kind=kind,
             )
@@ -130,13 +160,26 @@ class RtldocPdfParser(LightPdfParser):
                 regions.append(pdf_block)
         return blocks, regions
 
-    def _is_heading(self, block: _PdfBlock, font_threshold: float) -> bool:
-        if block.source != "rtldoc":
-            return super()._is_heading(block, font_threshold)
-        # rtldoc already classified this block's role geometrically — trust
-        # it outright instead of re-deriving from font size/bold/uppercase
-        # ratio, which the base heuristic falls back on for PyMuPDF-sourced
-        # blocks that carry no role of their own.
-        if block.kind != "text" or block.low_confidence:
-            return False
-        return id(block) in self._heading_block_ids
+    def _block_to_ir(self, b: _PdfBlock) -> Block:
+        """rtldoc's own role classification, stamped as a hint rather than
+        decided here outright -- Axis1StructuralBuilder._is_heading (src/
+        graph/axis1_structural.py) is what actually trusts it, falling back
+        to the same font-size/bold heuristic used for PyMuPDF-sourced
+        blocks when rtldoc says "not a heading" but the block's own
+        geometry strongly disagrees (rtldoc's classifier isn't infallible:
+        verified live on a synthetic test PDF where "Section 1:
+        Introduction & Overview" -- 11pt bold vs. a 9pt non-bold body
+        baseline, an unambiguous heading by font size/weight alone -- was
+        classified role="passage", collapsing the whole 10-page document
+        into one undifferentiated section).
+
+        This used to be a per-class `_is_heading` override reading
+        self._heading_block_ids directly; moved here (construction no
+        longer lives on this class, see docs/DESIGN_unstructured_graph_v2.md
+        phase 2) since instance state like that set can't survive into a
+        freshly-instantiated Axis1StructuralBuilder -- Block.extra carries
+        the same signal instead."""
+        ir_block = super()._block_to_ir(b)
+        if b.source == "rtldoc" and id(b) in self._heading_block_ids:
+            ir_block.extra["heading_hint"] = "heading"
+        return ir_block

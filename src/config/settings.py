@@ -310,6 +310,9 @@ MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "graphrag-content")
 MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() in ("1", "true", "yes")
 
+# ── Hydrator (blob_key -> full text, kept out of Neo4j properties) ─────────
+HYDRATOR_CACHE = os.environ.get("HYDRATOR_CACHE", "true").lower() == "true"
+
 # ── Vector storage (embeddings, kept out of Neo4j properties) ──────────────
 VECTOR_STORE_BACKEND = os.environ.get("VECTOR_STORE_BACKEND", "memory").lower()  # memory | qdrant
 VECTOR_DIM = int(os.environ.get("VECTOR_DIM", "1536"))  # matches EMBEDDING_MODEL default

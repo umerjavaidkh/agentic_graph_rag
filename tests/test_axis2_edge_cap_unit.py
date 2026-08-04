@@ -128,14 +128,24 @@ def test_same_category_edges_are_capped_per_node():
 
 
 def test_entity_edges_are_capped_per_node():
-    # Every node shares the same entity with every other -- old code wired
-    # up a full C(n, 2) clique; new code must cap per-node degree.
+    # A subset of nodes (30, comfortably above the degree cap of 20) shares
+    # the same entity -- old code wired up a full clique over that subset;
+    # new code must cap per-node degree. Deliberately a MINORITY of the
+    # 100 entity-bearing nodes (30%), not all of them: were every node to
+    # share it, that's indistinguishable from the entity being generic to
+    # the document (see test_axis2_generic_entity_filter_unit.py), and the
+    # genericity filter would correctly drop it before capping ever
+    # applies -- this test isolates degree-capping from that behavior by
+    # giving the remaining 70 nodes each their own distinct entity, so
+    # they still count toward the document-frequency denominator without
+    # sharing "newton"/"force".
     n = 100
+    shared_count = 30
     nodes = []
     for i in range(n):
         node = DKGNode(id=f"n{i}", type=NodeType.SECTION, title=f"n{i}", text="x", order=i)
         node.embedding = None
-        node.entities = ["newton", "force"]
+        node.entities = ["newton", "force"] if i < shared_count else [f"unique_entity_{i}"]
         nodes.append(node)
 
     builder = _builder()
@@ -144,7 +154,7 @@ def test_entity_edges_are_capped_per_node():
     assert len(edges) > 0
     deg = _degree_counts(edges)
     assert max(deg.values()) <= AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
-    naive_full_graph = n * (n - 1) // 2
+    naive_full_graph = shared_count * (shared_count - 1) // 2
     assert len(edges) < naive_full_graph
 
 

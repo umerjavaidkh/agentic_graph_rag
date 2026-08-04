@@ -6,13 +6,19 @@ building — constructed after RankingService in the service bundle.
 """
 from __future__ import annotations
 
+import logging
+
 from ....config.settings import EMBEDDING_MODEL, VECTOR_STORE_BACKEND
 from ....graph.tenancy import tenant_filter
 from ....graph.versioning import lifecycle_active
+from ....storage.hydrator import get_hydrator
 from ....storage.vector.factory import get_vector_store
 from ..constants import _GRAPH_REL_TYPES, _TEXT_NODE_LABELS
 from ....model_providers.factory import get_embedding_provider
 from .ranking import RankingService
+
+
+logger = logging.getLogger(__name__)
 
 
 def _document_filter(alias: str, document_id: str) -> str:
@@ -42,8 +48,11 @@ class GraphSeedService:
     ) -> list[dict]:
         # The in-process "memory" VectorStore doesn't survive across worker/API
         # process boundaries, so only a real shared external store (Qdrant) is
-        # trustworthy as the similarity-search read path; otherwise fall back
-        # to Neo4j's native vector index, which dual-write keeps populated.
+        # trustworthy as the similarity-search read path. The Neo4j-native
+        # branch below is a fallback for that in-memory/dev case; nodes no
+        # longer carry n.embedding at all once VECTOR_STORE_BACKEND=qdrant is
+        # the deployed backend (embeddings live only in the vector store), so
+        # this fallback naturally returns no hits in that configuration.
         if VECTOR_STORE_BACKEND == "qdrant":
             return self.vector_seed_via_vector_store(session, embedding, limit, tenant_id, document_id)
         try:
@@ -59,14 +68,14 @@ class GraphSeedService:
                 f"""
                 CALL db.index.vector.queryNodes('section_embedding', $index_limit, $embedding)
                 YIELD node AS n, score
-                WHERE coalesce(n.text, '') <> ''
+                WHERE coalesce(n.search_text, '') <> ''
                   AND {lifecycle_active("n")}
                   AND {tenant_filter("n")}
                   AND {_document_filter("n", document_id)}
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
-                  coalesce(n.text, '') AS text,
+                  coalesce(n.search_text, '') AS text,
                   coalesce(labels(n)[0], '') AS node_label,
                   n.page_start AS page_start,
                   score
@@ -103,7 +112,10 @@ class GraphSeedService:
         tenant_id: str = "",
         document_id: str = "",
     ) -> list[dict]:
-        """Similarity search against the external VectorStore, hydrated from Neo4j."""
+        """Similarity search against the external VectorStore, hydrated via
+        blob_key_text (docs/DESIGN_unstructured_graph_v2.md phase 3) --
+        full-text hydration, not search_text, since this is the LLM-context
+        payload and must not lose fidelity vs. today's `n.text` read."""
         try:
             filters: dict = {}
             if tenant_id:
@@ -118,13 +130,13 @@ class GraphSeedService:
                 f"""
                 UNWIND $ids AS nid
                 MATCH (n) WHERE n.id = nid
-                WHERE coalesce(n.text, '') <> ''
+                  AND coalesce(n.search_text, '') <> ''
                   AND {lifecycle_active("n")}
                   AND {tenant_filter("n")}
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
-                  coalesce(n.text, '') AS text,
+                  n.blob_key_text AS blob_key_text,
                   coalesce(labels(n)[0], '') AS node_label,
                   n.page_start AS page_start
                 """,
@@ -132,11 +144,12 @@ class GraphSeedService:
                 tenant_id=tenant_id,
             )
             by_id = {r["id"]: r for r in rows if r["id"]}
+            hydrator = get_hydrator()
             results = [
                 {
                     "id": id,
                     "title": row["title"] or id,
-                    "text": row["text"],
+                    "text": hydrator.hydrate(row["blob_key_text"]),
                     "node_label": row.get("node_label") or "",
                     "page_start": row.get("page_start"),
                     "score": float(scores.get(id, 0.0)),
@@ -147,6 +160,11 @@ class GraphSeedService:
             results.sort(key=lambda r: r["score"], reverse=True)
             return results
         except Exception:
+            # Swallowed rather than raised so one query never 500s over a
+            # retrieval-quality path, but silent-empty here previously hid a
+            # real bug (qdrant-client API drift) for an unbounded time —
+            # always log so a broken vector store is visible in practice.
+            logger.exception("vector_seed_via_vector_store failed; returning no vector hits")
             return []
 
     def fulltext_seed(
@@ -164,7 +182,7 @@ class GraphSeedService:
                 f"""
                 CALL db.index.fulltext.queryNodes('node_text_index', $q, {{limit: $index_limit}})
                 YIELD node AS n, score
-                WHERE coalesce(n.text, '') <> ''
+                WHERE coalesce(n.search_text, '') <> ''
                   AND {lifecycle_active("n")}
                   AND {tenant_filter("n")}
                   AND {_document_filter("n", document_id)}
@@ -172,7 +190,7 @@ class GraphSeedService:
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
-                  coalesce(n.text, '') AS text,
+                  coalesce(n.search_text, '') AS text,
                   coalesce(labels(n)[0], '') AS node_label,
                   n.page_start AS page_start,
                   score
@@ -221,14 +239,14 @@ class GraphSeedService:
                 MATCH (seed)-[r]-(related)
                 WHERE type(r) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
-                  AND coalesce(related.text, '') <> ''
+                  AND coalesce(related.search_text, '') <> ''
                   AND {lifecycle_active("related")}
                   AND {tenant_filter("related")}
                   AND {_document_filter("related", document_id)}
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
                   coalesce(related.title, '') AS title,
-                  coalesce(related.text, '') AS text,
+                  coalesce(related.search_text, '') AS text,
                   coalesce(labels(related)[0], '') AS node_label,
                   related.page_start AS page_start,
                   type(r) AS rel_type,
@@ -247,7 +265,7 @@ class GraphSeedService:
                 WHERE type(r1) IN $rel_types
                   AND type(r2) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
-                  AND coalesce(related.text, '') <> ''
+                  AND coalesce(related.search_text, '') <> ''
                   AND {lifecycle_active("related")}
                   AND {tenant_filter("related")}
                   AND {_document_filter("related", document_id)}
@@ -255,7 +273,7 @@ class GraphSeedService:
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
                   coalesce(related.title, '') AS title,
-                  coalesce(related.text, '') AS text,
+                  coalesce(related.search_text, '') AS text,
                   coalesce(labels(related)[0], '') AS node_label,
                   related.page_start AS page_start,
                   type(r1) + '->' + type(r2) AS rel_type,

@@ -34,3 +34,8 @@ eval/ui_runs/
 # Playwright browsers (local, used by scripts/run_rag_eval_ui.py)
 .venv/
 .pw-browsers/
+
+# graphify (local code-graph tool, generated/regenerable via `graphify update .`)
+.claude/
+CLAUDE.md
+graphify-out/

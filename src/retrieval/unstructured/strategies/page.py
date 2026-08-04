@@ -19,6 +19,7 @@ from ....document.page_numbers import parse_page_number_from_query
 from ....document.page_vision import compact_visual_content
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
+from ....storage.hydrator import get_hydrator
 from ..cypher_scope import _doc_scope_cypher
 from ..query_intent import FIG_CAPTION_RE as _FIG_CAPTION_RE
 from ..query_intent import is_page_question, is_visual_page_question
@@ -152,8 +153,8 @@ class PageStrategy:
             MATCH (p:Page)
             WHERE p.id STARTS WITH d.id + '_page_'
               AND {tenant_filter("p")}
-              AND toLower(coalesce(p.text, '')) CONTAINS 'fig'
-            RETURN p.pdf_page AS pdf_page, p.text AS page_text
+              AND toLower(coalesce(p.search_text, '')) CONTAINS 'fig'
+            RETURN p.pdf_page AS pdf_page, p.search_text AS page_text
             ORDER BY p.order
             """,
             doc_id=doc_id,
@@ -208,7 +209,7 @@ class PageStrategy:
             RETURN
               p.id AS page_id,
               coalesce(p.title, '') AS page_title,
-              coalesce(p.text, '') AS page_text,
+              coalesce(p.search_text, '') AS page_text,
               coalesce(p.visual_content, '') AS page_visual,
               p.pdf_page AS pdf_page,
               p.document_page AS document_page,
@@ -216,7 +217,7 @@ class PageStrategy:
               collect(DISTINCT {{
                 id: r.id,
                 title: coalesce(r.title, ''),
-                text: coalesce(r.text, ''),
+                text: coalesce(r.search_text, ''),
                 kind: coalesce(r.region_kind, ''),
                 visual_content: coalesce(r.visual_content, ''),
                 order: coalesce(r.order, 0)
@@ -357,19 +358,20 @@ class PageStrategy:
             RETURN
               p.id AS id,
               coalesce(p.title, '') AS title,
-              coalesce(p.text, '') AS text,
+              coalesce(p.search_text, '') AS text,
               coalesce(p.visual_content, '') AS visual_content,
               p.pdf_page AS pdf_page,
               p.document_page AS document_page,
               coalesce(d.title, d.id) AS doc_title,
               collect(DISTINCT {{
                 title: coalesce(r.title, ''),
-                text: coalesce(r.text, ''),
+                text: coalesce(r.search_text, ''),
                 kind: coalesce(r.region_kind, '')
               }}) AS regions,
               collect(DISTINCT {{
                 title: coalesce(s.title, ''),
-                text: coalesce(s.text, '')
+                blob_key_text: s.blob_key_text,
+                search_text: coalesce(s.search_text, '')
               }}) AS sections
             """,
             doc_id=doc_id,
@@ -393,10 +395,11 @@ class PageStrategy:
         if visual:
             parts.extend(["", "## Visual content (tables/figures)", visual])
 
+        hydrator = get_hydrator()
         for sec in row.get("sections") or []:
             if not sec or not sec.get("title"):
                 continue
-            body = (sec.get("text") or "").strip()
+            body = hydrator.hydrate(sec.get("blob_key_text"), sec.get("search_text") or "").strip()
             if body:
                 parts.extend(["", f"## Related section: {sec['title']}", body[:2500]])
 

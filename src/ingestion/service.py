@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 from fastapi import UploadFile
 from neo4j.exceptions import ClientError
@@ -31,6 +31,7 @@ from ..config.settings import (
     REDIS_URL,
     STORE_INGESTION_ARTIFACTS,
 )
+from ..document.graph_snapshot import X1_STAGE, X2_STAGE, write_snapshot
 from ..document.versioning import (
     DocumentRevisionPlan,
     apply_revision_to_graph,
@@ -57,6 +58,9 @@ from .triage import check_duplicate, check_structural_sanity
 
 from ..auth.rbac_setup import GraphRBAC
 from ..graph.driver import get_neo4j_driver
+
+if TYPE_CHECKING:
+    from ..graph.construction_service import GraphConstructionService
 
 
 @dataclass
@@ -120,6 +124,7 @@ class IngestionManager:
         blob_store: Optional[BlobStore] = None,
         vector_store: Optional[VectorStore] = None,
         exporter_factory: Callable[..., Neo4jExporter] = Neo4jExporter,
+        graph_service_factory: Optional[Callable[[], "GraphConstructionService"]] = None,
     ):
         self.store: JobStore = store if store is not None else get_job_store()
         self.parser_factory = parser_factory
@@ -127,6 +132,13 @@ class IngestionManager:
         self.blob_store = blob_store or get_blob_store()
         self.vector_store = vector_store or get_vector_store()
         self.exporter_factory = exporter_factory
+        # Defaults resolved lazily at point of use (see _process_unstructured)
+        # rather than imported at module top, matching the existing lazy
+        # `from ..semantic.axis2 import Axis2Builder` style already in this
+        # file -- GraphConstructionService pulls in axis1/axis2's own
+        # dependency chains, no need to pay for that on every import of
+        # this module.
+        self.graph_service_factory = graph_service_factory
         self.temp_dir = Path("tmp_ingest")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.output_base = Path("output/ingestion")
@@ -381,8 +393,16 @@ class IngestionManager:
                 self._log(job, job.neo4j_load_message)
                 return
 
+        if self.graph_service_factory is not None:
+            graph_service = self.graph_service_factory()
+        else:
+            from ..graph.construction_service import GraphConstructionService
+
+            graph_service = GraphConstructionService()
+
         parser = self.parser_factory(job.input_path)
-        nodes, edges = parser.parse(str(job.input_path))
+        ir = parser.parse_ir(str(job.input_path))
+        nodes, edges, _chunks = graph_service.build_structure(ir)
         self._log(job, f"Parsed {len(nodes)} nodes and {len(edges)} edges")
 
         content_root_id = next(
@@ -426,6 +446,26 @@ class IngestionManager:
             f"v{plan.version_number} hash={plan.content_hash[:12]}…",
         )
 
+        # X1 snapshot for the graph-inspector UI: the structural graph as
+        # it exists right after parsing + lineage stamping, before Axis-2
+        # touches anything. Transient in-memory state otherwise -- nothing
+        # else persists this shape once semantic enrichment adds its own
+        # edges on top, so it must be captured here or not at all. Never
+        # allowed to fail the ingestion job (a debugging aid, not a
+        # correctness requirement).
+        try:
+            write_snapshot(
+                self.blob_store,
+                X1_STAGE,
+                tenant_id=plan.tenant_id,
+                logical_doc_id=plan.logical_id,
+                revision_id=plan.revision_id,
+                nodes=nodes,
+                edges=edges,
+            )
+        except Exception as exc:
+            self._log(job, f"X1 graph snapshot skipped: {exc}")
+
         if (
             ENABLE_PAGE_VISION
             and OPENAI_API_KEY
@@ -449,14 +489,28 @@ class IngestionManager:
         if CHAT_PROVIDER_API_KEY:
             self._set_status(job, IngestionStatus.semantic_enrichment, "Running semantic enrichment (Axis 2)")
             try:
-                from ..semantic.axis2 import Axis2Builder
-
-                builder = Axis2Builder()
-                nodes, semantic_edges = builder.build(nodes, run_llm_pass=True)
+                nodes, semantic_edges = graph_service.build_ideas(nodes, run_llm_pass=True)
                 edges += semantic_edges
                 self._log(job, f"Added {len(semantic_edges)} semantic edges")
             except Exception as exc:
                 self._log(job, f"Semantic enrichment skipped: {exc}")
+
+            # X2 snapshot: structural + semantic edges together, right
+            # after Axis-2 finishes and before Neo4j load -- same
+            # best-effort, never-fails-the-job reasoning as the X1
+            # snapshot above.
+            try:
+                write_snapshot(
+                    self.blob_store,
+                    X2_STAGE,
+                    tenant_id=plan.tenant_id,
+                    logical_doc_id=plan.logical_id,
+                    revision_id=plan.revision_id,
+                    nodes=nodes,
+                    edges=edges,
+                )
+            except Exception as exc:
+                self._log(job, f"X2 graph snapshot skipped: {exc}")
 
             self._set_status(job, IngestionStatus.chapter_summarization, "Summarizing chapters")
             try:

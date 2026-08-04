@@ -13,6 +13,12 @@ from fastapi.staticfiles import StaticFiles
 from .graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
 from .graph.driver import close_neo4j_driver, get_neo4j_driver
 from .graph.tenancy import tenant_filter
+from .document.graph_snapshot import (
+    X1_STAGE,
+    X2_STAGE,
+    query_final_snapshot_sync,
+    read_snapshot as read_graph_snapshot,
+)
 from .document.versioning import source_file_blob_key
 from .storage.blob.factory import get_blob_store
 from pydantic import BaseModel, Field
@@ -138,6 +144,11 @@ async def upload_page():
 @app.get("/chat")
 async def chat_page():
     return RedirectResponse(url="/static/chat.html")
+
+
+@app.get("/graph-inspector")
+async def graph_inspector_page():
+    return RedirectResponse(url="/static/graph_inspector.html")
 
 
 @app.get("/feedback")
@@ -922,6 +933,149 @@ async def get_document_source_file(
         media_type=content_type,
         headers={"Content-Disposition": f'inline; filename="{download_name}"'},
     )
+
+
+@app.get("/documents/{logical_doc_id}/graph-snapshot/{stage}")
+async def get_document_graph_snapshot(
+    logical_doc_id: str,
+    stage: str,
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+    revision_id: Optional[str] = Query(None, description="Defaults to the ACTIVE revision"),
+):
+    """
+    X1 (structural) or X2 (structural + semantic) graph-construction
+    snapshot, for the graph-inspector UI. Admin-only: this exposes
+    internal graph-construction detail (raw entity lists, edge weights)
+    beyond what /query answers ever surface.
+
+    Only available for documents ingested after this feature existed (or
+    re-ingested) -- older revisions 404 with a clear reason, same pattern
+    as /documents/{id}/file for pre-source-persistence revisions.
+    """
+    if stage not in (X1_STAGE, X2_STAGE):
+        raise HTTPException(status_code=400, detail=f"stage must be one of: {X1_STAGE}, {X2_STAGE}")
+
+    session = resolve_admin_session(
+        authorization=authorization, body_user_id=user_id, body_role=role, body_tenant_id=tenant_id,
+    )
+    context = session.user
+    driver = get_neo4j_driver()
+    loop = asyncio.get_running_loop()
+
+    resolved_revision_id = revision_id
+    if not resolved_revision_id:
+        meta = await loop.run_in_executor(
+            _query_executor, _active_revision_source_meta_sync, driver, logical_doc_id, context.tenant_id,
+        )
+        if not meta:
+            raise HTTPException(status_code=404, detail=f"No document found for {logical_doc_id!r}")
+        resolved_revision_id = meta["revision_id"]
+
+    blob_store = get_blob_store()
+    snapshot = await loop.run_in_executor(
+        _query_executor,
+        lambda: read_graph_snapshot(
+            blob_store,
+            tenant_id=context.tenant_id,
+            logical_doc_id=logical_doc_id,
+            revision_id=resolved_revision_id,
+            stage=stage,
+        ),
+    )
+    if snapshot is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No {stage} snapshot for this document (ingested before the graph-inspector "
+            "feature existed, semantic enrichment was skipped, or the snapshot write failed).",
+        )
+    return snapshot
+
+
+def _query_final_graph_snapshot_sync(driver, logical_doc_id: str, revision_id: str) -> dict:
+    with driver.session() as session:
+        return query_final_snapshot_sync(session, logical_doc_id, revision_id)
+
+
+@app.get("/documents/{logical_doc_id}/graph-final")
+async def get_document_graph_final(
+    logical_doc_id: str,
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+    revision_id: Optional[str] = Query(None, description="Defaults to the ACTIVE revision"),
+):
+    """
+    The "final" stage: what's actually persisted in Neo4j right now for
+    this document, queried live rather than read from a file -- Neo4j
+    itself is the always-current source of truth, so there's nothing to
+    write during ingestion for this stage.
+    """
+    session = resolve_admin_session(
+        authorization=authorization, body_user_id=user_id, body_role=role, body_tenant_id=tenant_id,
+    )
+    context = session.user
+    driver = get_neo4j_driver()
+    loop = asyncio.get_running_loop()
+
+    resolved_revision_id = revision_id
+    if not resolved_revision_id:
+        meta = await loop.run_in_executor(
+            _query_executor, _active_revision_source_meta_sync, driver, logical_doc_id, context.tenant_id,
+        )
+        if not meta:
+            raise HTTPException(status_code=404, detail=f"No document found for {logical_doc_id!r}")
+        resolved_revision_id = meta["revision_id"]
+
+    return await loop.run_in_executor(
+        _query_executor, _query_final_graph_snapshot_sync, driver, logical_doc_id, resolved_revision_id,
+    )
+
+
+@app.get("/documents/{logical_doc_id}/ontology-score")
+async def get_document_ontology_score(
+    logical_doc_id: str,
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+    axis1_only: bool = Query(False, description="Skip axis2 (no LLM calls, free/fast)"),
+    axis2_only: bool = Query(False, description="Skip axis1"),
+    sample_size: int = Query(15, ge=1, le=50, description="Axis-2 sample size (edges + entities)"),
+):
+    """
+    Measured ontology-accuracy score for this document, per
+    docs/DESIGN_unstructured_graph_v2.md's >=90% gate -- axis1
+    (structural, free) scored against the PDF's own embedded outline or
+    structural invariants; axis2 (idea-linking) via sampled LLM-judge
+    precision (real cost: one small call per sampled edge/entity, hence
+    both the opt-in axis1_only/axis2_only flags and the capped
+    sample_size -- this is meant to be triggered explicitly from the
+    Graph Inspector's Quality panel, not run automatically).
+    """
+    resolve_admin_session(
+        authorization=authorization, body_user_id=user_id, body_role=role, body_tenant_id=tenant_id,
+    )
+    if axis1_only and axis2_only:
+        raise HTTPException(status_code=400, detail="axis1_only and axis2_only are mutually exclusive")
+
+    from .document.ontology_report import run_for_doc
+
+    driver = get_neo4j_driver()
+    loop = asyncio.get_running_loop()
+    report = await loop.run_in_executor(
+        _query_executor,
+        lambda: run_for_doc(
+            driver, logical_doc_id, sample_size,
+            skip_axis1=axis2_only, skip_axis2=axis1_only,
+        ),
+    )
+    if not report.get("found"):
+        raise HTTPException(status_code=404, detail=f"No document found for {logical_doc_id!r}")
+    return report
 
 
 @app.get("/ingest/queue/status")

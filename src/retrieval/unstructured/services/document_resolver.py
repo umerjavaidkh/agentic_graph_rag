@@ -104,7 +104,7 @@ class DocumentResolver:
             WHERE {lc_n}
               AND {tenant_filter("n")}
               AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
-                   OR toLower(coalesce(n.text, '')) =~ {_WORD_BOUNDARY_PATTERN})
+                   OR toLower(coalesce(n.search_text, '')) =~ {_WORD_BOUNDARY_PATTERN})
             WITH dl, term, count(DISTINCT n) AS cnt,
                  // Bare 4-digit years never count as a title match: our own
                  // logical_ids are systematically date-suffixed (ticker_form_
@@ -405,7 +405,7 @@ class DocumentResolver:
                     WHERE {lc_n}
                       AND {tenant_filter("n")}
                       AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
-                           OR toLower(coalesce(n.text, '')) =~ {_WORD_BOUNDARY_PATTERN})
+                           OR toLower(coalesce(n.search_text, '')) =~ {_WORD_BOUNDARY_PATTERN})
                     WITH dl, term, count(DISTINCT n) AS cnt,
                          (NOT term =~ '\\d{{4}}'
                           AND (toLower(coalesce(dl.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
@@ -453,7 +453,7 @@ class DocumentResolver:
                      MATCH (d)-[:CONTAINS*1..5]->(n)
                      WHERE {lc_n}
                        AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
-                            OR toLower(coalesce(n.text, '')) =~ {_WORD_BOUNDARY_PATTERN})
+                            OR toLower(coalesce(n.search_text, '')) =~ {_WORD_BOUNDARY_PATTERN})
                    }})
                 RETURN coalesce(d.logical_doc_id, d.id) AS id,
                        coalesce(d.title, d.id) AS title,

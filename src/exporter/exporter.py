@@ -86,45 +86,40 @@ class Neo4jExporter:
         user: str,
         password: str,
         *,
-        revision_plan: DocumentRevisionPlan | None = None,
+        revision_plan: DocumentRevisionPlan,
         skip_if_duplicate_hash: bool = True,
     ) -> dict:
         """
-        Load graph into Neo4j. When revision_plan is set, runs versioned ingest
-        (expire prior ACTIVE revision, purge its content subgraph, load snapshot).
-        Returns metadata dict: skipped_duplicate, revision_id, logical_doc_id, version_number.
+        Load graph into Neo4j as a versioned revision (expire prior ACTIVE
+        revision, purge its content subgraph, load snapshot). Returns
+        metadata dict: skipped_duplicate, revision_id, logical_doc_id,
+        version_number.
+
+        `revision_plan` is required -- the only caller (IngestionManager._
+        process_unstructured) always builds one first, and the earlier
+        no-revision merge path (_merge_node/_merge_edge) had zero other
+        callers; kept as a required kwarg rather than removed outright so
+        the call site stays self-documenting about what's being loaded.
         """
         driver = get_neo4j_driver(uri, user, password)
         meta: dict = {
             "skipped_duplicate": False,
-            "revision_id": None,
-            "logical_doc_id": None,
-            "version_number": None,
+            "revision_id": revision_plan.revision_id,
+            "logical_doc_id": revision_plan.logical_id,
+            "version_number": revision_plan.version_number,
         }
         with driver.session() as session:
             self._ensure_constraints(session, nodes)
             self._ensure_versioning_constraints(session)
             self._ensure_indexes(session)
 
-            if revision_plan is not None:
-                meta["logical_doc_id"] = revision_plan.logical_id
-                meta["revision_id"] = revision_plan.revision_id
-                meta["version_number"] = revision_plan.version_number
-                if skip_if_duplicate_hash and self.active_revision_has_hash(
-                    session, revision_plan.logical_id, revision_plan.content_hash
-                ):
-                    meta["skipped_duplicate"] = True
-                    return meta
-                self._install_revision_snapshot(
-                    session, revision_plan, nodes, edges
-                )
-            else:
-                for node in nodes:
-                    self._merge_node(session, node)
-                for edge in edges:
-                    self._merge_edge(session, edge)
-        if not meta.get("skipped_duplicate"):
-            print("✅ Loaded graph into Neo4j")
+            if skip_if_duplicate_hash and self.active_revision_has_hash(
+                session, revision_plan.logical_id, revision_plan.content_hash
+            ):
+                meta["skipped_duplicate"] = True
+                return meta
+            self._install_revision_snapshot(session, revision_plan, nodes, edges)
+        print("✅ Loaded graph into Neo4j")
         return meta
 
     def _ensure_versioning_constraints(self, session) -> None:
@@ -335,6 +330,7 @@ class Neo4jExporter:
                 )
                 self.blob_store.put(node.blob_key_visual, node.visual_content)
             if node.embedding:
+                node.vector_id = self.vector_store.point_id_for(node.id)
                 vector_items.append(
                     (
                         node.id,
@@ -355,7 +351,14 @@ class Neo4jExporter:
         return {
             "id": node.id,
             "title": node.title,
-            "text": node.text,
+            # `text` (full body) is deliberately NOT written to Neo4j --
+            # phase-3 write-side strip (docs/DESIGN_unstructured_graph_v2.md).
+            # It's still dual-written to the blob store via blob_key_text
+            # (Neo4jExporter._dual_write_chunk, above) for hydration; Neo4j
+            # keeps only search_text (chunk-bounded, for lexical matching)
+            # and the pointer.
+            "search_text": node.search_text,
+            "vector_id": node.vector_id,
             "order": node.order,
             "page_start": node.page_start,
             "page_end": node.page_end,
@@ -363,7 +366,6 @@ class Neo4jExporter:
             "entities": node.entities,
             "cluster_id": node.cluster_id,
             "summary": node.summary,
-            "embedding": node.embedding,
             "visual_content": node.visual_content,
             "pdf_page": node.pdf_page,
             "document_page": node.document_page,
@@ -396,79 +398,16 @@ class Neo4jExporter:
             "tenant_id": edge.tenant_id,
         }
 
-    @staticmethod
-    def _create_node_tx(tx, node: DKGNode) -> None:
-        label = node.type.value if isinstance(node.type, NodeType) else str(node.type)
-        tx.run(
-            f"CREATE (n:{label} {{id: $id}}) "
-            "SET n.title = $title, n.text = $text, n.order = $order,"
-            " n.page_start = $page_start, n.page_end = $page_end,"
-            " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
-            " n.embedding = $embedding, n.visual_content = $visual_content,"
-            " n.pdf_page = $pdf_page, n.document_page = $document_page,"
-            " n.page_tags = $page_tags,"
-            " n.region_kind = $region_kind, n.region_tags = $region_tags,"
-            " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
-            " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash,"
-            " n.version_number = $version_number, n.ingested_at = $ingested_at,"
-            " n.source_filename = $source_filename, n.tenant_id = $tenant_id",
-            id=node.id,
-            title=node.title,
-            text=node.text,
-            order=node.order,
-            page_start=node.page_start,
-            page_end=node.page_end,
-            depth=node.depth,
-            entities=node.entities,
-            cluster_id=node.cluster_id,
-            embedding=node.embedding,
-            visual_content=node.visual_content,
-            pdf_page=node.pdf_page,
-            document_page=node.document_page,
-            page_tags=node.page_tags or [],
-            region_kind=node.region_kind,
-            region_tags=node.region_tags or [],
-            logical_doc_id=node.logical_doc_id,
-            revision_id=node.revision_id,
-            lifecycle_status=node.lifecycle_status,
-            content_hash=node.content_hash,
-            version_number=node.version_number,
-            ingested_at=node.ingested_at,
-            source_filename=node.source_filename,
-            tenant_id=node.tenant_id,
-        )
-
-    @staticmethod
-    def _merge_edge_tx(tx, edge: DKGEdge) -> None:
-        rel_type = edge.rel_type.value if isinstance(edge.rel_type, RelType) else str(edge.rel_type)
-        tier = edge.confidence_tier
-        tx.run(
-            "MATCH (a {id: $source_id}), (b {id: $target_id}) "
-            f"MERGE (a)-[r:{rel_type}]->(b) "
-            "SET r.weight = $weight, r.properties = $properties, "
-            "r.confidence = $confidence, r.confidence_tier = $confidence_tier, "
-            "r.tenant_id = $tenant_id",
-            source_id=edge.source_id,
-            target_id=edge.target_id,
-            weight=edge.weight,
-            properties=json.dumps(edge.properties),
-            confidence=edge.confidence,
-            confidence_tier=tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
-            tenant_id=edge.tenant_id,
-        )
-
     def _ensure_indexes(self, session) -> None:
-        """Idempotently create full-text + vector indexes on every ingestion."""
-        from ..config.settings import VECTOR_STORE_BACKEND
-
+        """Idempotently create full-text indexes on every ingestion."""
         statements = [
             "CREATE FULLTEXT INDEX node_text_index IF NOT EXISTS "
             "FOR (n:Book|Chapter|Section|Page|Region|Concept) "
-            "ON EACH [n.title, n.text, n.visual_content]",
+            "ON EACH [n.title, n.search_text, n.visual_content]",
             "CREATE FULLTEXT INDEX page_visual_index IF NOT EXISTS "
-            "FOR (n:Page) ON EACH [n.visual_content, n.title, n.text, n.document_page]",
+            "FOR (n:Page) ON EACH [n.visual_content, n.title, n.search_text, n.document_page]",
             "CREATE FULLTEXT INDEX region_tag_index IF NOT EXISTS "
-            "FOR (n:Region) ON EACH [n.title, n.text, n.region_tags, n.region_kind]",
+            "FOR (n:Region) ON EACH [n.title, n.search_text, n.region_tags, n.region_kind]",
             "CREATE FULLTEXT INDEX page_number_index IF NOT EXISTS "
             "FOR (n:Page) ON EACH [n.document_page, n.page_tags, n.title]",
             "CREATE INDEX section_order IF NOT EXISTS FOR (n:Section) ON (n.order)",
@@ -482,16 +421,12 @@ class Neo4jExporter:
             "CREATE INDEX page_tenant_lifecycle IF NOT EXISTS "
             "FOR (n:Page) ON (n.tenant_id, n.lifecycle_status)",
         ]
-        # The in-process "memory" VectorStore doesn't survive across worker/API
-        # process boundaries, so Neo4j's native vector index stays the real
-        # similarity-search path until a shared external store (Qdrant) is
-        # configured — only then does _vector_seed read from vector_store instead.
-        if VECTOR_STORE_BACKEND != "qdrant":
-            statements.append(
-                """CREATE VECTOR INDEX section_embedding IF NOT EXISTS
-                FOR (n:Section) ON (n.embedding)
-                OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}"""
-            )
+        # No Neo4j-native vector index (section_embedding) here anymore --
+        # embeddings never reach Neo4j at all as of the phase-3 write-side
+        # strip (docs/DESIGN_unstructured_graph_v2.md), regardless of
+        # VECTOR_STORE_BACKEND. A non-Qdrant dev fallback is a VectorStore
+        # backend concern (see src/storage/vector/memory_store.py), not a
+        # reason to keep a Neo4j index that would only ever index nulls.
         for stmt in statements:
             try:
                 session.run(stmt).consume()
@@ -512,62 +447,6 @@ class Neo4jExporter:
             session.run(
                 f"CREATE CONSTRAINT {safe_label}_id IF NOT EXISTS FOR (n:{label}) REQUIRE n.id IS UNIQUE"
             )
-
-    def _merge_node(self, session, node: DKGNode) -> None:
-        label = self._label_to_str(node.type)
-        session.run(
-            f"MERGE (n:{label} {{id: $id}})"
-            " SET n.title = $title, n.text = $text, n.order = $order,"
-            " n.page_start = $page_start, n.page_end = $page_end,"
-            " n.depth = $depth, n.entities = $entities, n.cluster_id = $cluster_id,"
-            " n.embedding = $embedding, n.visual_content = $visual_content,"
-            " n.pdf_page = $pdf_page, n.document_page = $document_page,"
-            " n.page_tags = $page_tags,"
-            " n.region_kind = $region_kind, n.region_tags = $region_tags,"
-            " n.logical_doc_id = $logical_doc_id, n.revision_id = $revision_id,"
-            " n.lifecycle_status = $lifecycle_status, n.content_hash = $content_hash,"
-            " n.tenant_id = $tenant_id, n.summary = $summary",
-            id=node.id,
-            title=node.title,
-            text=node.text,
-            order=node.order,
-            page_start=node.page_start,
-            page_end=node.page_end,
-            depth=node.depth,
-            entities=node.entities,
-            cluster_id=node.cluster_id,
-            embedding=node.embedding,
-            visual_content=node.visual_content,
-            pdf_page=node.pdf_page,
-            document_page=node.document_page,
-            page_tags=node.page_tags or [],
-            region_kind=node.region_kind,
-            region_tags=node.region_tags or [],
-            logical_doc_id=node.logical_doc_id,
-            revision_id=node.revision_id,
-            lifecycle_status=node.lifecycle_status,
-            content_hash=node.content_hash,
-            tenant_id=node.tenant_id,
-            summary=node.summary,
-        )
-
-    def _merge_edge(self, session, edge: DKGEdge) -> None:
-        rel_type = self._rel_type_to_str(edge.rel_type)
-        tier = edge.confidence_tier
-        session.run(
-            f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
-            f"MERGE (a)-[r:{rel_type}]->(b) "
-            "SET r.weight = $weight, r.properties = $properties, "
-            "r.confidence = $confidence, r.confidence_tier = $confidence_tier, "
-            "r.tenant_id = $tenant_id",
-            source_id=edge.source_id,
-            target_id=edge.target_id,
-            weight=edge.weight,
-            properties=json.dumps(edge.properties),
-            confidence=edge.confidence,
-            confidence_tier=tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),
-            tenant_id=edge.tenant_id,
-        )
 
     # ─────────────────────────────────────────
     # 1. SETUP CYPHER  (constraints + indexes)
@@ -747,15 +626,12 @@ YIELD rel RETURN count(rel);
             title_escaped = n.title.replace("'", "\\'")
             cluster       = f", n.cluster_id={n.cluster_id}" if n.cluster_id is not None else ""
             label = self._label_to_str(n.type)
-            # Embedding — stored as native float list, not string
-            embedding_str = json.dumps(n.embedding) if n.embedding else "null"
             lines.append(
                 f"MERGE (n:{label} {{id: '{n.id}'}})"
                 f" SET n.title='{title_escaped}', n.text='{text_escaped}',"
                 f" n.order={n.order}, n.page_start={n.page_start},"
                 f" n.page_end={n.page_end}, n.depth={n.depth},"
-                f" n.entities='{entities_str}'{cluster},"
-                f" n.embedding={embedding_str};"
+                f" n.entities='{entities_str}'{cluster};"
             )
 
         lines += ["\n// ── AXIS 1 — STRUCTURAL EDGES ───────────────"]

@@ -9,11 +9,9 @@ retrieval changes needed to compare them.
 """
 from __future__ import annotations
 
-import re
-from collections import defaultdict
-
 import fitz
 
+from ..ir import Block
 from ..light.parser import LightPdfParser, _PageExtract, _PdfBlock
 
 # Safety ceiling on how far a table region gets padded upward to catch
@@ -37,18 +35,6 @@ _MAX_TABLE_PAD_PT = 60.0
 # above this ceiling degrades gracefully to the other two vetoes
 # (digit-dominance, repeated-header) rather than hanging ingestion.
 _MAX_PAGE_DRAWINGS_FOR_TABLE_DETECTION = 3000
-
-# Repeated-header/footer detection thresholds — both required, so a real
-# heading reused a few times across independent chapters of a long
-# document (e.g. "Overview" appearing 3 times in a 200-page report) isn't
-# mistaken for a running header. Running headers/footers overwhelmingly
-# clear both: printed on most pages, at a near-identical vertical position
-# every time (a real heading's page position varies with content flow).
-_REPEAT_MIN_PAGES = 3
-_REPEAT_MIN_PAGE_FRACTION = 0.15
-_REPEAT_Y_TOLERANCE_PT = 20.0
-
-_WS_RE = re.compile(r"\s+")
 
 
 class TableAwarePdfParser(LightPdfParser):
@@ -83,6 +69,11 @@ class TableAwarePdfParser(LightPdfParser):
     """
 
     def _extract_pages(self, source, doc: fitz.Document) -> list[_PageExtract]:
+        # Repeated-header/footer flagging moved to the base LightPdfParser
+        # (called once from parse(), after _extract_pages returns, so it
+        # covers every backend -- including RtldocPdfParser, which doesn't
+        # call super()._extract_pages() on its main path and so would never
+        # have gone through this method here).
         extracts = super()._extract_pages(source, doc)
         for extract, page in zip(extracts, doc):
             table_bboxes = self._padded_table_bboxes(page)
@@ -91,40 +82,7 @@ class TableAwarePdfParser(LightPdfParser):
             for block in extract.blocks:
                 if block.bbox and self._bbox_in_any(block.bbox, table_bboxes):
                     block.in_table_region = True
-        self._flag_repeated_headers(extracts)
         return extracts
-
-    @staticmethod
-    def _normalize_for_repeat_check(text: str) -> str:
-        joined = " ".join(ln.strip() for ln in (text or "").splitlines() if ln.strip())
-        return _WS_RE.sub(" ", joined).strip().lower()
-
-    def _flag_repeated_headers(self, extracts: list[_PageExtract]) -> None:
-        total_pages = len(extracts)
-        if total_pages < _REPEAT_MIN_PAGES:
-            return
-
-        # normalized text -> list of (page, y0, block)
-        groups: dict[str, list[tuple[int, float, _PdfBlock]]] = defaultdict(list)
-        for extract in extracts:
-            for block in extract.blocks:
-                if block.kind != "text" or block.low_confidence or not block.bbox:
-                    continue
-                norm = self._normalize_for_repeat_check(block.text)
-                if not (3 <= len(norm) <= 160) or len(norm.split()) > 18:
-                    continue
-                groups[norm].append((extract.page, block.bbox[1], block))
-
-        min_pages_needed = max(_REPEAT_MIN_PAGES, int(total_pages * _REPEAT_MIN_PAGE_FRACTION))
-        for occurrences in groups.values():
-            distinct_pages = {p for p, _, _ in occurrences}
-            if len(distinct_pages) < min_pages_needed:
-                continue
-            y_values = [y for _, y, _ in occurrences]
-            if max(y_values) - min(y_values) > _REPEAT_Y_TOLERANCE_PT:
-                continue  # position varies too much to be a running header/footer
-            for _, _, block in occurrences:
-                block.is_repeated_header = True
 
     @staticmethod
     def _padded_table_bboxes(page: fitz.Page) -> list[tuple[float, float, float, float]]:
@@ -152,14 +110,19 @@ class TableAwarePdfParser(LightPdfParser):
                 return True
         return False
 
-    def _is_heading(self, block: _PdfBlock, font_threshold: float) -> bool:
-        if block.in_table_region:
-            return False
-        if block.is_repeated_header:
-            return False
-        if self._looks_like_table_fragment(block.text):
-            return False
-        return super()._is_heading(block, font_threshold)
+    def _block_to_ir(self, b: _PdfBlock) -> Block:
+        """in_table_region/is_repeated_header already transfer via the base
+        _block_to_ir (LightPdfParser -- both are named _PdfBlock fields,
+        not table_aware-specific). Only the table-fragment text heuristic
+        (digit-dominant merged row fragments) needs stamping here -- the
+        other two vetoes used to live in a per-class `_is_heading`
+        override alongside this one; moved to Axis1StructuralBuilder's
+        single collapsed _is_heading (src/graph/axis1_structural.py),
+        which reads all three from Block.extra."""
+        ir_block = super()._block_to_ir(b)
+        if self._looks_like_table_fragment(b.text):
+            ir_block.extra["table_fragment"] = True
+        return ir_block
 
     @staticmethod
     def _looks_like_table_fragment(text: str) -> bool:

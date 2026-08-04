@@ -4,7 +4,7 @@
 # ── Lightweight PDF ────────
 pymupdf>=1.24.0
 pdfplumber>=0.11.0
-rtldoc @ git+https://github.com/umerjavaidkh/rtldoc.git@v1.0.1
+pdf-rtldoc==1.0.6
 
 # ── OCR fallback (low-confidence pages; requires the tesseract-ocr system
 # package too — see Dockerfile) ─────────
@@ -42,3 +42,11 @@ PyJWT[crypto]>=2.8.0
 
 # ── Blob storage (optional — degrades to zero-dep local disk if BLOB_STORE_BACKEND unset) ──
 minio>=7.2.0
+# ── Vector storage (optional — degrades to zero-dep in-process store if
+# VECTOR_STORE_BACKEND unset). Missing here (though present in
+# requirements.txt) meant VECTOR_STORE_BACKEND=qdrant would crash with
+# ModuleNotFoundError in the actual deployed image, since the Dockerfile
+# installs from THIS file, not requirements.txt -- same class of miss as
+# minio's earlier omission. Root cause of Qdrant sitting empty despite
+# running as a container: nothing could ever successfully switch to it.
+qdrant-client>=1.9.0

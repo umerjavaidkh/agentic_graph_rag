@@ -102,7 +102,7 @@ def build_ingestion_quality_report(
             MATCH (n) WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
               AND any(l IN labels(n) WHERE l IN $labels)
             RETURN count(n) AS total,
-                   sum(CASE WHEN size(coalesce(n.text, '')) < $min_chars THEN 1 ELSE 0 END) AS empty
+                   sum(CASE WHEN size(coalesce(n.search_text, '')) < $min_chars THEN 1 ELSE 0 END) AS empty
             """,
             labels=list(_CONTENT_LABELS),
             min_chars=_MIN_TEXT_CHARS,

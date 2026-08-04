@@ -81,10 +81,14 @@ def test_delete_by_filter_removes_matching_entries():
     assert ids == ["b"]
 
 
-def test_factory_defaults_to_memory_backend():
-    # VECTOR_STORE_BACKEND defaults to "memory" (settings.py) with no env override.
+def test_factory_defaults_to_memory_backend(monkeypatch):
+    # VECTOR_STORE_BACKEND defaults to "memory" (settings.py) when unset; force it
+    # here so the test is isolated from whatever backend the local/deployed .env
+    # actually configures (e.g. VECTOR_STORE_BACKEND=qdrant in a real deployment).
+    import src.config.settings as settings_mod
     import src.storage.vector.factory as factory_mod
 
+    monkeypatch.setattr(settings_mod, "VECTOR_STORE_BACKEND", "memory")
     factory_mod._store_singleton = None
     try:
         store = get_vector_store()
@@ -173,6 +177,9 @@ def test_qdrant_store_upsert_calls_client_upsert():
 
 
 def test_qdrant_store_query_maps_hits_back_to_source_id():
+    # `.query_points()` (not `.search()`, removed in qdrant-client >= 1.10) is the
+    # real API this must call — a mismatch here previously went undetected because
+    # a MagicMock auto-creates whichever attribute is referenced, `.search` or not.
     fake_cls = _install_fake_qdrant_sdk()
     fake_client = MagicMock()
     fake_client.collection_exists.return_value = True
@@ -180,13 +187,17 @@ def test_qdrant_store_query_maps_hits_back_to_source_id():
     fake_hit.payload = {"_source_id": "node1"}
     fake_hit.score = 0.87
     fake_hit.id = "some-uuid"
-    fake_client.search.return_value = [fake_hit]
+    fake_response = MagicMock()
+    fake_response.points = [fake_hit]
+    fake_client.query_points.return_value = fake_response
     fake_cls.return_value = fake_client
     mod = _reload_qdrant_store()
 
     store = mod.QdrantVectorStore("http://localhost:6333", "sections", dim=3)
     results = store.query([0.1, 0.2, 0.3], top_k=5)
 
+    assert fake_client.query_points.called
+    assert not fake_client.search.called
     assert results == [("node1", 0.87)]
 
 

@@ -87,6 +87,15 @@ class DKGNode:
     # when text/visual_content are dual-written to a BlobStore.
     blob_key_text: Optional[str] = None
     blob_key_visual: Optional[str] = None
+    # Lean-storage plumbing (docs/DESIGN_unstructured_graph_v2.md phase 3):
+    # search_text is a chunk-bounded property Neo4j keeps for Lucene/IDF
+    # lexical matching once `text` itself is no longer written there --
+    # set by the parser/graph-construction layer, same as `text`.
+    search_text: Optional[str] = None
+    # vector_id is set by the exporter at write time (same timing as
+    # blob_key_text above) -- a persisted copy of the deterministic Qdrant
+    # point id, so callers don't have to re-derive it from node.id.
+    vector_id: Optional[str] = None
     # Multi-tenancy: stamped by apply_revision_to_graph, not the parser itself.
     tenant_id: Optional[str] = None
 

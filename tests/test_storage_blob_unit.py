@@ -64,10 +64,14 @@ def test_delete_prefix_removes_all_keys_under_revision():
     assert store.get("doc1/rev2/node1/text") == "c"
 
 
-def test_factory_defaults_to_local_backend():
-    # BLOB_STORE_BACKEND defaults to "local" (settings.py) with no env override.
+def test_factory_defaults_to_local_backend(monkeypatch):
+    # BLOB_STORE_BACKEND defaults to "local" (settings.py) when unset; force it
+    # here so the test is isolated from whatever backend the local/deployed .env
+    # actually configures (e.g. BLOB_STORE_BACKEND=minio in a real deployment).
+    import src.config.settings as settings_mod
     import src.storage.blob.factory as factory_mod
 
+    monkeypatch.setattr(settings_mod, "BLOB_STORE_BACKEND", "local")
     factory_mod._store_singleton = None
     try:
         store = get_blob_store()
