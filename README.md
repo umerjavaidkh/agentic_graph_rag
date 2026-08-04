@@ -15,15 +15,53 @@ It brings **your own** Neo4j schema and **your own** documents: the query router
 
 Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, Anthropic (Claude), or Gemini** — pick with `MODEL_PROVIDER`; embeddings always use OpenAI. **Cost-effective by default, not just at ingestion**: chat/synthesis defaults to a low-cost model too (`gpt-4o-mini` on the default `openai` provider, `gemini-2.5-flash` on `gemini`) — not a frontier-tier model — so running the full pipeline end to end (ingest **and** chat) doesn't require frontier-model spend. Swap to a stronger model per-provider any time via `CHAT_MODEL` if you want it.
 
-## Screenshots
+## See it in action
 
-**One chat, both retrieval modes.** The same session answers a structured Northwind query (`text2cypher` → live table) and an unstructured 10-K question (hybrid graph RAG → cited answer with a clickable source), each turn tagged with exactly which strategy, tool, and access level produced it — nothing is hidden about how an answer was reached.
+**Fully transparent, audit-ready at every step — not just at the final answer.** Every ingestion is logged, every document's construction quality is a measured report (not a claim), every cited answer traces back to its real source, and every stage is a swappable plug-in rather than a black box.
+
+<table>
+<tr>
+<td width="50%">
+
+**One chat, both retrieval modes.** The same session answers a structured Northwind query (`text2cypher` → live table) and an unstructured 10-K question (hybrid graph RAG → cited answer with a clickable source), each turn tagged with exactly which strategy, tool, and access level produced it.
 
 ![Agentic GraphRAG chat — structured and unstructured retrieval in one session](docs/images/chat_demo.png)
+
+</td>
+<td width="50%">
 
 **Every cited answer opens its real source.** Click a `doc:` chip and the original ingested PDF opens in a side panel, scrolled to the cited page — no separate document viewer, no re-uploading, no "trust me."
 
 ![Source document viewer — the original PDF open in a side panel next to the cited answer](docs/images/document_viewer.png)
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**Every action is audit-logged.** Who ingested what, who ran which query, who was denied access and why — filterable by user/tenant/event type, not a log file you have to grep.
+
+![Audit log — every ingestion and query recorded with user, tenant, role, and result](docs/images/audit_log.png)
+
+</td>
+<td width="50%">
+
+**Ingestion quality is measured, not assumed.** A cheap, LLM-free per-document report — text/entity/embedding coverage, page continuity, orphan-node count — computed straight from the ingested graph for every document, so quality is a number you can check, not a hope.
+
+![Ingestion quality report — coverage, edge counts, and orphan-node check for a specific document revision](docs/images/ingestion_quality.png)
+
+</td>
+</tr>
+<tr>
+<td width="50%" colspan="2">
+
+**Drop in a PDF, get a queryable graph.** Multiple files, concurrent submission, stable logical keys for versioning — same upload path whether it's one document or a batch.
+
+![Document ingestion — drag-and-drop PDF upload with versioning and job status](docs/images/document_ingestion.png)
+
+</td>
+</tr>
+</table>
 
 ## Why this is different
 
