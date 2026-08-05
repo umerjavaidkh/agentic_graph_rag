@@ -23,6 +23,7 @@ per-instance parser state or subclassing this method:
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 
 from ..document.ir import Block, DocumentIR, PageBlock
@@ -49,6 +50,14 @@ _BOX_LABEL = re.compile(
     r"^\s*Box\s+\d+(?:\.\d+)?(?:\s+\(continued\))?\s*$",
     re.I,
 )
+# "/s/ Jane Doe" -- the standard SEC/legal signature-block marker, not
+# specific to any one filer. A short, mostly-uppercase name line right
+# after this marker would otherwise pass the uppercase-ratio heading
+# heuristic below (only alphabetic chars count toward that ratio, so the
+# "/s/" itself contributes nothing) -- verified live: three officer names
+# on a 10-K certification page each became a spurious Section titled after
+# the officer, an entity mention misread as document structure.
+_SIGNATURE_LINE_RE = re.compile(r"^/s/\s")
 
 
 def _build_region_tags(
@@ -389,6 +398,7 @@ class Axis1StructuralBuilder:
             return heading_stack[-1][1]
 
         heading_font_threshold = self._heading_font_threshold(blocks)
+        blocks = self._split_merged_heading_blocks(blocks)
 
         for block in blocks:
             if block.extra.get("is_repeated_header"):
@@ -632,6 +642,15 @@ class Axis1StructuralBuilder:
         if block.extra.get("table_fragment"):
             return False
 
+        raw_lines = [ln.strip() for ln in block.text.splitlines() if ln.strip()]
+        text = " ".join(raw_lines)
+
+        # Signature-block veto, checked before every other signal (including
+        # rtldoc's own hint) so it can't be second-guessed -- a name is
+        # never a heading regardless of what else fires on it.
+        if _SIGNATURE_LINE_RE.match(text):
+            return False
+
         # rtldoc's own role classification, when this block actually came
         # from rtldoc (not a per-page PyMuPDF fallback, which carries no
         # such hint) -- trust a positive call outright, no re-derivation.
@@ -641,7 +660,6 @@ class Axis1StructuralBuilder:
         if block.source == "rtldoc" and block.extra.get("heading_hint") == "heading":
             return True
 
-        text = " ".join(ln.strip() for ln in block.text.splitlines() if ln.strip())
         if not (3 <= len(text) <= 160):
             return False
         if len(text.split()) > 18:
@@ -649,6 +667,24 @@ class Axis1StructuralBuilder:
         if _TABLE_OR_FIGURE.search(text) and len(text) > 80:
             return False
 
+        # NOTE: a real dotted-leader sub-TOC can leave stray page-number
+        # lines that join into an unrelated numbered fragment and get
+        # falsely parsed here (verified live on a real SEC 10-K: "35" /
+        # "Note 1" / "70" on three separate lines -> "35 Note 1 70" ->
+        # falsely parsed as numbered heading "35"). Tried gating this
+        # branch on "no bare-number continuation line" to close it, but
+        # every ordinary TOC-page entry block *also* ends in a bare page
+        # number by construction ("<title> <page>"), and a real two-line
+        # "<number>\n<title>" heading layout is extremely common outside
+        # TOC pages too (verified live: used dozens of times in another
+        # real document) -- there's no line-count/regex signal here that
+        # separates "stray TOC-leader contamination" from "genuine TOC
+        # entry" or "genuine two-line heading" without knowing whether this
+        # page IS a TOC page, which this heuristic doesn't have access to.
+        # Left as the original unrestricted match; the stray-page-number
+        # false positive is a known, low-impact, deferred issue (one noisy
+        # section title on a sub-TOC page) rather than risk breaking
+        # verified-correct structure elsewhere with an ungated fix.
         section_number, title = parse_numbered_title(text)
         if section_number and len(title) >= 2:
             return True
@@ -667,6 +703,71 @@ class Axis1StructuralBuilder:
         if not letters:
             return 0.0
         return sum(1 for ch in letters if ch.isupper()) / len(letters)
+
+    @staticmethod
+    def _leading_numbered_heading_split(block: Block) -> tuple[Block, Block] | None:
+        """Rescue a strong, unambiguous heading (Item N / dot-numbered) that
+        a backend's block segmentation merged onto the same block as its own
+        body text -- e.g. a body-sized, non-bold "Item 10. Directors,
+        Executive Officers..." line immediately followed by prose, which
+        _is_heading's whole-block word/length gate rejects outright before
+        parse_numbered_title ever runs against it (verified live on a real
+        SEC 10-K: the real Item 10 heading and executive-officer table were
+        never split out of the page's "Preamble" catch-all section because
+        of exactly this).
+
+        Only fires for the two strict syntactic patterns
+        (ITEM_HEADING/NUMBERED_HEADING) on the block's first line in
+        isolation, not the fuzzier font/uppercase/_COMMON_HEADING signals --
+        those need the whole-block brevity check to avoid false positives on
+        ordinary paragraphs that happen to start with a number.
+
+        Also requires the remainder (everything after the first line) to
+        read like genuine body prose (more than a dozen words), not just
+        "more than one line" -- a heading's own title routinely wraps onto
+        a second line by itself ("3 KEY ELEMENTS AND PRINCIPLES OF OUR\n
+        COMPLIANCE UNDERSTANDING" is one heading, not "3 KEY ELEMENTS..."
+        followed by a body paragraph called "COMPLIANCE UNDERSTANDING") --
+        verified live: an earlier version with no such guard split real
+        two-line heading titles in half, discarding the second half of the
+        title and turning it into its own spurious section instead. A
+        short trailing fragment reads as a title continuation; only a
+        long, prose-shaped remainder is the actual merged-body failure
+        mode this rescue targets.
+        """
+        if block.kind != "text" or block.low_confidence:
+            return None
+        lines = [ln.strip() for ln in block.text.splitlines() if ln.strip()]
+        if len(lines) < 2:
+            return None
+        first_line = lines[0]
+        if not (3 <= len(first_line) <= 160) or len(first_line.split()) > 18:
+            return None
+        section_number, title = parse_numbered_title(first_line)
+        if not (section_number and len(title) >= 2):
+            return None
+        if len(" ".join(lines[1:]).split()) <= 12:
+            return None
+        body = "\n".join(lines[1:]).strip()
+        if not body:
+            return None
+        heading_block = dataclasses.replace(block, text=first_line)
+        body_block = dataclasses.replace(block, text=body)
+        return heading_block, body_block
+
+    def _split_merged_heading_blocks(self, blocks: list[Block]) -> list[Block]:
+        """Pre-process pass: split any block whose first line is a strong
+        numbered/Item heading merged with trailing body text (see
+        `_leading_numbered_heading_split`) into two blocks, in place, before
+        heading detection runs over the list."""
+        expanded: list[Block] = []
+        for block in blocks:
+            split = self._leading_numbered_heading_split(block)
+            if split:
+                expanded.extend(split)
+            else:
+                expanded.append(block)
+        return expanded
 
     def _enrich_box_sections_from_pages(
         self,

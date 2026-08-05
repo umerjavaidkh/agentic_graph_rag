@@ -237,6 +237,160 @@ def test_pymupdf_sourced_block_falls_back_to_base_heading_heuristic():
     assert _is_heading(block, font_threshold=10.0, parser=parser) is True
 
 
+# ── signature-line veto and merged-heading rescue ─────────────────────────
+#
+# Regression: verified live on a real SEC 10-K, investigating why "Who are
+# the executive officers?" surfaced signature names instead of the real
+# Item 10 table:
+#   1. "/s/ MICHAEL K. WIRTH" (a certification-page signature line) passed
+#      the uppercase-ratio heuristic (only alpha chars count, so "/s/"
+#      contributes nothing to the ratio) and became a spurious Section
+#      titled after the officer -- an entity mention misread as structure.
+#   2. The real "Item 10. Directors, Executive Officers and Corporate
+#      Governance" heading, merged by block segmentation with its own
+#      trailing body text, blew past the word-count gate before
+#      parse_numbered_title ever ran against it -- silently swallowed into
+#      a generic "Preamble" section instead of becoming its own Section.
+#
+# A third bug found in the same investigation -- stray page-number remnants
+# from a dotted-leader sub-TOC, on three separate lines ("35" / "Note 1" /
+# "70"), space-joining into "35 Note 1 70" and getting falsely parsed as
+# numbered heading "35" -- was deliberately NOT fixed here. Every attempted
+# fix (gating on line count, gating on a trailing/continuation bare-number
+# line) also broke real, previously-correct structure on other documents:
+# a genuine two-line "<number>\n<title>" heading layout is common outside
+# TOC pages, and an ordinary TOC-page entry block *also* ends in a bare
+# page number by construction ("<title> <page>") -- there's no signal
+# available here that tells "stray TOC-leader contamination" apart from
+# "genuine TOC entry" without knowing whether this page IS a TOC page,
+# which this heuristic doesn't have. Left as a known, low-impact (one noisy
+# section title on a sub-TOC page), deferred issue rather than risk
+# breaking verified-correct structure elsewhere with an ungated fix.
+
+
+def test_signature_marker_line_is_never_a_heading():
+    from src.document.ir import Block
+
+    block = Block(text="/s/ MICHAEL K. WIRTH", page=121)
+    assert Axis1StructuralBuilder()._is_heading(block, font_threshold=999.0) is False
+
+
+def test_uppercase_heading_without_signature_marker_still_detected():
+    """Sanity check the fix targets the '/s/' marker specifically, not
+    all-caps text in general -- the uppercase-ratio branch must still work
+    for genuine headings."""
+    from src.document.ir import Block
+
+    block = Block(text="RISK FACTORS", page=1)
+    assert Axis1StructuralBuilder()._is_heading(block, font_threshold=999.0) is True
+
+
+def test_single_line_numbered_heading_still_detected():
+    from src.document.ir import Block
+
+    block = Block(text="4.5 Environmental Protection", page=1)
+    assert Axis1StructuralBuilder()._is_heading(block, font_threshold=999.0) is True
+
+
+def test_two_line_number_then_title_heading_still_detected():
+    """Regression: the number-alone-on-one-line, title-on-the-next-line
+    layout ("4.3.1\\nINSIDER TRADING") is a common real document pattern,
+    used dozens of times throughout one real ingested document -- an
+    earlier, overbroad version of the stray-page-number fix (blanket
+    single-line-only) silently broke every one of these into un-detected
+    body text."""
+    from src.document.ir import Block
+
+    block = Block(text="4.3.1\nINSIDER TRADING", page=7)
+    assert Axis1StructuralBuilder()._is_heading(block, font_threshold=999.0) is True
+
+
+def test_split_merged_heading_block_rescues_item_heading_from_body():
+    from src.document.ir import Block
+
+    block = Block(
+        text=(
+            "Item 10. Directors, Executive Officers and Corporate Governance\n"
+            "Information about our Executive Officers at February 24, 2026. "
+            "The Corporation's executive officers are shown in the table "
+            "below with their names, ages, and current and prior positions."
+        ),
+        page=64,
+    )
+    builder = Axis1StructuralBuilder()
+    # The merged block as a whole still correctly fails the base heuristic
+    # (too many words) -- the rescue is a separate, explicit step.
+    assert builder._is_heading(block, font_threshold=999.0) is False
+
+    split = builder._leading_numbered_heading_split(block)
+    assert split is not None
+    heading_block, body_block = split
+    assert heading_block.text == (
+        "Item 10. Directors, Executive Officers and Corporate Governance"
+    )
+    assert builder._is_heading(heading_block, font_threshold=999.0) is True
+    assert body_block.text.startswith("Information about our Executive Officers")
+
+
+def test_split_merged_heading_blocks_expands_list_in_place():
+    from src.document.ir import Block
+
+    long_body = (
+        "Information about our Executive Officers at February 24, 2026. "
+        "The Corporation's executive officers are shown in the table below."
+    )
+    blocks = [
+        Block(
+            text=f"Item 10. Directors, Executive Officers and Corporate Governance\n{long_body}",
+            page=64,
+        ),
+        Block(text="Ordinary short paragraph.", page=65),
+    ]
+    builder = Axis1StructuralBuilder()
+    expanded = builder._split_merged_heading_blocks(blocks)
+    assert len(expanded) == 3
+    assert expanded[0].text == "Item 10. Directors, Executive Officers and Corporate Governance"
+    assert expanded[1].text == long_body
+    assert expanded[2].text == "Ordinary short paragraph."
+
+
+def test_split_does_not_fire_on_single_line_blocks():
+    from src.document.ir import Block
+
+    block = Block(text="Item 1A. Risk Factors", page=1)
+    assert Axis1StructuralBuilder()._leading_numbered_heading_split(block) is None
+
+
+def test_split_does_not_fire_without_a_numbered_prefix():
+    from src.document.ir import Block
+
+    block = Block(
+        text="Some heading-like line\nwith a second line of body text.", page=1
+    )
+    assert Axis1StructuralBuilder()._leading_numbered_heading_split(block) is None
+
+
+def test_split_does_not_fire_when_second_line_is_a_wrapped_title_continuation():
+    """Regression: a heading's own title can wrap onto a second line by
+    itself ("3 KEY ELEMENTS AND PRINCIPLES OF OUR\\nCOMPLIANCE
+    UNDERSTANDING" is one heading, not a heading followed by a body
+    paragraph) -- verified live on a real document where an earlier,
+    unguarded version of this rescue split such a block in half, truncating
+    the real title and turning the wrapped remainder into its own spurious
+    section."""
+    from src.document.ir import Block
+
+    block = Block(
+        text="3 KEY ELEMENTS AND PRINCIPLES OF OUR\nCOMPLIANCE UNDERSTANDING",
+        page=5,
+    )
+    builder = Axis1StructuralBuilder()
+    assert builder._leading_numbered_heading_split(block) is None
+    # The whole block, joined, is still correctly detected as one heading
+    # with its full title intact.
+    assert builder._is_heading(block, font_threshold=999.0) is True
+
+
 # ── per-page fallback when rtldoc declines a page ────────────────────────
 
 

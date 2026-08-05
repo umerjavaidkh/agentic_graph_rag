@@ -19,7 +19,6 @@ from ....document.page_numbers import parse_page_number_from_query
 from ....document.page_vision import compact_visual_content
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
 from ....graph.tenancy import tenant_filter
-from ....storage.hydrator import get_hydrator
 from ..cypher_scope import _doc_scope_cypher
 from ..query_intent import FIG_CAPTION_RE as _FIG_CAPTION_RE
 from ..query_intent import is_page_question, is_visual_page_question
@@ -353,7 +352,6 @@ class PageStrategy:
               CASE WHEN $pdf_page IS NOT NULL AND p.pdf_page = $pdf_page THEN 0 ELSE 1 END,
               p.order
             LIMIT 1
-            OPTIONAL MATCH (p)-[:CONTAINS]->(r:Region)
             OPTIONAL MATCH (s:Section)-[:CONTAINS]->(p)
             RETURN
               p.id AS id,
@@ -363,16 +361,7 @@ class PageStrategy:
               p.pdf_page AS pdf_page,
               p.document_page AS document_page,
               coalesce(d.title, d.id) AS doc_title,
-              collect(DISTINCT {{
-                title: coalesce(r.title, ''),
-                text: coalesce(r.search_text, ''),
-                kind: coalesce(r.region_kind, '')
-              }}) AS regions,
-              collect(DISTINCT {{
-                title: coalesce(s.title, ''),
-                blob_key_text: s.blob_key_text,
-                search_text: coalesce(s.search_text, '')
-              }}) AS sections
+              collect(DISTINCT coalesce(s.title, '')) AS section_titles
             """,
             doc_id=doc_id,
             pdf_page=pdf_page,
@@ -395,19 +384,19 @@ class PageStrategy:
         if visual:
             parts.extend(["", "## Visual content (tables/figures)", visual])
 
-        hydrator = get_hydrator()
-        for sec in row.get("sections") or []:
-            if not sec or not sec.get("title"):
-                continue
-            body = hydrator.hydrate(sec.get("blob_key_text"), sec.get("search_text") or "").strip()
-            if body:
-                parts.extend(["", f"## Related section: {sec['title']}", body[:2500]])
-
-        for reg in row.get("regions") or []:
-            if not reg or not reg.get("text"):
-                continue
-            label = reg.get("title") or reg.get("kind") or "Region"
-            parts.extend(["", f"## Region: {label}", (reg.get("text") or "")[:1500]])
+        # Note which section(s) this page belongs to for orientation only --
+        # a section's own body is built by concatenating all of its child
+        # pages' text verbatim, so pulling the containing section's full
+        # hydrated body here always re-included this exact page's own
+        # content a second time, and its Region nodes (extracted from the
+        # same page, no vision-only content fetched by this query) added it
+        # a third -- verified live: the same table on a real 10-K page
+        # appeared in "## Page text", "## Related section", and "## Region"
+        # alike for one page-scoped answer. A title-only reference keeps the
+        # "what part of the document is this" context without repeating it.
+        section_titles = [t for t in (row.get("section_titles") or []) if t]
+        if section_titles:
+            parts.extend(["", "## Part of section(s)", ", ".join(section_titles)])
 
         page_text = "\n".join(parts).strip()
         if not page_text:
