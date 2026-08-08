@@ -36,13 +36,26 @@ def resolve_active_revision(session, logical_doc_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def list_ingested_documents(session, tenant_id: Optional[str] = None, limit: int = 200) -> list[dict]:
-    """Cheap listing for a UI picker: every logical document with an ACTIVE revision."""
+def list_ingested_documents(
+    session, tenant_id: Optional[str] = None, limit: int = 200, search: Optional[str] = None
+) -> list[dict]:
+    """Cheap listing for a UI picker: every logical document with an ACTIVE
+    revision. `search`, when given, filters to documents whose id, title, or
+    source filename contains it (case-insensitive) -- a flat dropdown with
+    hundreds of entries is unusable, so the picker is expected to query this
+    rather than list everything and filter client-side."""
     where = "rev.lifecycle_status = 'ACTIVE'"
     params: dict[str, Any] = {"limit": limit}
     if tenant_id:
         where += " AND rev.tenant_id = $tenant_id"
         params["tenant_id"] = tenant_id
+    if search:
+        where += (
+            " AND (toLower(rev.logical_doc_id) CONTAINS toLower($search)"
+            " OR toLower(coalesce(rev.title, '')) CONTAINS toLower($search)"
+            " OR toLower(coalesce(rev.source_filename, '')) CONTAINS toLower($search))"
+        )
+        params["search"] = search
     rows = session.run(
         f"""
         MATCH (rev:{DOC_REVISION_LABEL})

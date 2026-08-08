@@ -15,9 +15,22 @@ _SYNTHESIS_RE = re.compile(
 )
 
 _ENUMERATION_RE = re.compile(
-    r"\b(list\s+all|enumerate|name\s+all|distinct)\b",
+    r"\b(list\s+all|enumerate|name\s+all|distinct|what\s+are\s+all|"
+    r"which\s+(?:\w+\s+){0,3}?(?:examples|sections|pages|items|cases|instances)\b|"
+    r"all\s+(?:the\s+)?(?:examples|sections|instances|cases))\b",
     re.I,
 )
+# "Which worked examples apply the standard-error formula" reads exactly
+# like "which section discusses X" in surface form, but wants ALL matching
+# instances, not the single best one -- the plural noun after "which" is
+# the signal (a document-agnostic heuristic, not tied to "worked example"
+# specifically). Verified live: this phrasing previously fell through to
+# is_enumeration_question's original literal "list all/enumerate/name
+# all/distinct" set entirely, so full_hybrid.py's existing fetch_limit
+# bump for enumeration questions (see retrieve()) never activated, and
+# only 1 of 3 structurally-parallel "Worked Example N" sections survived
+# ranking into the final top-8 context -- not a ranking bug in the
+# individual scores, just this detector never firing for the phrasing.
 
 # "What does this document/chapter discuss overall" — deliberately separate
 # from _SYNTHESIS_RE (which is tuned for compare/contrast/structural-map

@@ -30,6 +30,7 @@ Design principles:
 import difflib
 import json
 import itertools
+import math
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -38,6 +39,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from ..config.settings import (
+    AXIS2_GROUND_LLM_EDGES,
     AXIS2_LLM_PAIR_CONCURRENCY,
     AXIS2_MAX_LLM_PAIRS,
     AXIS2_MAX_SIMILARITY_EDGES_PER_NODE,
@@ -57,7 +59,6 @@ from ..models import DKGNode, DKGEdge, EdgeConfidenceTier, NodeType, RelType
 # ─────────────────────────────────────────
 SIMILARITY_THRESHOLD   = 0.75   # cosine sim for SEMANTICALLY_SIMILAR
 CONTRADICTION_THRESH   = 0.85   # only run LLM on very similar pairs
-N_CLUSTERS             = None   # None = auto (sqrt of chapter count)
 # SAME_CATEGORY has no per-pair score (cluster co-membership alone doesn't
 # confirm two specific members are strongly related) — AMBIGUOUS, flat score.
 SAME_CATEGORY_CONFIDENCE = 0.5
@@ -156,8 +157,41 @@ _ENTITY_PREFIX_LEN = 4
 # corpus size, same spirit as this file's other degree/count caps.
 _ENTITY_FUZZY_CLUSTER_MAX_VOCAB = 3000
 
+# Deterministic substring check used by _is_entity_grounded -- entity text
+# is normalized the same whitespace-collapsing way as canonicalization
+# before comparing against the source text.
+_WS_RE_GROUND = _WS_RE_ENTITY
 
-def _canonicalize_entities(all_entities: set[str]) -> dict[str, str]:
+
+def _is_entity_grounded(entity: str, source_text: str) -> bool:
+    """A NER-extracted entity must actually occur in the text it was
+    extracted from -- a deterministic substring check, not another model
+    call, so it costs nothing and catches outright hallucination (an
+    entity invented from the model's own training-data knowledge rather
+    than read off the page) with certainty instead of another probabilistic
+    estimate stacked on top of the first one.
+
+    Corporate-suffix-stripped fallback reuses the exact normalization
+    _canonicalize_entities applies for merging, so a legitimate surface
+    variant ("Pfizer Inc." extracted from text that only spells out
+    "Pfizer") isn't punished here for a difference canonicalization would
+    merge away anyway -- grounding and canonicalization should agree on
+    what counts as "the same entity", not apply two different notions of
+    equivalence.
+    """
+    norm_entity = _WS_RE_GROUND.sub(" ", (entity or "")).strip().lower()
+    norm_text = _WS_RE_GROUND.sub(" ", (source_text or "")).strip().lower()
+    if not norm_entity:
+        return False
+    if norm_entity in norm_text:
+        return True
+    stripped = _CORP_SUFFIX_RE.sub("", norm_entity).strip()
+    return bool(stripped) and stripped in norm_text
+
+
+def _canonicalize_entities(
+    all_entities: set[str], entity_types: Optional[dict[str, str]] = None
+) -> dict[str, str]:
     """
     Map each raw (already-lowercased) entity string to a single canonical
     form, so SHARES_ENTITY edge-building isn't fragmented by surface-text
@@ -170,68 +204,94 @@ def _canonicalize_entities(all_entities: set[str]) -> dict[str, str]:
     validated by threshold/length-gap tuning, not by hardcoding entity
     names, so it generalizes to any corpus.
 
-    Only compares strings within the same first-N-character prefix bucket.
-    A plain length-sorted scan is still O(k^2) in practice for natural-
-    language vocabulary: word lengths cluster too tightly for a length gap
-    to prune much (verified: 1,200 physics-textbook-scale entity strings
-    took 5+ seconds, and this only gets worse per document since entity
-    vocabulary grows with corpus size — the same class of blowup this file
-    already fixes elsewhere via degree-capping). Near-duplicates (typos,
-    possessive/plural variants) overwhelmingly share a prefix, so bucketing
-    by it keeps same-cluster comparisons intact while cutting cross-bucket
-    ones entirely — trades recall on prefix-diverging aliases (e.g. "isaac
-    newton" vs "newton") for bounded, near-linear cost at any corpus size.
+    `entity_types` (optional): entity string -> NER type (e.g. "ORG",
+    "CONCEPT"), when the caller has it. Entities are only ever clustered
+    *within* the same type -- an identical surface string tagged with two
+    different types ("Apple" as ORG in one node, "apple" as CONCEPT in
+    another) is never merged, however similar the strings look, since
+    conflating those is exactly the "fruit vs. company" failure mode
+    typed entities exist to prevent. Entities missing from `entity_types`
+    (or when the whole argument is omitted, e.g. from an older ingestion
+    run before typed NER existed) fall into one shared "untyped" bucket,
+    identical to this function's behavior before this parameter existed.
+
+    Only compares strings within the same (type, first-N-character-prefix)
+    bucket. A plain length-sorted scan is still O(k^2) in practice for
+    natural-language vocabulary: word lengths cluster too tightly for a
+    length gap to prune much (verified: 1,200 physics-textbook-scale
+    entity strings took 5+ seconds, and this only gets worse per document
+    since entity vocabulary grows with corpus size — the same class of
+    blowup this file already fixes elsewhere via degree-capping).
+    Near-duplicates (typos, possessive/plural variants) overwhelmingly
+    share a prefix, so bucketing by it keeps same-cluster comparisons
+    intact while cutting cross-bucket ones entirely — trades recall on
+    prefix-diverging aliases (e.g. "isaac newton" vs "newton") for
+    bounded, near-linear cost at any corpus size.
     """
+    entity_types = entity_types or {}
     if len(all_entities) < 2:
         return {e: e for e in all_entities}
 
-    normalized: dict[str, str] = {}
+    # namespaced key = (type, normalized_base_text) -- type is part of
+    # cluster identity from here on, so bucketing/fuzzy-matching below
+    # naturally never crosses a type boundary (different types produce
+    # different bucket keys even for the identical base text).
+    namespaced_of: dict[str, tuple[str, str]] = {}
     for e in all_entities:
         key = _WS_RE_ENTITY.sub(" ", _POSSESSIVE_RE.sub("", e)).strip()
         key = _CORP_SUFFIX_RE.sub("", key).strip()
-        normalized[e] = key or e
+        base = key or e
+        namespaced_of[e] = (entity_types.get(e, ""), base)
 
-    keys = sorted(set(normalized.values()))
+    keys = sorted(set(namespaced_of.values()))
     parent = {k: k for k in keys}
 
-    def find(x: str) -> str:
+    def find(x: tuple[str, str]) -> tuple[str, str]:
         while parent[x] != x:
             parent[x] = parent[parent[x]]
             x = parent[x]
         return x
 
-    def union(a: str, b: str) -> None:
+    def union(a: tuple[str, str], b: tuple[str, str]) -> None:
         ra, rb = find(a), find(b)
         if ra != rb:
             parent[ra] = rb
 
     if len(keys) <= _ENTITY_FUZZY_CLUSTER_MAX_VOCAB:
-        buckets: dict[str, list[str]] = {}
-        for k in keys:
-            buckets.setdefault(k[:_ENTITY_PREFIX_LEN], []).append(k)
+        buckets: dict[tuple[str, str], list[tuple[str, str]]] = {}
+        for etype, base in keys:
+            buckets.setdefault((etype, base[:_ENTITY_PREFIX_LEN]), []).append((etype, base))
 
         for bucket_keys in buckets.values():
-            bucket_keys.sort(key=len)
+            bucket_keys.sort(key=lambda k: len(k[1]))
             for i, a in enumerate(bucket_keys):
                 for b in bucket_keys[i + 1:]:
-                    if len(b) - len(a) > _ENTITY_MAX_LEN_DIFF:
+                    if len(b[1]) - len(a[1]) > _ENTITY_MAX_LEN_DIFF:
                         break
-                    if difflib.SequenceMatcher(None, a, b).ratio() >= _ENTITY_SIMILARITY_THRESHOLD:
+                    if difflib.SequenceMatcher(None, a[1], b[1]).ratio() >= _ENTITY_SIMILARITY_THRESHOLD:
                         union(a, b)
 
-    cluster_members: dict[str, list[str]] = {}
+    cluster_members: dict[tuple[str, str], list[tuple[str, str]]] = {}
     for k in keys:
         cluster_members.setdefault(find(k), []).append(k)
 
-    # Canonical representative = the longest surface form in the cluster
-    # (a fuller name is more informative to read back in edge.properties
-    # than an abbreviation it absorbed).
-    key_to_canonical = {
-        member: max(members, key=len)
+    def _display(k: tuple[str, str]) -> str:
+        # Canonical representative = the longest surface form in the
+        # cluster (a fuller name is more informative to read back in
+        # edge.properties than an abbreviation it absorbed). Type suffix
+        # keeps two same-text-different-type canonical forms distinct as
+        # dict values (both display as "apple" otherwise, which would
+        # silently re-merge them the moment a caller groups edges by this
+        # string) and doubles as a transparency win in shared_entities.
+        etype, base = k
+        return f"{base} ({etype})" if etype else base
+
+    key_to_canonical: dict[tuple[str, str], str] = {
+        member: _display(max(members, key=lambda k: len(k[1])))
         for members in cluster_members.values()
         for member in members
     }
-    return {e: key_to_canonical[normalized[e]] for e in all_entities}
+    return {e: key_to_canonical[namespaced_of[e]] for e in all_entities}
 
 
 # Below this many entity-bearing nodes, a document-frequency ratio isn't a
@@ -249,7 +309,45 @@ _ENTITY_GENERICITY_MIN_NODES = 5
 # already used for lexical ranking (document_resolver.py's IDF-weighted
 # term scoring, LexicalService's IDF keyword ranking) -- applied here to
 # which entities may anchor an edge, not to retrieval scoring.
-_ENTITY_GENERICITY_DF_RATIO = 0.40
+#
+# The ratio itself is NOT flat -- it's the FLOOR of an adaptive curve (see
+# _adaptive_genericity_ratio below). A flat 40% cutoff was tuned against a
+# large, multi-topic SEC filing (hundreds of entity-bearing nodes), where a
+# term above 40% document frequency really is generic filler ("the
+# Company", the filer's own name) -- there's enough unrelated content
+# diluting the corpus that a term touching almost everything can't be the
+# real subject of any specific pair. Verified live on the opposite case: a
+# short, single-topic tutorial (~20 entity-bearing nodes) has its own core
+# subject ("sample mean", 70% document frequency) hit the SAME flat cutoff
+# and get excluded from anchoring any edge -- the summary section
+# discussing that subject then failed to connect to the sections it was
+# actually summarizing. On a small corpus there's much less unrelated
+# content to dilute a real subject's frequency, so high document frequency
+# is far weaker evidence of genericity than on a large one.
+_ENTITY_GENERICITY_DF_RATIO = 0.40  # floor: converges here as corpus size grows
+_ENTITY_GENERICITY_DF_RATIO_CEILING = 0.85  # cap: small-corpus permissiveness
+# Controls how fast the ratio decays from the ceiling toward the floor as
+# total_entity_nodes grows -- chosen so a ~20-node corpus (this file's
+# motivating case) stays comfortably permissive (~75%, safely above the
+# 70% document frequency that triggered this) while a ~200-node corpus
+# (real SEC-filing scale) has decayed back to within ~0.04 of the original
+# validated 40% floor, preserving that regression's protection at the
+# scale it was actually measured on.
+_ENTITY_GENERICITY_DECAY_NODES = 80
+
+
+def _adaptive_genericity_ratio(total_entity_nodes: int) -> float:
+    """Document-frequency cutoff above which an entity is "too generic" to
+    anchor an edge, scaled by corpus size: permissive (near the ceiling)
+    for a small corpus, decaying toward the floor as the corpus grows.
+    Exponential decay, not linear -- most of the drop happens over the
+    first ~1-2 decay constants (small/medium documents, where the true
+    corpus-size-vs-genericity relationship is least certain and this
+    function's shape matters most), then flattens out approaching the
+    floor for large documents rather than continuing to fall indefinitely.
+    """
+    decay = math.exp(-total_entity_nodes / _ENTITY_GENERICITY_DECAY_NODES)
+    return _ENTITY_GENERICITY_DF_RATIO + (_ENTITY_GENERICITY_DF_RATIO_CEILING - _ENTITY_GENERICITY_DF_RATIO) * decay
 
 
 def _informative_entities(entity_to_nodes: dict[str, list[int]], total_entity_nodes: int) -> set[str]:
@@ -257,8 +355,53 @@ def _informative_entities(entity_to_nodes: dict[str, list[int]], total_entity_no
     SHARES_ENTITY edge within this document. See constants above for why."""
     if total_entity_nodes < _ENTITY_GENERICITY_MIN_NODES:
         return set(entity_to_nodes.keys())
-    max_df = max(1, int(total_entity_nodes * _ENTITY_GENERICITY_DF_RATIO))
+    ratio = _adaptive_genericity_ratio(total_entity_nodes)
+    max_df = max(1, int(total_entity_nodes * ratio))
     return {e for e, idxs in entity_to_nodes.items() if len(idxs) <= max_df}
+
+
+def _resolve_canonical_entities(nodes: list[DKGNode]) -> dict[Tuple[str, str], str]:
+    """Canonical entity text for each (node_id, lowercased_entity_text)
+    occurrence, resolved using THAT occurrence's own NER type
+    (node.entity_types) -- not a single corpus-wide type per string, which
+    cannot represent "the same spelling means two different things in two
+    different nodes" at all (a plain text->type dict has exactly one type
+    per key; a real conflict would just silently pick whichever node's
+    type was written last, `_canonicalize_entities` would then place the
+    other node's mentions under the wrong type, and the whole point of
+    typing entities -- catching "Apple" the ORG merging with "apple" the
+    CONCEPT -- would quietly not work).
+
+    Fixed by splitting the corpus's entity vocabulary into one bucket per
+    type actually seen (untyped mentions share one "" bucket, same as
+    before per-occurrence typing existed) and canonicalizing each bucket
+    with a separate, independent call to _canonicalize_entities. Because
+    each call only ever sees one type's vocabulary, there is no code path
+    by which an ORG-typed and a CONCEPT-typed mention of the identical
+    string can be compared to each other, let alone merged -- not "less
+    likely to merge", structurally incapable of it.
+    """
+    by_type: dict[str, set[str]] = {}
+    for node in nodes:
+        for e in node.entities:
+            text = e.lower()
+            etype = (node.entity_types or {}).get(text, "")
+            by_type.setdefault(etype, set()).add(text)
+
+    canonical_by_type = {etype: _canonicalize_entities(texts) for etype, texts in by_type.items()}
+
+    result: dict[Tuple[str, str], str] = {}
+    for node in nodes:
+        for e in node.entities:
+            text = e.lower()
+            etype = (node.entity_types or {}).get(text, "")
+            base = canonical_by_type[etype][text]
+            # Type suffix keeps two same-text-different-type canonical
+            # forms distinct as dict values -- both would otherwise
+            # display as the same bare string, which would silently
+            # re-merge them the moment a caller groups edges by it.
+            result[(node.id, text)] = f"{base} ({etype})" if etype else base
+    return result
 
 
 # ─────────────────────────────────────────
@@ -339,6 +482,14 @@ class Axis2Builder:
     # ─────────────────────────────────────────
     # 2. ENTITY EXTRACTION — parallel NER
     # ─────────────────────────────────────────
+    # Fixed, small taxonomy -- enough to separate "Apple the company" from
+    # "apple the fruit"-shaped ambiguity (ORG vs CONCEPT/PRODUCT) without
+    # asking the model to invent an open-ended type vocabulary, which would
+    # make _canonicalize_entities's type-bucketing unstable across batches
+    # (the same real entity getting a different type spelling in two
+    # different batches would defeat the whole point of typing it).
+    _ENTITY_TYPES = ("PERSON", "ORG", "LOCATION", "PRODUCT", "CONCEPT", "METRIC", "DATE", "OTHER")
+
     def _extract_entities(self, nodes: list[DKGNode]) -> list[DKGNode]:
         """
         Uses LLM for NER in parallel (bounded by AXIS2_NER_CONCURRENCY),
@@ -347,6 +498,17 @@ class Axis2Builder:
         one-call-per-node burns API request quota proportional to node
         count with no way to bound it. Returns top-10 entities per node to
         keep it manageable.
+
+        Two additional layers beyond the raw LLM response:
+          - grounding: an entity that doesn't actually occur (verbatim or
+            corp-suffix-normalized) in the excerpt it was supposedly found
+            in is dropped -- a deterministic check, not another model call,
+            so it catches outright hallucination for free.
+          - typing: each entity is tagged with a coarse type (see
+            _ENTITY_TYPES), stored on node.entity_types (additive, keyed by
+            lowercased entity text) so downstream canonicalization can tell
+            "Apple" the ORG apart from "apple" the CONCEPT instead of
+            merging same-looking strings from different real-world things.
         """
         if not self.client:
             return nodes
@@ -357,8 +519,9 @@ class Axis2Builder:
 
         batch_size = max(1, AXIS2_NER_BATCH_SIZE)
         batches = [targets[i:i + batch_size] for i in range(0, len(targets), batch_size)]
+        type_choices = " | ".join(self._ENTITY_TYPES)
 
-        def _ner_batch(batch: list[DKGNode]) -> dict[str, list]:
+        def _ner_batch(batch: list[DKGNode]) -> tuple[dict[str, list], dict[str, dict[str, str]]]:
             # Excerpts are keyed by a short local index ("0", "1", ...), not
             # the node's own (long) id -- cheaper in tokens and avoids the
             # model mangling a complex id string as a JSON key. Mapped back
@@ -376,11 +539,16 @@ class Axis2Builder:
                                 "You will be given several numbered text excerpts, "
                                 "each marked [N]. For EACH excerpt, extract its top "
                                 "10 named entities (people, organizations, concepts, "
-                                "theories, technical terms). Return ONLY a JSON "
-                                "object mapping each excerpt's number (as a string) "
-                                "to its array of entity strings, e.g. "
-                                '{"0": [...], "1": [...]}. Include every excerpt '
-                                "number, even if its array is empty. No explanation."
+                                "theories, technical terms) THAT LITERALLY APPEAR IN "
+                                "THE TEXT -- do not use outside knowledge to add "
+                                f"entities not present in the excerpt. Type each "
+                                f"entity as one of: {type_choices}. Return ONLY a "
+                                "JSON object mapping each excerpt's number (as a "
+                                'string) to an array of {"text": ..., "type": ...} '
+                                'objects, e.g. {"0": [{"text": "Isaac Newton", '
+                                '"type": "PERSON"}], "1": [...]}. Include every '
+                                "excerpt number, even if its array is empty. No "
+                                "explanation."
                             ),
                         },
                         {"role": "user", "content": user_content},
@@ -393,11 +561,35 @@ class Axis2Builder:
             except Exception:
                 parsed = {}
 
-            result: dict[str, list] = {}
+            entities_result: dict[str, list] = {}
+            types_result: dict[str, dict[str, str]] = {}
             for i, node in enumerate(batch):
-                entities = parsed.get(str(i)) if isinstance(parsed, dict) else None
-                result[node.id] = entities if isinstance(entities, list) else []
-            return result
+                raw_items = parsed.get(str(i)) if isinstance(parsed, dict) else None
+                raw_items = raw_items if isinstance(raw_items, list) else []
+
+                texts: list[str] = []
+                node_types: dict[str, str] = {}
+                for item in raw_items:
+                    if isinstance(item, dict):
+                        text, etype = item.get("text"), item.get("type")
+                    elif isinstance(item, str):
+                        # Tolerate a model that ignores the typed-format
+                        # instruction and returns a flat string -- still
+                        # grounded and kept, just without a type.
+                        text, etype = item, None
+                    else:
+                        continue
+                    if not isinstance(text, str) or not text.strip():
+                        continue
+                    if not _is_entity_grounded(text, node.text):
+                        continue
+                    texts.append(text)
+                    if isinstance(etype, str) and etype.strip():
+                        node_types[text.lower()] = etype.strip().upper()
+
+                entities_result[node.id] = texts
+                types_result[node.id] = node_types
+            return entities_result, types_result
 
         id_to_node = {n.id: n for n in targets}
 
@@ -405,12 +597,15 @@ class Axis2Builder:
             futures = [pool.submit(_ner_batch, batch) for batch in batches]
             for fut in as_completed(futures):
                 try:
-                    batch_result = fut.result()
+                    batch_entities, batch_types = fut.result()
                 except Exception:
                     continue
-                for node_id, entities in batch_result.items():
+                for node_id, entities in batch_entities.items():
                     if node_id in id_to_node:
                         id_to_node[node_id].entities = entities
+                for node_id, etypes in batch_types.items():
+                    if node_id in id_to_node:
+                        id_to_node[node_id].entity_types = etypes
 
         return nodes
 
@@ -471,15 +666,16 @@ class Axis2Builder:
         # Canonicalize surface-text variants of the same entity ("newton"
         # vs "newton's laws" vs "sir isaac newton") before grouping, so they
         # count as one shared entity instead of silently never matching each
-        # other. See _canonicalize_entities for why this is corpus-vocabulary
-        # driven, not hardcoded to any document.
-        raw_entities = {e.lower() for node in entity_nodes for e in node.entities}
-        canonical = _canonicalize_entities(raw_entities)
+        # other. Resolved per-occurrence (see _resolve_canonical_entities)
+        # so a string tagged with two different types across nodes ("Apple"
+        # ORG vs "apple" CONCEPT) is never merged just because the spelling
+        # matches.
+        canonical = _resolve_canonical_entities(entity_nodes)
 
         entity_to_nodes: dict[str, list[int]] = {}
         node_entity_sets: list[set] = []
         for idx, node in enumerate(entity_nodes):
-            ents = set(canonical[e.lower()] for e in node.entities)
+            ents = {canonical[(node.id, e.lower())] for e in node.entities}
             node_entity_sets.append(ents)
             for e in ents:
                 entity_to_nodes.setdefault(e, []).append(idx)
@@ -540,7 +736,7 @@ class Axis2Builder:
     def _build_category_edges(
         self, nodes: list[DKGNode]
     ) -> tuple[list[DKGNode], list[DKGEdge]]:
-        from sklearn.cluster import KMeans
+        import hdbscan
 
         edges: list[DKGEdge] = []
 
@@ -570,9 +766,8 @@ class Axis2Builder:
         # legitimate case (verified via
         # test_same_category_uses_entity_signal_when_entities_available).
         target_nodes = [n for n in nodes if n.entities]
-        raw_entities = {e.lower() for n in target_nodes for e in n.entities}
-        canonical = _canonicalize_entities(raw_entities) if raw_entities else {}
-        vocab = sorted({canonical[e.lower()] for n in target_nodes for e in n.entities})
+        canonical = _resolve_canonical_entities(target_nodes)
+        vocab = sorted({canonical[(n.id, e.lower())] for n in target_nodes for e in n.entities})
         signal = "entity_cooccurrence"
         if len(target_nodes) < 3 or len(vocab) < 2:
             target_nodes = [n for n in nodes if n.embedding is not None]
@@ -586,7 +781,7 @@ class Axis2Builder:
             raw = np.zeros((len(target_nodes), len(vocab)), dtype=np.float32)
             doc_freq = np.zeros(len(vocab), dtype=np.float32)
             for row, node in enumerate(target_nodes):
-                touched = {vocab_index[canonical[e.lower()]] for e in node.entities}
+                touched = {vocab_index[canonical[(node.id, e.lower())]] for e in node.entities}
                 for idx in touched:
                     raw[row, idx] += 1
                     doc_freq[idx] += 1
@@ -620,30 +815,49 @@ class Axis2Builder:
         else:
             vecs = np.array([n.embedding for n in target_nodes], dtype=np.float32)
 
-        # Auto k: sqrt of node count, min 2 max 10
-        k = N_CLUSTERS or max(2, min(10, int(len(target_nodes) ** 0.5)))
-        km = KMeans(n_clusters=k, random_state=42, n_init="auto")
-        labels = km.fit_predict(vecs)
+        # Density-based, not a fixed k: a fixed cluster COUNT (the previous
+        # KMeans approach) forces every node into some cluster regardless
+        # of whether the data actually separates that way. Verified live
+        # on a real ~20-entity-bearing-node document: KMeans dumped 19 of
+        # them into one dominant cluster (78 of the resulting 84
+        # SAME_CATEGORY edges), and the sampled LLM-judge audit then
+        # flagged exactly those edges as "not meaningfully connected" --
+        # measured evidence, not a hypothetical, that forcing weakly-
+        # related nodes together produces edges the rest of the pipeline
+        # already independently identifies as low-quality. HDBSCAN leaves
+        # a node with no real category home labeled -1 ("noise") instead
+        # of nearest-clustering it anyway, so a genuine gap in the data
+        # produces no edge rather than a bad one. Euclidean distance over
+        # L2-normalized vectors is monotonic with cosine distance, so
+        # clustering runs on the same geometry the top-k intra-cluster
+        # step below already uses (computed once, here, and reused).
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        unit_vecs = vecs / (norms + 1e-10)
+        min_cluster_size = max(2, min(5, len(target_nodes) // 4))
+        clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size, metric="euclidean")
+        labels = clusterer.fit_predict(unit_vecs)
 
         for node, label in zip(target_nodes, labels):
             node.cluster_id = int(label)
 
-        # Cluster count is capped at 10 regardless of corpus size (above),
-        # so cluster SIZE grows with the corpus instead of staying flat --
-        # connecting every pair within a cluster (the previous behavior)
-        # then grows quadratically with cluster size. This is what actually
-        # produced 2.17M edges for a 7,165-node document: 10 clusters ->
-        # ~716 members each -> C(716,2) * 10 ≈ 2.56M, dwarfing the other two
-        # edge builders combined. Fixed the same way as SEMANTICALLY_SIMILAR:
-        # cap each node to its top-k most-similar members of its OWN
-        # cluster, computed on a per-cluster similarity submatrix (cheap --
-        # clusters are far smaller than the full corpus).
+        # Same degree-capping reasoning as SEMANTICALLY_SIMILAR: connecting
+        # every pair within a cluster grows quadratically with cluster
+        # size (this is what produced 2.17M edges for a 7,165-node
+        # document under the old fixed-cluster-count approach -- capped
+        # cluster count meant cluster SIZE grew with corpus size instead
+        # of staying flat). Cap each node to its top-k most-similar
+        # members of its OWN cluster, on a per-cluster similarity
+        # submatrix (cheap -- clusters are far smaller than the full
+        # corpus). label -1 (HDBSCAN's "noise", not a real cluster) is
+        # excluded entirely -- those nodes get no SAME_CATEGORY edges,
+        # which is the correct outcome for a node with no confident
+        # category, not a gap to paper over.
         clusters: dict[int, list[int]] = {}  # cluster_id -> indices into target_nodes
         for idx, node in enumerate(target_nodes):
+            if node.cluster_id == -1:
+                continue
             clusters.setdefault(node.cluster_id, []).append(idx)
 
-        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        unit_vecs = vecs / (norms + 1e-10)
         cap = AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
         seen: set[Tuple[int, int]] = set()
 
@@ -671,6 +885,59 @@ class Axis2Builder:
                 ))
 
         return nodes, edges
+
+    # ─────────────────────────────────────────
+    # 5b. INDEPENDENT GROUNDING for LLM-judged edges
+    # ─────────────────────────────────────────
+    _REL_GROUNDING_DESCRIPTION = {
+        RelType.ELABORATES: "Passage A elaborates on / adds meaningful detail to something in Passage B",
+        RelType.CONTRADICTS: "Passage A states something that directly contradicts / is inconsistent with Passage B",
+        RelType.PREREQUISITE_OF: "understanding Passage A is a genuine prerequisite for understanding Passage B",
+    }
+
+    _GROUNDING_PROMPT = """You are independently auditing a claimed relationship between two passages. \
+Do not assume the claim is correct -- your job is to catch it if it is NOT.
+
+Passage A ({id_a}):
+{text_a}
+
+Passage B ({id_b}):
+{text_b}
+
+Claim being audited: {claim}
+
+Based ONLY on the text above (ignore any framing in this prompt beyond the \
+passages themselves), is this relationship specifically and genuinely \
+supported? A vague topical overlap between the two passages is NOT enough \
+on its own. Answer strictly as JSON: {{"grounded": true/false, "confidence": 0.0-1.0}}"""
+
+    def _ground_edge(self, rel_type: RelType, src_node: DKGNode, tgt_node: DKGNode) -> tuple[bool, float]:
+        """Second, independent LLM call verifying a CONTRADICTS/ELABORATES/
+        PREREQUISITE_OF claim against the two passages alone -- deliberately
+        does NOT see the first call's stated "reason", so it can't just
+        agree with reasoning it was handed rather than checking the text
+        itself. Fails closed (not grounded) on any parse/provider error,
+        same posture as ontology_validation.score_axis2_idea_linking's
+        audit -- an ungrounded-by-default edge is the safe failure mode,
+        not a silently-kept one."""
+        claim = self._REL_GROUNDING_DESCRIPTION.get(rel_type, str(rel_type))
+        try:
+            resp = self.client.chat_completion(
+                model=AXIS2_MODEL,
+                temperature=0,
+                messages=[{"role": "user", "content": self._GROUNDING_PROMPT.format(
+                    id_a=src_node.id, text_a=src_node.text[:1500],
+                    id_b=tgt_node.id, text_b=tgt_node.text[:1500],
+                    claim=claim,
+                )}],
+                max_tokens=AXIS2_RELATION_MAX_TOKENS,
+            )
+            raw = resp.choices[0].message.content.strip()
+            raw = raw.replace("```json", "").replace("```", "").strip()
+            data = json.loads(raw)
+            return bool(data.get("grounded", False)), float(data.get("confidence", 0.0) or 0.0)
+        except Exception:
+            return False, 0.0
 
     # ─────────────────────────────────────────
     # 6. LLM PASS — CONTRADICTS / ELABORATES / PREREQUISITE_OF (parallel)
@@ -776,7 +1043,7 @@ Determine the relationship. Return ONLY valid JSON:
                         if data["direction"] in ("A_TO_B", "SYMMETRIC")
                         else (b.id, a.id)
                     )
-                    return DKGEdge(
+                    edge = DKGEdge(
                         source_id  = src,
                         target_id  = tgt,
                         rel_type   = rel,
@@ -786,6 +1053,14 @@ Determine the relationship. Return ONLY valid JSON:
                         confidence = data["confidence"],
                         confidence_tier = EdgeConfidenceTier.INFERRED,
                     )
+                    if AXIS2_GROUND_LLM_EDGES:
+                        src_node, tgt_node = (a, b) if src == a.id else (b, a)
+                        grounded, grounding_confidence = self._ground_edge(rel, src_node, tgt_node)
+                        edge.properties["grounding_checked"] = True
+                        edge.properties["grounding_confidence"] = round(grounding_confidence, 4)
+                        if not grounded:
+                            return None
+                    return edge
             except Exception:
                 pass
             return None

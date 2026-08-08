@@ -11,6 +11,7 @@ ENV PYTHONUNBUFFERED=1 \
     ENABLE_PDF_INGEST=true
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     curl \
     git \
     libgl1 \

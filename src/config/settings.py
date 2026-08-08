@@ -270,6 +270,19 @@ AXIS2_LLM_PAIR_CONCURRENCY = int(os.environ.get("AXIS2_LLM_PAIR_CONCURRENCY", "6
 # Pairs are ranked by embedding similarity; only the top-k are sent to the LLM.
 AXIS2_MAX_LLM_PAIRS = int(os.environ.get("AXIS2_MAX_LLM_PAIRS", "300"))
 
+# Axis 2 — independently re-verify each CONTRADICTS/ELABORATES/PREREQUISITE_OF
+# edge with a second, separate LLM call before keeping it, instead of trusting
+# the same generation's self-reported `confidence` as the only signal (that
+# call already "wants" to find a relationship -- it was prompted to name one).
+# A second call given only the two texts and the claimed relationship type,
+# with no visibility into the first call's stated reason, is a cheap
+# independent check without adding a new model dependency. Doubles LLM calls
+# for this edge type specifically -- already the expensive, opt-in
+# (run_llm_pass=True) path, so the added cost is proportional to a cost
+# that was already being paid on purpose. Off switch provided since it's a
+# real added cost, not because grounding is ever wrong to want.
+AXIS2_GROUND_LLM_EDGES = os.environ.get("AXIS2_GROUND_LLM_EDGES", "true").lower() in ("1", "true", "yes")
+
 # Axis 2 — max SEMANTICALLY_SIMILAR / SAME_CATEGORY edges per node (a kNN cap,
 # not a flat similarity threshold alone). Without this, both edge builders
 # scale with corpus size in a way that blows up fast: SEMANTICALLY_SIMILAR

@@ -78,11 +78,14 @@ for _n in ["langgraph", "langgraph.graph"]:
     if _n not in sys.modules:
         _stub_module(_n)
 
-# --- sklearn stubs ---
+# --- sklearn / hdbscan stubs ---
 for _n in ["sklearn", "sklearn.cluster"]:
     if _n not in sys.modules:
         _stub_module(_n)
 sys.modules["sklearn.cluster"].KMeans = MagicMock()
+if "hdbscan" not in sys.modules:
+    _stub_module("hdbscan")
+sys.modules["hdbscan"].HDBSCAN = MagicMock()
 
 # --- model_providers stubs ---
 for _n in [
@@ -127,12 +130,18 @@ for _n in [
     "src.document.parser_registry",
     "src.document.page_vision",
     "src.document.graph_snapshot",
+    "src.document.page_report",
+    "src.document.page_validation",
 ]:
     _stub_module(_n)
 sys.modules["src.document.parser_base"].DocumentParser = object
 sys.modules["src.document.graph_snapshot"].X1_STAGE = "x1_structural"
 sys.modules["src.document.graph_snapshot"].X2_STAGE = "x2_semantic"
 sys.modules["src.document.graph_snapshot"].write_snapshot = MagicMock()
+sys.modules["src.document.page_report"].write_page_report = MagicMock()
+sys.modules["src.document.page_validation"].check_construction_coverage = MagicMock(
+    return_value={"pages": [], "summary": {"page_count": 0, "avg_coverage": 0.0, "pages_failing": 0, "requires_reprocessing": False}}
+)
 sys.modules["src.document.versioning"].resolve_logical_id = MagicMock(return_value="doc_test")
 sys.modules["src.document.versioning"].build_revision_plan = MagicMock()
 sys.modules["src.document.versioning"].apply_revision_to_graph = MagicMock(return_value=([], []))
@@ -152,6 +161,7 @@ for _n in ["src.graph", "src.graph.constants", "src.graph.driver"]:
         _stub_module(_n)
 sys.modules["src.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
 sys.modules["src.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
+sys.modules["src.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
 sys.modules["src.graph.driver"].get_neo4j_driver = MagicMock()
 
 # --- bridge/conversation stubs ---
@@ -739,7 +749,7 @@ class TestExporterEdgeConfidence:
         edge = self._edge()
         d = Neo4jExporter._edge_to_param_dict(edge)
 
-        for key in ("source_id", "target_id", "weight", "properties", "confidence", "confidence_tier"):
+        for key in ("source_id", "target_id", "weight", "axis", "properties", "confidence", "confidence_tier"):
             assert key in d, f"Missing key: {key}"
 
     def test_edge_to_param_dict_defaults_extracted(self):

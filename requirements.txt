@@ -28,7 +28,7 @@ langgraph>=0.2.0
 
 # ── Semantic analysis ───────────────────
 numpy>=1.26.0,<2.0.0
-scikit-learn>=1.4.0        # KMeans clustering for SAME_CATEGORY
+hdbscan>=0.8.33            # density-based clustering for SAME_CATEGORY
 
 # ── Neo4j driver (for live import option) ──
 neo4j>=5.20.0

@@ -22,29 +22,26 @@ _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-# sklearn.cluster.KMeans has a real binary-incompatibility issue in this
-# dev env (numpy 2.x vs a wheel built for 1.x) — stub it so
-# _build_category_edges can be exercised without a working sklearn install.
-# Mirrors the existing stub style already used for this module elsewhere.
-if "sklearn" not in sys.modules:
-    sklearn_mod = types.ModuleType("sklearn")
-    sys.modules["sklearn"] = sklearn_mod
-if "sklearn.cluster" not in sys.modules:
-    cluster_mod = types.ModuleType("sklearn.cluster")
-    sys.modules["sklearn.cluster"] = cluster_mod
+# hdbscan isn't installed in this dev env -- stub it so
+# _build_category_edges can be exercised without a real install. Mirrors
+# the existing stub style already used for this module elsewhere.
+if "hdbscan" not in sys.modules:
+    hdbscan_mod = types.ModuleType("hdbscan")
+    sys.modules["hdbscan"] = hdbscan_mod
 
 
-class _FakeKMeans:
-    def __init__(self, n_clusters, random_state=None, n_init="auto"):
-        self.n_clusters = n_clusters
+class _FakeHDBSCAN:
+    def __init__(self, min_cluster_size=5, metric="euclidean"):
+        self.min_cluster_size = min_cluster_size
 
     def fit_predict(self, vecs):
-        # Deterministic: put everything in one cluster so a SAME_CATEGORY
-        # edge is guaranteed between every pair, regardless of vector count.
+        # Deterministic: put everything in one cluster (no -1 noise) so a
+        # SAME_CATEGORY edge is guaranteed between every pair, regardless
+        # of vector count.
         return [0] * len(vecs)
 
 
-sys.modules["sklearn.cluster"].KMeans = _FakeKMeans
+sys.modules["hdbscan"].HDBSCAN = _FakeHDBSCAN
 
 from src.models import DKGNode, EdgeConfidenceTier, NodeType, RelType
 from src.semantic.axis2 import (
@@ -115,15 +112,23 @@ def test_llm_judged_edges_preserve_confidence_instead_of_discarding():
     b = _embedded_node("b", [0.99, 0.02])  # must clear CONTRADICTION_THRESH (0.85)
 
     builder = _builder()
-    builder.client.chat_completion.return_value = MagicMock(
-        choices=[
-            MagicMock(
-                message=MagicMock(
-                    content='{"relationship": "ELABORATES", "direction": "A_TO_B", "confidence": 0.92, "reason": "expands on the same topic"}'
+    # Two calls per kept edge now: the relationship-detection call, then the
+    # independent grounding call (AXIS2_GROUND_LLM_EDGES) -- must be grounded
+    # for _build_llm_edges to keep it, so the second response says so.
+    builder.client.chat_completion.side_effect = [
+        MagicMock(
+            choices=[
+                MagicMock(
+                    message=MagicMock(
+                        content='{"relationship": "ELABORATES", "direction": "A_TO_B", "confidence": 0.92, "reason": "expands on the same topic"}'
+                    )
                 )
-            )
-        ]
-    )
+            ]
+        ),
+        MagicMock(
+            choices=[MagicMock(message=MagicMock(content='{"grounded": true, "confidence": 0.88}'))]
+        ),
+    ]
 
     edges = builder._build_llm_edges([a, b])
 
@@ -133,6 +138,8 @@ def test_llm_judged_edges_preserve_confidence_instead_of_discarding():
     assert edge.confidence_tier == EdgeConfidenceTier.INFERRED
     assert edge.confidence == 0.92  # preserved, not discarded after the >=0.7 gate
     assert edge.properties["reason"] == "expands on the same topic"
+    assert edge.properties["grounding_checked"] is True
+    assert edge.properties["grounding_confidence"] == 0.88
 
 
 def test_llm_low_confidence_below_threshold_produces_no_edge():

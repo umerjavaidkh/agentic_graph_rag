@@ -18,6 +18,17 @@ document's own entity-bearing nodes (mirrors the IDF philosophy already
 used for lexical ranking elsewhere in this repo -- document_resolver.py,
 LexicalService -- applied here to which entities may anchor an edge).
 
+Second regression, opposite direction: found via live verification of a
+short single-topic tutorial (~20 entity-bearing nodes) -- the flat 40%
+cutoff above also excluded that document's own core subject ("sample
+mean", 70% document frequency) from anchoring any edge, so its summary
+section failed to connect to the sections it was actually summarizing.
+Fixed by making the ratio adaptive (_adaptive_genericity_ratio): permissive
+for a small corpus, decaying toward the original validated 40% floor as
+corpus size grows toward real SEC-filing scale. Tests below at n=200
+preserve the original regression's protection at the scale it was
+measured on; tests at n~20 cover the new small-corpus case.
+
 Run with:
     python -m pytest tests/test_axis2_generic_entity_filter_unit.py -v
 """
@@ -35,7 +46,9 @@ from src.models import DKGNode, NodeType
 from src.semantic.axis2 import (
     Axis2Builder,
     _ENTITY_GENERICITY_DF_RATIO,
+    _ENTITY_GENERICITY_DF_RATIO_CEILING,
     _ENTITY_GENERICITY_MIN_NODES,
+    _adaptive_genericity_ratio,
     _informative_entities,
 )
 
@@ -63,11 +76,17 @@ def test_below_min_nodes_no_filtering_applied():
     assert result == {"generic"}
 
 
-def test_entity_in_most_nodes_excluded_at_min_nodes_threshold():
-    total = _ENTITY_GENERICITY_MIN_NODES + 5  # comfortably above the floor
-    max_df = int(total * _ENTITY_GENERICITY_DF_RATIO)
+def test_entity_in_most_nodes_excluded_at_large_corpus_scale():
+    # Real SEC-filing scale (hundreds of entity-bearing nodes) -- the
+    # adaptive ratio has decayed close to the original validated 40%
+    # floor by this size, so this preserves the original regression's
+    # protection at the scale it was actually measured on. A small-corpus
+    # equivalent of this same setup is intentionally NOT expected to
+    # exclude "generic" anymore -- see the adaptive-ratio tests below.
+    total = 200
+    max_df = int(total * _adaptive_genericity_ratio(total))
     entity_to_nodes = {
-        "generic": list(range(max_df + 1)),  # just over the ratio threshold
+        "generic": list(range(max_df + 1)),  # just over the adaptive threshold
         "specific": [0, 1],
     }
     result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
@@ -76,11 +95,51 @@ def test_entity_in_most_nodes_excluded_at_min_nodes_threshold():
 
 
 def test_entity_exactly_at_ratio_threshold_included():
-    total = 10
-    max_df = int(total * _ENTITY_GENERICITY_DF_RATIO)  # = 4
+    total = 200
+    max_df = int(total * _adaptive_genericity_ratio(total))
     entity_to_nodes = {"borderline": list(range(max_df))}
     result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
     assert "borderline" in result
+
+
+# ── _adaptive_genericity_ratio ───────────────────────────────────────────────
+
+
+def test_adaptive_ratio_permissive_for_small_corpus():
+    # The motivating case: a ~20-node single-topic tutorial's own core
+    # subject sits at 70% document frequency -- the adaptive ratio at this
+    # scale must clear that comfortably, not just barely.
+    assert _adaptive_genericity_ratio(20) >= 0.70
+
+
+def test_adaptive_ratio_converges_toward_floor_for_large_corpus():
+    # By real SEC-filing scale, behavior should be close to the original
+    # validated 40% floor, not meaningfully more permissive.
+    ratio = _adaptive_genericity_ratio(200)
+    assert _ENTITY_GENERICITY_DF_RATIO <= ratio <= _ENTITY_GENERICITY_DF_RATIO + 0.05
+
+
+def test_adaptive_ratio_monotonically_decreases_with_corpus_size():
+    assert _adaptive_genericity_ratio(10) > _adaptive_genericity_ratio(50) > _adaptive_genericity_ratio(200)
+
+
+def test_adaptive_ratio_bounded_between_floor_and_ceiling():
+    for n in (5, 20, 80, 200, 5000):
+        ratio = _adaptive_genericity_ratio(n)
+        assert _ENTITY_GENERICITY_DF_RATIO <= ratio <= _ENTITY_GENERICITY_DF_RATIO_CEILING
+
+
+def test_small_single_topic_document_core_subject_now_informative():
+    # Direct reproduction of the live bug: a 20-node document's own core
+    # subject appears in 14/20 (70%) of entity-bearing nodes -- under the
+    # old flat 40% cutoff this was excluded, breaking the summary
+    # section's connections to the sections it actually summarizes. Must
+    # now be informative.
+    total = 20
+    entity_to_nodes = {"sample mean": list(range(14)), "rare aside": [0, 1]}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "sample mean" in result
+    assert "rare aside" in result
 
 
 # ── _build_entity_edges wiring ────────────────────────────────────────────────

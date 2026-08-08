@@ -95,6 +95,56 @@
     .quality-score .qs-badge.fail { background: #dc2626; }
     .quality-score .qs-examples { margin-top: 0.4rem; font-size: 0.72rem; color: #7f1d1d; }
     .quality-score .qs-examples li { margin-bottom: 0.15rem; word-break: break-word; }
+
+    /* Searchable document combobox -- a flat <select> stops being usable
+       once a tenant has 100+ ingested documents, so this is a text input
+       that queries /ingest/quality?search= (server-side substring match on
+       id/title/filename) with a debounce, rather than listing everything
+       and filtering client-side. */
+    .doc-combobox { position: relative; }
+    .doc-results {
+      position: absolute; z-index: 20; top: calc(100% + 2px); left: 0; right: 0;
+      max-height: 260px; overflow-y: auto; background: #fff; border: 1px solid #cbd5e1;
+      border-radius: 8px; box-shadow: 0 6px 16px rgba(15,23,42,0.12); display: none;
+    }
+    .doc-results.open { display: block; }
+    .doc-result-item { padding: 0.5rem 0.7rem; cursor: pointer; font-size: 0.84rem; border-bottom: 1px solid #f1f5f9; }
+    .doc-result-item:last-child { border-bottom: none; }
+    .doc-result-item:hover, .doc-result-item.active { background: #eff6ff; }
+    .doc-result-item .drid { font-size: 0.7rem; color: #94a3b8; margin-top: 0.1rem; }
+    .doc-results .doc-empty { padding: 0.6rem 0.7rem; font-size: 0.8rem; color: #94a3b8; }
+    .selected-doc-chip {
+      margin-top: 0.4rem; padding: 0.35rem 0.6rem; border-radius: 8px; background: #eff6ff;
+      border: 1px solid #bfdbfe; font-size: 0.78rem; color: #1e3a8a; display: none;
+    }
+    .selected-doc-chip.visible { display: block; }
+
+    /* Page-level validation panel */
+    .pages-panel { margin-top: 1.5rem; padding-top: 0.9rem; border-top: 1px solid #e2e8f0; }
+    .pages-panel .row { display: flex; gap: 0.5rem; }
+    .pages-panel button { margin-top: 0; padding: 0.5rem 0.6rem; font-size: 0.78rem; }
+    .pages-summary { margin-top: 0.6rem; font-size: 0.78rem; color: #475569; }
+    .page-list { margin-top: 0.6rem; max-height: 260px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; }
+    .page-row {
+      display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem;
+      font-size: 0.78rem; cursor: pointer; border-bottom: 1px solid #f1f5f9;
+    }
+    .page-row:last-child { border-bottom: none; }
+    .page-row:hover { background: #f8fafc; }
+    .page-row.selected { background: #eff6ff; }
+    .page-row .pg-num { width: 2.6rem; font-weight: 700; color: #334155; flex-shrink: 0; }
+    .page-row .pg-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; flex-shrink: 0; }
+    .page-row .pg-dot.PASS { background: #16a34a; }
+    .page-row .pg-dot.RE_EXTRACT_REQUIRED { background: #dc2626; }
+    .page-row .pg-dot.REPARSE_MISMATCH { background: #f59e0b; }
+    .page-row .pg-cov { color: #64748b; }
+    .page-row .pg-meta { margin-left: auto; color: #94a3b8; font-size: 0.72rem; }
+    .page-scoped-banner {
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5;
+      background: #1e293b; color: #fff; padding: 0.35rem 0.9rem; border-radius: 999px;
+      font-size: 0.78rem; display: flex; align-items: center; gap: 0.6rem;
+    }
+    .page-scoped-banner button { margin: 0; padding: 0.15rem 0.5rem; font-size: 0.72rem; width: auto; background: #334155; }
   </style>
 </head>
 <body>
@@ -115,9 +165,12 @@
       <input type="text" id="user_id" value="admin_001" />
 
       <label>Logical document</label>
-      <select id="doc_picker"></select>
-      <div class="hint" id="doc_hint">Loading ingested documents…</div>
-      <button class="secondary" id="refresh_docs" type="button">Refresh list</button>
+      <div class="doc-combobox">
+        <input type="text" id="doc_search" placeholder="Search by id, title, or filename…" autocomplete="off" />
+        <div class="doc-results" id="doc_results"></div>
+      </div>
+      <div class="hint" id="doc_hint">Type to search ingested documents…</div>
+      <div class="selected-doc-chip" id="selected_doc_chip"></div>
 
       <label>Stage</label>
       <div class="tabs">
@@ -146,6 +199,17 @@
         </div>
         <div class="hint" id="quality_hint">Scored on demand — never runs automatically.</div>
         <div id="quality_result"></div>
+      </div>
+
+      <div class="pages-panel">
+        <div style="font-size:0.78rem;font-weight:700;color:#374151;margin-bottom:0.4rem;">Page-level validation</div>
+        <div class="row">
+          <button class="secondary" id="check_pages_btn" type="button" title="Free — re-parses the stored PDF, no LLM calls">Check pages (free)</button>
+          <button class="secondary" id="back_to_doc_btn" type="button" style="display:none;">Back to document graph</button>
+        </div>
+        <div class="hint" id="pages_hint">Coverage = re-parsed page text vs. what's in the graph. Click a page to see its inner edges.</div>
+        <div class="pages-summary" id="pages_summary"></div>
+        <div class="page-list" id="page_list" style="display:none;"></div>
       </div>
 
       <div class="legend">
@@ -189,12 +253,21 @@
     const LAYOUT_INVERSE_DUPLICATES = new Set(['PART_OF', 'FOLLOWS']);
     const NODE_RADIUS = { Document: 12, Chapter: 8.5, Section: 5.5, Page: 4, Region: 5, Concept: 5.5, DocRevision: 4.5 };
 
-    let currentSnapshot = null;
+    let currentSnapshot = null;      // whatever's currently drawn on the canvas (doc-level stage OR a page-scoped view)
+    let docLevelSnapshot = null;     // the last doc-level (X1/X2/Final) snapshot loaded, kept aside so "Back to document graph" doesn't need a re-fetch
     let currentQualityReport = {};  // merged axis1/axis2 results, keyed per doc so switching docs doesn't show stale scores
+    let currentPageReport = null;    // merged page-level validation report for the selected doc
+    let viewingPageNumber = null;    // set while the canvas shows a page-scoped ("inner edges") view instead of the full document graph
     let currentStage = 'x1_structural';
     let currentZoom = null;   // d3.zoom behavior, kept so the +/- buttons can drive it
     let currentSvg = null;
     let currentEdgeLabelSel = null;  // <text class="edge-label"> selection, kept so the toggle checkbox can show/hide without a full re-render
+
+    let selectedDocId = null;
+    let selectedDocLabel = '';
+    let docSearchDebounce = null;
+    let docResultsActiveIndex = -1;
+    let lastDocResults = [];
 
     function ctx() {
       return {
@@ -207,30 +280,102 @@
       return new URLSearchParams(params).toString();
     }
 
-    async function loadDocPicker() {
+    // Searchable document combobox -- queries /ingest/quality?search= (a
+    // server-side substring match on id/title/filename) instead of listing
+    // every ingested document into a <select>, which stops being usable
+    // well before a tenant reaches 100+ documents.
+    function setSelectedDoc(doc) {
+      selectedDocId = doc.logical_doc_id;
+      selectedDocLabel = `${doc.title || doc.logical_doc_id} (v${doc.version_number ?? '?'})`;
+      document.getElementById('doc_search').value = selectedDocLabel;
+      const chip = document.getElementById('selected_doc_chip');
+      chip.textContent = `Selected: ${selectedDocLabel} — id: ${doc.logical_doc_id}`;
+      chip.classList.add('visible');
+      closeDocResults();
+      // Switching documents invalidates any doc-scoped state from before.
+      currentQualityReport = {};
+      currentPageReport = null;
+      docLevelSnapshot = null;
+      viewingPageNumber = null;
+      document.getElementById('quality_result').innerHTML = '';
+      document.getElementById('page_list').style.display = 'none';
+      document.getElementById('pages_summary').innerHTML = '';
+      document.getElementById('back_to_doc_btn').style.display = 'none';
+    }
+
+    function closeDocResults() {
+      const box = document.getElementById('doc_results');
+      box.classList.remove('open');
+      box.innerHTML = '';
+      docResultsActiveIndex = -1;
+    }
+
+    function renderDocResults(docs) {
+      lastDocResults = docs;
+      const box = document.getElementById('doc_results');
+      if (!docs.length) {
+        box.innerHTML = '<div class="doc-empty">No matching documents.</div>';
+        box.classList.add('open');
+        return;
+      }
+      box.innerHTML = docs.map((d, i) => `
+        <div class="doc-result-item" data-index="${i}">
+          <div>${d.title || d.logical_doc_id} <span style="color:#94a3b8;">(v${d.version_number ?? '?'})</span></div>
+          <div class="drid">${d.logical_doc_id}${d.source_filename ? ' · ' + d.source_filename : ''}</div>
+        </div>
+      `).join('');
+      box.classList.add('open');
+      box.querySelectorAll('.doc-result-item').forEach(el => {
+        el.addEventListener('click', () => setSelectedDoc(lastDocResults[Number(el.dataset.index)]));
+      });
+    }
+
+    async function searchDocs(query) {
       const hint = document.getElementById('doc_hint');
-      const picker = document.getElementById('doc_picker');
-      hint.textContent = 'Loading ingested documents…';
       try {
         const c = ctx();
-        const resp = await fetch(`/ingest/quality?${qs({ user_id: c.user_id, role: c.role, limit: 200 })}`);
+        const params = { user_id: c.user_id, role: c.role, limit: 25 };
+        if (query) params.search = query;
+        const resp = await fetch(`/ingest/quality?${qs(params)}`);
         if (!resp.ok) throw new Error(`${resp.status} ${await resp.text()}`);
         const docs = await resp.json();
-        picker.innerHTML = '';
-        if (!docs.length) {
-          hint.textContent = 'No ingested documents found for this tenant.';
-          return;
-        }
-        for (const d of docs) {
-          const opt = document.createElement('option');
-          opt.value = d.logical_doc_id;
-          opt.textContent = `${d.title || d.logical_doc_id} (v${d.version_number ?? '?'})`;
-          picker.appendChild(opt);
-        }
-        hint.textContent = `${docs.length} document(s).`;
+        renderDocResults(docs);
+        hint.textContent = query
+          ? `${docs.length} match(es) for "${query}".`
+          : `${docs.length} most recent document(s) — keep typing to search all.`;
       } catch (err) {
-        hint.textContent = `Failed to load documents: ${err.message}`;
+        hint.textContent = `Search failed: ${err.message}`;
       }
+    }
+
+    function initDocSearch() {
+      const input = document.getElementById('doc_search');
+      input.addEventListener('input', () => {
+        clearTimeout(docSearchDebounce);
+        const value = input.value.trim();
+        docSearchDebounce = setTimeout(() => searchDocs(value), 250);
+      });
+      input.addEventListener('focus', () => searchDocs(input.value.trim()));
+      input.addEventListener('keydown', (e) => {
+        const items = Array.from(document.querySelectorAll('.doc-result-item'));
+        if (!items.length) return;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          docResultsActiveIndex = e.key === 'ArrowDown'
+            ? Math.min(docResultsActiveIndex + 1, items.length - 1)
+            : Math.max(docResultsActiveIndex - 1, 0);
+          items.forEach((el, i) => el.classList.toggle('active', i === docResultsActiveIndex));
+          items[docResultsActiveIndex].scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'Enter' && docResultsActiveIndex >= 0) {
+          e.preventDefault();
+          setSelectedDoc(lastDocResults[docResultsActiveIndex]);
+        } else if (e.key === 'Escape') {
+          closeDocResults();
+        }
+      });
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.doc-combobox')) closeDocResults();
+      });
     }
 
     function setStage(stage) {
@@ -251,7 +396,7 @@
     }
 
     async function loadGraph() {
-      const docId = document.getElementById('doc_picker').value;
+      const docId = selectedDocId;
       if (!docId) { showError('Pick a document first.'); return; }
       showError('');
       const btn = document.getElementById('load_btn');
@@ -266,6 +411,9 @@
         }
         const snapshot = await resp.json();
         currentSnapshot = snapshot;
+        docLevelSnapshot = snapshot;
+        viewingPageNumber = null;
+        document.getElementById('back_to_doc_btn').style.display = 'none';
         renderStats(snapshot);
         renderGraph(snapshot);
         renderLegend(snapshot);
@@ -305,7 +453,7 @@
     }
 
     async function checkOntologyScore(axis1Only, axis2Only) {
-      const docId = document.getElementById('doc_picker').value;
+      const docId = selectedDocId;
       if (!docId) { showError('Pick a document first.'); return; }
       showError('');
       const btn = document.getElementById(axis1Only ? 'check_axis1_btn' : 'check_axis2_btn');
@@ -478,11 +626,34 @@
       const nodes = snapshot.nodes.map(n => ({ ...n }));
       const byId = new Map(nodes.map(n => [n.id, n]));
 
-      const structuralOnly = currentStage === 'x1_structural';
+      const structuralOnly = currentStage === 'x1_structural' && viewingPageNumber == null;
       if (structuralOnly) {
         layoutHierarchical(nodes, renderEdges);
       } else {
         layoutForce(nodes, renderEdges);
+      }
+
+      // Parallel-edge offsets: multiple edges of different rel_types
+      // between the SAME two nodes (e.g. CONTAINS + SAME_CATEGORY +
+      // SHARES_ENTITY all connecting one Section to one Page) previously
+      // drew as coincident lines -- visually indistinguishable from a
+      // single edge, with only the last-drawn label visible. Each edge in
+      // a same-pair group now gets a small perpendicular offset, fanned
+      // out symmetrically around the straight line, so every relationship
+      // is separately visible and clickable. Grouped by node pair
+      // regardless of direction (sorted key) since PART_OF/FOLLOWS being
+      // filtered out above still leaves e.g. CONTAINS and SHARES_ENTITY
+      // pointing opposite ways between the same two nodes.
+      const EDGE_PARALLEL_SPACING = 16;
+      const pairGroups = new Map();
+      for (const e of renderEdges) {
+        const key = [e.source_id, e.target_id].sort().join('|');
+        (pairGroups.get(key) || pairGroups.set(key, []).get(key)).push(e);
+      }
+      const edgeOffsets = new Map();
+      for (const group of pairGroups.values()) {
+        const n = group.length;
+        group.forEach((e, i) => edgeOffsets.set(e, (i - (n - 1) / 2) * EDGE_PARALLEL_SPACING));
       }
 
       const width = container.clientWidth || 600;
@@ -519,7 +690,7 @@
         .enter()
         .append('path')
         .attr('class', 'graph-edge')
-        .attr('d', d => edgePath(byId.get(d.source_id), byId.get(d.target_id), structuralOnly))
+        .attr('d', d => edgePath(byId.get(d.source_id), byId.get(d.target_id), structuralOnly, edgeOffsets.get(d) || 0))
         .attr('stroke', d => EDGE_COLORS[d.rel_type] || '#cbd5e1')
         .attr('stroke-width', d => (d.axis === 2 ? Math.min(1.2 + (d.weight || 1) * 0.35, 4) : 1.4))
         .attr('stroke-dasharray', d => (EDGE_DASH.has(d.rel_type) ? '3,3' : null))
@@ -540,7 +711,7 @@
         .enter()
         .append('text')
         .attr('class', 'edge-label')
-        .attr('transform', d => edgeLabelTransform(byId.get(d.source_id), byId.get(d.target_id), structuralOnly))
+        .attr('transform', d => edgeLabelTransform(byId.get(d.source_id), byId.get(d.target_id), structuralOnly, edgeOffsets.get(d) || 0))
         .style('display', document.getElementById('show_edge_labels').checked ? null : 'none')
         .text(d => d.rel_type);
 
@@ -555,9 +726,9 @@
       function redrawEdgesTouching(nodeId) {
         const touching = new Set(touchingEdges.get(nodeId) || []);
         edgeSel.filter(e => touching.has(e))
-          .attr('d', e => edgePath(byId.get(e.source_id), byId.get(e.target_id), structuralOnly));
+          .attr('d', e => edgePath(byId.get(e.source_id), byId.get(e.target_id), structuralOnly, edgeOffsets.get(e) || 0));
         currentEdgeLabelSel.filter(e => touching.has(e))
-          .attr('transform', e => edgeLabelTransform(byId.get(e.source_id), byId.get(e.target_id), structuralOnly));
+          .attr('transform', e => edgeLabelTransform(byId.get(e.source_id), byId.get(e.target_id), structuralOnly, edgeOffsets.get(e) || 0));
       }
 
       // Manual repositioning, not a re-run of the layout simulation --
@@ -663,8 +834,21 @@
       container.appendChild(hint);
     }
 
-    function edgePath(a, b, curved) {
+    function edgePath(a, b, curved, offset = 0) {
       if (!a || !b) return '';
+      if (offset !== 0) {
+        // Parallel edge (see EDGE_PARALLEL_SPACING in renderGraph): a
+        // quadratic curve through a control point displaced perpendicular
+        // to the straight line by `offset` px, so multiple edges between
+        // the same two nodes fan out instead of drawing as one coincident
+        // line regardless of whether this is the tree or force layout.
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len, ny = dx / len;
+        const cx = mx + nx * offset, cy = my + ny * offset;
+        return `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`;
+      }
       if (!curved) return `M${a.x},${a.y} L${b.x},${b.y}`;
       // Gentle vertical curve for the hierarchical tree -- reads as an
       // organic tree connector instead of rigid straight segments.
@@ -679,10 +863,19 @@
       return String(relType || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_');
     }
 
-    function edgeLabelTransform(a, b, curved) {
+    function edgeLabelTransform(a, b, curved, offset = 0) {
       if (!a || !b) return '';
       const mx = (a.x + b.x) / 2;
       const my = (a.y + b.y) / 2;
+      if (offset !== 0) {
+        // Position the label at the same displaced point its curve passes
+        // through, so each parallel edge's label sits beside its own line
+        // instead of every one stacking at the shared midpoint.
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len, ny = dx / len;
+        return `translate(${mx + nx * offset},${my + ny * offset})`;
+      }
       if (curved) {
         // Hierarchical tree edges are bezier curves, not straight lines --
         // rotating text along a curve reads worse than just offsetting it
@@ -729,18 +922,130 @@
       document.getElementById('detail_body').innerHTML = html;
     }
 
+    // ── Page-level validation panel ─────────────────────────────────────
+    // Doc-level quality (above) answers "is this document trustworthy
+    // overall?" This answers "which specific pages aren't" -- coverage is
+    // measured per page (re-parsed source text vs. what's in the graph),
+    // not inferred from document-wide node counts.
+
+    function statusLabel(status) {
+      if (status === 'PASS') return 'pass';
+      if (status === 'RE_EXTRACT_REQUIRED') return 're-extract';
+      if (status === 'REPARSE_MISMATCH') return 'mismatch';
+      return status;
+    }
+
+    function renderPageList(report) {
+      const summaryBox = document.getElementById('pages_summary');
+      const listBox = document.getElementById('page_list');
+      if (report.error) {
+        summaryBox.innerHTML = `<span style="color:#b91c1c;">${report.error}</span>`;
+        listBox.style.display = 'none';
+        return;
+      }
+      const s = report.summary;
+      summaryBox.innerHTML =
+        `${s.page_count} page(s) · avg coverage ${(s.avg_coverage * 100).toFixed(1)}% · ` +
+        `<span style="color:${s.pages_failing ? '#dc2626' : '#16a34a'};font-weight:700;">${s.pages_failing} flagged</span>`;
+      listBox.style.display = 'block';
+      listBox.innerHTML = report.pages.map(p => `
+        <div class="page-row" data-page="${p.page_number}">
+          <span class="pg-num">p${p.page_number}</span>
+          <span class="pg-dot ${p.status}" title="${statusLabel(p.status)}"></span>
+          <span class="pg-cov">${(p.coverage * 100).toFixed(0)}% cov</span>
+          <span class="pg-meta">${p.entity_count} ent · ${p.edge_count} edge</span>
+        </div>
+      `).join('');
+      listBox.querySelectorAll('.page-row').forEach(el => {
+        el.addEventListener('click', () => selectPageRow(Number(el.dataset.page), el));
+      });
+    }
+
+    async function checkPages() {
+      const docId = selectedDocId;
+      if (!docId) { showError('Pick a document first.'); return; }
+      showError('');
+      const btn = document.getElementById('check_pages_btn');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Checking…';
+      document.getElementById('pages_hint').textContent = 'Re-parsing the stored PDF — no LLM calls, but not instant on large documents.';
+      try {
+        const c = ctx();
+        const resp = await fetch(`/ingest/quality/${encodeURIComponent(docId)}/pages?${qs({ user_id: c.user_id, role: c.role })}`);
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({}));
+          throw new Error(body.detail || `${resp.status} ${resp.statusText}`);
+        }
+        currentPageReport = await resp.json();
+        renderPageList(currentPageReport);
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+        document.getElementById('pages_hint').textContent = "Coverage = re-parsed page text vs. what's in the graph. Click a page to see its inner edges.";
+      }
+    }
+
+    async function selectPageRow(pageNumber, rowEl) {
+      const docId = selectedDocId;
+      if (!docId) return;
+      document.querySelectorAll('.page-row').forEach(el => el.classList.toggle('selected', el === rowEl));
+      showError('');
+      try {
+        const c = ctx();
+        const resp = await fetch(
+          `/documents/${encodeURIComponent(docId)}/pages/${pageNumber}/graph?${qs({ user_id: c.user_id, role: c.role })}`
+        );
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({}));
+          throw new Error(body.detail || `${resp.status} ${resp.statusText}`);
+        }
+        const snapshot = await resp.json();
+        viewingPageNumber = pageNumber;
+        currentSnapshot = snapshot;
+        renderStats(snapshot);
+        renderGraph(snapshot);
+        renderLegend(snapshot);
+        const banner = document.createElement('div');
+        banner.className = 'page-scoped-banner';
+        banner.innerHTML = `<span>Page ${pageNumber} — inner edges only</span>`;
+        document.getElementById('graph-canvas').appendChild(banner);
+        document.getElementById('back_to_doc_btn').style.display = 'block';
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    function backToDocGraph() {
+      viewingPageNumber = null;
+      document.getElementById('back_to_doc_btn').style.display = 'none';
+      document.querySelectorAll('.page-row').forEach(el => el.classList.remove('selected'));
+      if (docLevelSnapshot) {
+        currentSnapshot = docLevelSnapshot;
+        renderStats(docLevelSnapshot);
+        renderGraph(docLevelSnapshot);
+        renderLegend(docLevelSnapshot);
+      } else {
+        document.getElementById('graph-canvas').innerHTML = '<div class="empty-state">Pick a document and stage, then "Load graph".</div>';
+      }
+    }
+
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => setStage(tab.dataset.stage));
     });
     document.getElementById('load_btn').addEventListener('click', loadGraph);
-    document.getElementById('refresh_docs').addEventListener('click', loadDocPicker);
     document.getElementById('show_edge_labels').addEventListener('change', (e) => {
       if (currentEdgeLabelSel) currentEdgeLabelSel.style('display', e.target.checked ? null : 'none');
     });
     document.getElementById('check_axis1_btn').addEventListener('click', () => checkOntologyScore(true, false));
     document.getElementById('check_axis2_btn').addEventListener('click', () => checkOntologyScore(false, true));
+    document.getElementById('check_pages_btn').addEventListener('click', checkPages);
+    document.getElementById('back_to_doc_btn').addEventListener('click', backToDocGraph);
 
-    loadDocPicker();
+    initDocSearch();
+    searchDocs('');
   </script>
 </body>
 </html>
