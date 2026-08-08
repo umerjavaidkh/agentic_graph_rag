@@ -99,6 +99,53 @@ def test_canonicalize_stays_bounded_above_the_fuzzy_cluster_vocab_cap():
     assert set(canonical.keys()) == entities
 
 
+def test_canonicalize_does_not_merge_same_string_different_types():
+    """"Apple" tagged ORG in one node and "apple" tagged CONCEPT in
+    another must never merge, however similar the strings look -- this is
+    the exact "fruit vs. company" failure typed entities exist to prevent."""
+    canonical = _canonicalize_entities(
+        {"apple"}, entity_types=None
+    )  # sanity: still works with no types at all
+    assert canonical == {"apple": "apple"}
+
+    # Same normalized text, two different real-world things -- must be
+    # distinguishable by type when both are known. difflib similarity of
+    # "apple" to itself is 1.0, so without type-awareness these would be
+    # indistinguishable; entity_types is what separates them.
+    canonical = _canonicalize_entities(
+        {"apple:org", "apple:concept"},
+        entity_types={"apple:org": "ORG", "apple:concept": "CONCEPT"},
+    )
+    assert canonical["apple:org"] != canonical["apple:concept"]
+
+
+def test_canonicalize_type_prefix_prevents_cross_type_fuzzy_merge():
+    """Two near-identical strings that would normally fuzzy-merge (ratio
+    above threshold) must stay separate when tagged with different types."""
+    canonical = _canonicalize_entities(
+        {"newton", "newtons"},
+        entity_types={"newton": "PERSON", "newtons": "METRIC"},  # unit of force vs. the person
+    )
+    assert canonical["newton"] != canonical["newtons"]
+
+
+def test_canonicalize_still_merges_within_the_same_type():
+    canonical = _canonicalize_entities(
+        {"newton", "newton's"},
+        entity_types={"newton": "PERSON", "newton's": "PERSON"},
+    )
+    assert canonical["newton"] == canonical["newton's"]
+
+
+def test_canonicalize_untyped_entities_share_one_implicit_bucket():
+    """Entities missing from entity_types (older ingestion run, or a batch
+    that fell back to untyped strings) behave exactly as before this
+    parameter existed -- one shared "untyped" namespace, not one bucket
+    per missing entity."""
+    canonical = _canonicalize_entities({"newton", "newton's"}, entity_types={})
+    assert canonical["newton"] == canonical["newton's"]
+
+
 def test_shares_entity_edge_created_across_possessive_surface_variants():
     """Two nodes whose only "shared" entity is a possessive variant of the
     same word must still get a SHARES_ENTITY edge -- before the fix, raw
@@ -115,3 +162,22 @@ def test_shares_entity_edge_created_across_possessive_surface_variants():
     assert len(edges) == 1
     assert {edges[0].source_id, edges[0].target_id} == {"a", "b"}
     assert edges[0].weight >= 1
+
+
+def test_build_entity_edges_does_not_merge_homonyms_of_different_types():
+    """End-to-end: two nodes both mentioning "apple", but one node's NER
+    tagged it ORG (the company) and the other's tagged it CONCEPT (the
+    fruit) -- _build_entity_edges must aggregate node.entity_types and
+    pass it through to _canonicalize_entities, so these do NOT count as a
+    shared entity."""
+    a = DKGNode(id="a", type=NodeType.SECTION, title="a", text="x", order=0)
+    a.entities = ["apple"]
+    a.entity_types = {"apple": "ORG"}
+    b = DKGNode(id="b", type=NodeType.SECTION, title="b", text="x", order=1)
+    b.entities = ["apple"]
+    b.entity_types = {"apple": "CONCEPT"}
+
+    builder = _builder()
+    edges = builder._build_entity_edges([a, b])
+
+    assert edges == []

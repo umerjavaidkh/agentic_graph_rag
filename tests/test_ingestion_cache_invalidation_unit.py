@@ -55,6 +55,7 @@ _stub_module("src.graph")
 _graph_constants = _stub_module("src.graph.constants")
 _graph_constants.DOC_REVISION_LABEL = "DocRevision"
 _graph_constants.DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
+_graph_constants.DOCUMENT_ROOT_CYPHER = "Document|Book"
 _stub_module("src.graph.driver").get_neo4j_driver = MagicMock()
 
 _STUBBED_MODULE_NAMES = (

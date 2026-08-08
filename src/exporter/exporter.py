@@ -297,7 +297,7 @@ class Neo4jExporter:
                     f"UNWIND $rows AS row "
                     "MATCH (a {id: row.source_id}), (b {id: row.target_id}) "
                     f"MERGE (a)-[r:{rel_type}]->(b) "
-                    "SET r.weight = row.weight, r.properties = row.properties, "
+                    "SET r.weight = row.weight, r.axis = row.axis, r.properties = row.properties, "
                     "r.confidence = row.confidence, r.confidence_tier = row.confidence_tier, "
                     "r.tenant_id = row.tenant_id",
                     rows=rows,
@@ -392,6 +392,7 @@ class Neo4jExporter:
             "source_id": edge.source_id,
             "target_id": edge.target_id,
             "weight": edge.weight,
+            "axis": edge.axis,
             "properties": json.dumps(edge.properties),
             "confidence": edge.confidence,
             "confidence_tier": tier.value if isinstance(tier, EdgeConfidenceTier) else str(tier),

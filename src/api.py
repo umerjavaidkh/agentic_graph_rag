@@ -17,6 +17,7 @@ from .document.graph_snapshot import (
     X1_STAGE,
     X2_STAGE,
     query_final_snapshot_sync,
+    query_page_scoped_snapshot_sync,
     read_snapshot as read_graph_snapshot,
 )
 from .document.versioning import source_file_blob_key
@@ -797,21 +798,28 @@ async def get_ingestion_job(
     )
 
 
-def _list_ingestion_quality_documents_sync(tenant_id: Optional[str], limit: int) -> list[dict]:
+def _list_ingestion_quality_documents_sync(
+    tenant_id: Optional[str], limit: int, search: Optional[str]
+) -> list[dict]:
     driver = get_neo4j_driver()
     with driver.session() as session:
-        return list_ingested_documents(session, tenant_id=tenant_id, limit=min(max(limit, 1), 500))
+        return list_ingested_documents(
+            session, tenant_id=tenant_id, limit=min(max(limit, 1), 500), search=search
+        )
 
 
 @app.get("/ingest/quality")
 async def list_ingestion_quality_documents(
     tenant_id: Optional[str] = Query(None),
     limit: int = 200,
+    search: Optional[str] = Query(None, description="Filter by id/title/filename substring (case-insensitive)"),
     authorization: Optional[str] = Header(default=None),
     user_id: Optional[str] = Query(None),
     role: Optional[str] = Query(None),
 ):
-    """List ingested documents (ACTIVE revisions) for the quality-report picker. Admin-only."""
+    """List ingested documents (ACTIVE revisions) for the quality-report picker.
+    Admin-only. Supports `search` so a corpus of hundreds of documents doesn't
+    have to be listed in full and filtered client-side (e.g. in a dropdown)."""
     resolve_admin_session(
         authorization=authorization,
         body_user_id=user_id,
@@ -821,7 +829,7 @@ async def list_ingestion_quality_documents(
     # Neo4j reads are synchronous — off the event loop, same as /query, so
     # this endpoint doesn't stall every other in-flight request while it runs.
     docs = await loop.run_in_executor(
-        _query_executor, _list_ingestion_quality_documents_sync, tenant_id, limit
+        _query_executor, _list_ingestion_quality_documents_sync, tenant_id, limit, search
     )
     return docs
 
@@ -846,6 +854,39 @@ async def get_ingestion_quality_report(
     driver = get_neo4j_driver()
     loop = asyncio.get_running_loop()
     report = await loop.run_in_executor(_query_executor, build_ingestion_quality_report, driver, logical_doc_id)
+    if not report.get("found"):
+        raise HTTPException(status_code=404, detail=f"No ingested document found for {logical_doc_id!r}")
+    return report
+
+
+@app.get("/ingest/quality/{logical_doc_id}/pages")
+async def get_page_level_quality_report(
+    logical_doc_id: str,
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+):
+    """
+    Page-level coverage report: for each page, how much of its raw source
+    text actually made it into the graph (word-count ratio), plus its
+    entity and semantic-edge counts. Admin-only. Re-parses the stored
+    source PDF on demand (same "scored on demand, never automatic" posture
+    as /documents/{id}/ontology-score) — costs CPU per call, no LLM calls.
+    """
+    session = resolve_admin_session(
+        authorization=authorization, body_user_id=user_id, body_role=role, body_tenant_id=tenant_id,
+    )
+    context = session.user
+
+    from .document.page_report import run_for_doc as run_page_report
+
+    driver = get_neo4j_driver()
+    loop = asyncio.get_running_loop()
+    report = await loop.run_in_executor(
+        _query_executor,
+        lambda: run_page_report(driver, logical_doc_id, tenant_id=context.tenant_id),
+    )
     if not report.get("found"):
         raise HTTPException(status_code=404, detail=f"No ingested document found for {logical_doc_id!r}")
     return report
@@ -1032,6 +1073,56 @@ async def get_document_graph_final(
 
     return await loop.run_in_executor(
         _query_executor, _query_final_graph_snapshot_sync, driver, logical_doc_id, resolved_revision_id,
+    )
+
+
+def _query_page_scoped_graph_snapshot_sync(
+    driver, logical_doc_id: str, revision_id: str, page_number: int
+) -> dict:
+    with driver.session() as session:
+        return query_page_scoped_snapshot_sync(session, logical_doc_id, revision_id, page_number)
+
+
+@app.get("/documents/{logical_doc_id}/pages/{page_number}/graph")
+async def get_document_page_scoped_graph(
+    logical_doc_id: str,
+    page_number: int,
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+    revision_id: Optional[str] = Query(None, description="Defaults to the ACTIVE revision"),
+):
+    """
+    The "inner edges" view for one page: every node whose page range
+    covers this page (a multi-page Chapter/Section included, not just
+    nodes that collapse to exactly this one page) other than the Document
+    root, and edges between them. The document-wide graph
+    (/documents/{id}/graph-final, or the X1/X2 snapshots) is the "outer
+    edges" view — the full cross-page/cross-section structural and
+    semantic graph — and is unaffected by this endpoint. Live Neo4j query,
+    same admin-only pattern as graph-final.
+    """
+    session = resolve_admin_session(
+        authorization=authorization, body_user_id=user_id, body_role=role, body_tenant_id=tenant_id,
+    )
+    context = session.user
+    driver = get_neo4j_driver()
+    loop = asyncio.get_running_loop()
+
+    resolved_revision_id = revision_id
+    if not resolved_revision_id:
+        meta = await loop.run_in_executor(
+            _query_executor, _active_revision_source_meta_sync, driver, logical_doc_id, context.tenant_id,
+        )
+        if not meta:
+            raise HTTPException(status_code=404, detail=f"No document found for {logical_doc_id!r}")
+        resolved_revision_id = meta["revision_id"]
+
+    return await loop.run_in_executor(
+        _query_executor,
+        _query_page_scoped_graph_snapshot_sync,
+        driver, logical_doc_id, resolved_revision_id, page_number,
     )
 
 

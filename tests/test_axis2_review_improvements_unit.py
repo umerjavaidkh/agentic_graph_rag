@@ -30,30 +30,35 @@ _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-# sklearn.cluster.KMeans has a real binary-incompatibility issue in this
-# dev env (numpy 2.x vs a wheel built for 1.x) -- stub it, same style as
-# the other axis2 test files.
-if "sklearn" not in sys.modules:
-    sys.modules["sklearn"] = types.ModuleType("sklearn")
-if "sklearn.cluster" not in sys.modules:
-    sys.modules["sklearn.cluster"] = types.ModuleType("sklearn.cluster")
+# hdbscan isn't installed in this dev env -- stub it, same style as the
+# other axis2 test files.
+if "hdbscan" not in sys.modules:
+    sys.modules["hdbscan"] = types.ModuleType("hdbscan")
 
 
-class _FakeKMeans:
+class _FakeHDBSCAN:
     """Deterministic index-modulo split -- ignores vector content, so these
     tests verify ROUTING (which signal/vector-source was used, and whether
     a candidate pair was ever proposed to the LLM), not clustering quality
-    itself (already covered by test_axis2_edge_cap_unit.py)."""
+    itself (already covered by test_axis2_edge_cap_unit.py). Cluster count
+    derives from len(vecs) with the same formula as this module's sibling
+    stub in test_axis2_edge_cap_unit.py -- kept identical on purpose:
+    axis2._build_category_edges does a fresh `import hdbscan` per call
+    against the one shared sys.modules["hdbscan"], so whichever test
+    file's stub was registered last during pytest's collection silently
+    wins for every test in the session. Matching formulas means it doesn't
+    matter which file's stub ends up active."""
 
-    def __init__(self, n_clusters, random_state=None, n_init="auto"):
-        self.n_clusters = n_clusters
+    def __init__(self, min_cluster_size=5, metric="euclidean"):
+        self.min_cluster_size = min_cluster_size
 
     def fit_predict(self, vecs):
         n = len(vecs)
-        return [i % self.n_clusters for i in range(n)]
+        n_clusters = max(2, min(10, int(n ** 0.5)))
+        return [i % n_clusters for i in range(n)]
 
 
-sys.modules["sklearn.cluster"].KMeans = _FakeKMeans
+sys.modules["hdbscan"].HDBSCAN = _FakeHDBSCAN
 
 from src.models import DKGEdge, DKGNode, NodeType, RelType
 from src.semantic.axis2 import Axis2Builder

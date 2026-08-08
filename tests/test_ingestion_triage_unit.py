@@ -49,6 +49,7 @@ for _n in ["src.graph", "src.graph.constants", "src.graph.driver"]:
         _stub_module(_n)
 sys.modules["src.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
 sys.modules["src.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
+sys.modules["src.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
 sys.modules["src.graph.driver"].get_neo4j_driver = MagicMock()
 
 from src.ingestion.triage import check_duplicate, check_structural_sanity

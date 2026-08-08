@@ -32,6 +32,8 @@ from ..config.settings import (
     STORE_INGESTION_ARTIFACTS,
 )
 from ..document.graph_snapshot import X1_STAGE, X2_STAGE, write_snapshot
+from ..document.page_report import write_page_report
+from ..document.page_validation import check_construction_coverage
 from ..document.versioning import (
     DocumentRevisionPlan,
     apply_revision_to_graph,
@@ -465,6 +467,37 @@ class IngestionManager:
             )
         except Exception as exc:
             self._log(job, f"X1 graph snapshot skipped: {exc}")
+
+        # Structural page-coverage check: catches a total or partial
+        # heading-detection collapse (every page's text landing in one
+        # catch-all section, or a page ending up with no text at all)
+        # immediately, using the exact `ir`/`nodes` this run just produced
+        # -- not a re-parse, so it can't disagree with what was actually
+        # ingested. Persisted so /ingest/quality/{id}/pages doesn't need to
+        # re-parse the source file later. Never allowed to fail the
+        # ingestion job, same posture as the X1/X2 snapshots above.
+        try:
+            coverage_report = check_construction_coverage(ir, nodes)
+            write_page_report(
+                self.blob_store,
+                tenant_id=plan.tenant_id,
+                logical_doc_id=plan.logical_id,
+                revision_id=plan.revision_id,
+                report=coverage_report,
+            )
+            summary = coverage_report["summary"]
+            if summary["requires_reprocessing"]:
+                self._log(
+                    job,
+                    f"WARNING: structural coverage check flagged {summary['pages_failing']}/"
+                    f"{summary['page_count']} page(s) (avg coverage "
+                    f"{summary['avg_coverage'] * 100:.0f}%) — possible heading-detection collapse "
+                    "or OCR/extraction gap. See /ingest/quality/{}/pages.".format(plan.logical_id),
+                )
+            else:
+                self._log(job, f"Structural coverage check passed ({summary['page_count']} page(s))")
+        except Exception as exc:
+            self._log(job, f"Structural coverage check skipped: {exc}")
 
         if (
             ENABLE_PAGE_VISION

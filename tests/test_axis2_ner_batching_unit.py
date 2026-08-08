@@ -73,7 +73,14 @@ def test_call_count_drops_by_roughly_batch_size():
 
 
 def test_entities_map_back_to_the_correct_node_not_misaligned():
-    nodes = [_section_node(f"n{i}") for i in range(3)]
+    # Text must actually contain the mocked entities -- _extract_entities
+    # now grounds each returned entity against its own node's text before
+    # keeping it (deterministic substring check, catches hallucination).
+    nodes = [
+        _section_node("n0", text="alpha particle decay"),
+        _section_node("n1", text="beta decay and gamma rays"),
+        _section_node("n2", text="no entities on this page"),
+    ]
     builder = _builder()
     builder.client.chat_completion.return_value = _batch_response({
         "0": ["alpha"],
@@ -100,7 +107,11 @@ def test_batch_call_failure_yields_empty_entities_not_a_crash():
 
 
 def test_response_missing_an_index_assigns_empty_not_keyerror():
-    nodes = [_section_node(f"n{i}") for i in range(3)]
+    nodes = [
+        _section_node("n0", text="alpha particle decay"),
+        _section_node("n1", text="no entities on this page"),
+        _section_node("n2", text="gamma ray burst"),
+    ]
     builder = _builder()
     # Model only returned entries for indices 0 and 2, skipping 1.
     builder.client.chat_completion.return_value = _batch_response({

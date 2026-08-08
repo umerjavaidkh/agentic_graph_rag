@@ -65,6 +65,13 @@ class DKGNode:
     depth:      int  = 0                   # 0=Document root, 1=Chapter, 2=Section, 3=Page
     embedding:  Optional[list] = field(default=None, repr=False)
     entities:   list = field(default_factory=list)   # NER results
+    # Optional: entity text (lowercased) -> NER type (ORG/PERSON/...).
+    # Additive alongside `entities`, not a replacement -- every existing
+    # reader of `entities` as a plain string list (retrieval ranking,
+    # page/box strategies, ontology validation) keeps working unchanged.
+    # Populated only by NER paths that extract typed entities; empty dict
+    # means "no type info", not "no entities".
+    entity_types: dict = field(default_factory=dict)
     cluster_id: Optional[int] = None                 # for SAME_CATEGORY
     summary:    Optional[str] = None                 # Chapter-level rollup (chapter_summary enrichment)
     visual_content: Optional[str] = None  # vision LLM: tables, charts, diagrams, shapes (Page)

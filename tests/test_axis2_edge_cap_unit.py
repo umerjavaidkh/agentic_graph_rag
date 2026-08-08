@@ -40,28 +40,39 @@ _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-# Same sklearn stub as test_axis2_edge_confidence_unit.py -- KMeans has a
-# real binary-incompatibility issue in this dev env (numpy 2.x vs a wheel
-# built for 1.x).
-if "sklearn" not in sys.modules:
-    sys.modules["sklearn"] = types.ModuleType("sklearn")
-if "sklearn.cluster" not in sys.modules:
-    sys.modules["sklearn.cluster"] = types.ModuleType("sklearn.cluster")
+# hdbscan isn't installed in this dev env -- stub it so
+# _build_category_edges can be exercised without a real install, same
+# style as this module's other stubs.
+if "hdbscan" not in sys.modules:
+    sys.modules["hdbscan"] = types.ModuleType("hdbscan")
 
 
-class _FakeKMeans:
-    """Splits into ~equal-size clusters (not all-one-cluster) so intra-
-    cluster pair counts actually scale the way production KMeans does."""
+class _FakeHDBSCAN:
+    """Splits into ~equal-size clusters (not all-one-cluster, and no -1
+    noise) so intra-cluster pair counts actually scale the way production
+    clustering does. Cluster count derives from len(vecs) with the exact
+    formula axis2.py used to pass explicitly to KMeans (max 2, min 10,
+    sqrt(n)) -- not because HDBSCAN takes a cluster-count parameter (it
+    doesn't), but so this fake behaves identically regardless of which
+    test FILE's stub of the shared sys.modules["hdbscan"] happens to be
+    active for a given test (axis2._build_category_edges does a fresh
+    `import hdbscan` per call, so whichever stub was registered last
+    during pytest's collection wins for every test in the session, not
+    just this file's own). A fixed constant here previously produced
+    3 singleton "clusters" for a 3-node test in a different file
+    expecting one shared cluster -- this formula matches what that file's
+    own fake already assumes, so the two are interchangeable."""
 
-    def __init__(self, n_clusters, random_state=None, n_init="auto"):
-        self.n_clusters = n_clusters
+    def __init__(self, min_cluster_size=5, metric="euclidean"):
+        self.min_cluster_size = min_cluster_size
 
     def fit_predict(self, vecs):
         n = len(vecs)
-        return [i % self.n_clusters for i in range(n)]
+        n_clusters = max(2, min(10, int(n ** 0.5)))
+        return [i % n_clusters for i in range(n)]
 
 
-sys.modules["sklearn.cluster"].KMeans = _FakeKMeans
+sys.modules["hdbscan"].HDBSCAN = _FakeHDBSCAN
 
 from src.config.settings import AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
 from src.models import DKGNode, NodeType
@@ -115,7 +126,7 @@ def test_similarity_edges_are_capped_per_node(n):
 
 
 def test_same_category_edges_are_capped_per_node():
-    # 300 nodes, 10 clusters -> 30/cluster with the fake KMeans above.
+    # 300 nodes, 10 clusters -> 30/cluster with the fake HDBSCAN above.
     # Old code: C(30, 2) * 10 = 4,350 edges, degree up to 29 per node.
     # New code: capped to AXIS2_MAX_SIMILARITY_EDGES_PER_NODE per node.
     nodes = _near_duplicate_nodes(300)
