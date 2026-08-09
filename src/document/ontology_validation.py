@@ -299,6 +299,57 @@ JSON: {{"valid": true/false}}
 """
 
 
+_ENTITY_TYPE_SUFFIX_RE = re.compile(r"\s*\([A-Z]+\)\s*$")
+
+
+def _entity_centered_window(text: str, needles: list[str], *, window: int = 800) -> str:
+    """`window` chars of `text` centered on the earliest occurrence of any
+    of `needles`, not just the first `window` chars -- a naive prefix
+    truncation shows the judge a passage that may not even contain the
+    entity/relationship it's being asked to verify at all, if the real
+    mention falls later in a long section. Verified live: a section with a
+    genuine, grounded "TCO" (Tengizchevroil) mention at character offset
+    1789 was judged "not meaningfully connected" purely because the judge's
+    800-char prefix window ended at 800 -- the entity was never shown to
+    it. Falls back to the plain prefix when none of the needles are found
+    (a paraphrase-only match a substring search can't locate), same
+    behavior as before this fix for that harder case.
+    """
+    if not text:
+        return text
+    for needle in needles:
+        base = _ENTITY_TYPE_SUFFIX_RE.sub("", needle).strip()
+        if not base:
+            continue
+        idx = text.lower().find(base.lower())
+        if idx == -1:
+            continue
+        half = window // 2
+        start = max(0, idx - half)
+        end = min(len(text), start + window)
+        start = max(0, end - window)  # slide back if we hit the end early
+        return text[start:end]
+    return text[:window]
+
+
+def _shared_entity_texts(shared: Any) -> list[str]:
+    """`shared` is the raw r.properties JSON string/dict off a SHARES_ENTITY
+    edge (or another Axis-2 rel's own properties shape) -- extracts the
+    entity text list to search for, tolerating any other rel type's
+    differently-shaped properties (e.g. SEMANTICALLY_SIMILAR's bare
+    {"score": ...} has no entities to center on) by returning []."""
+    if isinstance(shared, str):
+        try:
+            shared = json.loads(shared)
+        except Exception:
+            return []
+    if isinstance(shared, dict):
+        entities = shared.get("shared_entities")
+        if isinstance(entities, list):
+            return [e for e in entities if isinstance(e, str)]
+    return []
+
+
 def _extract_json(text: str) -> dict:
     t = (text or "").strip()
     start, end = t.find("{"), t.rfind("}")
@@ -341,10 +392,20 @@ def score_axis2_idea_linking(
 
     edge_valid = 0
     for e in edges_sample:
+        # A shared entity (SHARES_ENTITY) is the actual connecting evidence,
+        # so both windows center on it. Edge types with no single shared
+        # entity to point at (SAME_CATEGORY's properties are just
+        # {cluster_id, signal}; likewise CONTRADICTS/ELABORATES/
+        # PREREQUISITE_OF) fall back to each side's OWN entity list --
+        # still far better than an arbitrary first-800-char prefix that may
+        # land on boilerplate rather than either side's substantive content.
+        shared_needles = _shared_entity_texts(e.get("shared"))
+        source_needles = shared_needles or (e.get("source_entities") or [])
+        target_needles = shared_needles or (e.get("target_entities") or [])
         ok = _judge(
             _EDGE_JUDGE_PROMPT.format(
-                source_text=(e.get("source_text") or "")[:800],
-                target_text=(e.get("target_text") or "")[:800],
+                source_text=_entity_centered_window(e.get("source_text") or "", source_needles),
+                target_text=_entity_centered_window(e.get("target_text") or "", target_needles),
                 rel_type=e.get("rel_type", ""),
                 shared=e.get("shared", ""),
             )
@@ -358,7 +419,7 @@ def score_axis2_idea_linking(
     for ent in entities_sample:
         ok = _judge(
             _ENTITY_JUDGE_PROMPT.format(
-                source_text=(ent.get("source_text") or "")[:800],
+                source_text=_entity_centered_window(ent.get("source_text") or "", [ent.get("entity", "")]),
                 entity=ent.get("entity", ""),
             )
         )

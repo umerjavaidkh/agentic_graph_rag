@@ -61,6 +61,8 @@ def test_sample_edges_hydrates_source_and_target_from_blob_key(monkeypatch):
                 "target_blob_key": "blob/b",
                 "rel_type": "SHARES_ENTITY",
                 "shared": '{"shared_entities": ["x"]}',
+                "source_entities": ["x", "y"],
+                "target_entities": ["x"],
             }
         ]
     )
@@ -73,6 +75,8 @@ def test_sample_edges_hydrates_source_and_target_from_blob_key(monkeypatch):
             "target_text": "full target text",
             "rel_type": "SHARES_ENTITY",
             "shared": '{"shared_entities": ["x"]}',
+            "source_entities": ["x", "y"],
+            "target_entities": ["x"],
         }
     ]
     # Cypher must ask for blob_key_text, not .text directly -- the whole
@@ -85,7 +89,10 @@ def test_sample_edges_hydrates_source_and_target_from_blob_key(monkeypatch):
 def test_sample_edges_missing_blob_key_degrades_to_empty_string(monkeypatch):
     monkeypatch.setattr(ontology_report_mod, "get_hydrator", lambda: _FakeHydrator({}))
     session = _FakeSession(
-        [{"source_blob_key": None, "target_blob_key": "blob/missing", "rel_type": "SAME_CATEGORY", "shared": ""}]
+        [{
+            "source_blob_key": None, "target_blob_key": "blob/missing", "rel_type": "SAME_CATEGORY", "shared": "",
+            "source_entities": [], "target_entities": [],
+        }]
     )
 
     result = _sample_edges(session, "doc1", "rev1", 5)
