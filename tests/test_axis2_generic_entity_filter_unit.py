@@ -29,6 +29,21 @@ corpus size grows toward real SEC-filing scale. Tests below at n=200
 preserve the original regression's protection at the scale it was
 measured on; tests at n~20 cover the new small-corpus case.
 
+Third regression: found via live verification of a real 264-page 10-K
+(223 entity-bearing nodes). "Chevron" (the filer's own name, 57% raw
+document frequency) is exactly what this filter exists to catch -- but
+type-aware canonicalization (_resolve_canonical_entities) keys document
+frequency by TYPE-SUFFIXED identity ("chevron (ORG)"), and the LLM's type
+tag isn't perfectly consistent across the ~15 separate NER batch calls a
+document this size requires. Chevron's true frequency (127/223) got
+fragmented across type buckets, and its dominant "chevron (ORG)" bucket
+landed at exactly 95/223 -- just under the adaptive cutoff of 95 -- while
+the real combined entity anchored 716 of 1,846 SHARES_ENTITY edges
+(38.8%) in the ingested graph. Fixed via _entity_base_text: genericity is
+now judged on the entity's base text, aggregating node coverage across
+every type variant it was tagged with, not on one type-suffixed key's own
+count in isolation.
+
 Run with:
     python -m pytest tests/test_axis2_generic_entity_filter_unit.py -v
 """
@@ -47,8 +62,11 @@ from src.semantic.axis2 import (
     Axis2Builder,
     _ENTITY_GENERICITY_DF_RATIO,
     _ENTITY_GENERICITY_DF_RATIO_CEILING,
+    _ENTITY_GENERICITY_LARGE_CORPUS_NODES,
     _ENTITY_GENERICITY_MIN_NODES,
     _adaptive_genericity_ratio,
+    _entity_base_text,
+    _entity_type,
     _informative_entities,
 )
 
@@ -192,3 +210,183 @@ def test_small_document_below_min_nodes_unaffected_by_genericity_filter():
     edges = builder._build_entity_edges([a, b])
     assert len(edges) == 1
     assert "company" in edges[0].properties["shared_entities"]
+
+
+# ── _entity_base_text / type-fragmentation regression ───────────────────────
+
+
+def test_entity_base_text_strips_known_type_suffix():
+    assert _entity_base_text("chevron (ORG)") == "chevron"
+    assert _entity_base_text("apple (CONCEPT)") == "apple"
+
+
+def test_entity_base_text_leaves_untyped_key_unchanged():
+    assert _entity_base_text("chevron") == "chevron"
+
+
+def test_entity_base_text_does_not_strip_non_type_parenthetical():
+    # A parenthetical that isn't one of the fixed NER types (e.g. a bare
+    # year) must not be mistaken for a type suffix.
+    assert _entity_base_text("fiscal year (2024)") == "fiscal year (2024)"
+
+
+def test_type_fragmented_dominant_entity_is_still_excluded():
+    """Direct reproduction of the live 10-K bug: an entity whose TRUE
+    document frequency (127/223, 57%) is dominant gets tagged with two
+    different types across separate NER batch calls, splitting it into
+    "chevron (ORG)" (95 nodes) and "chevron (OTHER)" (32 nodes) -- each
+    individually at or under the adaptive cutoff (max_df=95 at n=223), so
+    the old per-type-key frequency check let the dominant "chevron (ORG)"
+    bucket through. Both variants must now be excluded, since genericity
+    is judged on their combined base-text frequency (127 > 95)."""
+    total = 223
+    org_nodes = list(range(95))
+    other_nodes = list(range(95, 95 + 32))  # disjoint node set, same real entity
+    entity_to_nodes = {
+        "chevron (ORG)": org_nodes,
+        "chevron (OTHER)": other_nodes,
+        "specific finding (CONCEPT)": [0, 1],
+    }
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "chevron (ORG)" not in result
+    assert "chevron (OTHER)" not in result
+    assert "specific finding (CONCEPT)" in result
+
+
+def test_type_consistent_dominant_entity_still_excluded_as_before():
+    # Sanity check that the fix doesn't depend on fragmentation being
+    # present -- a single, consistently-typed dominant entity must still
+    # be excluded exactly as it was before this fix.
+    total = 223
+    entity_to_nodes = {
+        "chevron (ORG)": list(range(127)),
+        "specific finding (CONCEPT)": [0, 1],
+    }
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "chevron (ORG)" not in result
+    assert "specific finding (CONCEPT)" in result
+
+
+def test_build_entity_edges_excludes_type_fragmented_dominant_entity():
+    """End-to-end: node.entity_types disagreeing across nodes for the same
+    real-world entity must not let it anchor an edge. 6 nodes all mention
+    "chevron", tagged ORG on 4 of them and OTHER on the other 2 -- close
+    to this test's small n, so use a tight corpus where the flat/adaptive
+    ratio at min-nodes-threshold scale still excludes a 100%-frequency
+    term regardless of how it's split across two types."""
+    nodes = []
+    for i in range(4):
+        n = DKGNode(id=f"org{i}", type=NodeType.SECTION, title=f"org{i}", text="x", order=i)
+        n.entities = ["chevron"]
+        n.entity_types = {"chevron": "ORG"}
+        nodes.append(n)
+    for i in range(2):
+        n = DKGNode(id=f"other{i}", type=NodeType.SECTION, title=f"other{i}", text="x", order=4 + i)
+        n.entities = ["chevron"]
+        n.entity_types = {"chevron": "OTHER"}
+        nodes.append(n)
+    # One pair shares a genuinely rare, consistently-typed entity too.
+    nodes[0].entities.append("rare finding")
+    nodes[0].entity_types["rare finding"] = "CONCEPT"
+    nodes[1].entities.append("rare finding")
+    nodes[1].entity_types["rare finding"] = "CONCEPT"
+
+    builder = _builder()
+    edges = builder._build_entity_edges(nodes)
+
+    for edge in edges:
+        assert "chevron (ORG)" not in edge.properties["shared_entities"]
+        assert "chevron (OTHER)" not in edge.properties["shared_entities"]
+    assert any("rare finding (CONCEPT)" in e.properties["shared_entities"] for e in edges)
+
+
+# ── large-corpus floor convergence regression ────────────────────────────────
+
+
+def test_ratio_reaches_exact_floor_at_large_corpus_size():
+    assert _adaptive_genericity_ratio(_ENTITY_GENERICITY_LARGE_CORPUS_NODES) == _ENTITY_GENERICITY_DF_RATIO
+
+
+def test_ratio_below_large_corpus_threshold_still_has_asymptotic_excess():
+    # Just under the hard-floor cutoff, the exponential's residual excess
+    # over the floor should still be present (confirms the clamp is doing
+    # something, not just always returning the floor).
+    ratio = _adaptive_genericity_ratio(_ENTITY_GENERICITY_LARGE_CORPUS_NODES - 1)
+    assert ratio > _ENTITY_GENERICITY_DF_RATIO
+
+
+def test_dominant_term_at_real_document_scale_is_excluded():
+    """Direct reproduction of the live 10-K bug's second cause: "Chevron"
+    landed at 95/222 = 42.8% document frequency -- comfortably above the
+    validated 40% floor, but inside the exponential curve's un-converged
+    residual margin (~42.8% at n=222 before this fix), so it wasn't
+    excluded. canonicalization correctly merged all its spelling variants
+    into one key here (this is NOT the type-fragmentation case above) --
+    the curve itself just hadn't reached the floor yet."""
+    total = 222
+    entity_to_nodes = {
+        "chevron (ORG)": list(range(95)),
+        "specific finding (CONCEPT)": [0, 1],
+    }
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "chevron (ORG)" not in result
+    assert "specific finding (CONCEPT)" in result
+
+
+# ── DATE entities: type-excluded regardless of frequency ────────────────────
+
+
+def test_entity_type_extracts_tagged_type():
+    assert _entity_type("2025 (DATE)") == "DATE"
+    assert _entity_type("chevron (ORG)") == "ORG"
+
+
+def test_entity_type_none_for_untyped_key():
+    assert _entity_type("some untyped entity") is None
+    assert _entity_type("not a type (whatever)") is None
+
+
+def test_date_entity_excluded_even_at_low_document_frequency():
+    """Direct reproduction of the live 10-K bug's third cause: "2025"
+    appeared in only 12.2% of entity-bearing nodes (88/722) -- nowhere
+    near the 40% genericity floor -- yet dominated the sampled ontology
+    score's flagged invalid edges (all DATE-anchored, score dropped to
+    50%). Frequency-based filtering can't catch this: it's a type problem
+    (two pages sharing a calendar year says nothing about topical
+    relatedness), not a frequency one."""
+    total = 722
+    entity_to_nodes = {
+        "2025 (DATE)": list(range(88)),
+        "chevron (ORG)": list(range(2)),
+    }
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "2025 (DATE)" not in result
+    assert "chevron (ORG)" in result
+
+
+def test_date_entity_excluded_below_min_nodes_bypass():
+    # Below _ENTITY_GENERICITY_MIN_NODES, frequency filtering is bypassed
+    # entirely -- but the DATE exclusion is a type judgment, not a
+    # frequency one, so it still applies even here.
+    entity_to_nodes = {"2024 (DATE)": [0, 1], "specific (CONCEPT)": [0]}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=2)
+    assert "2024 (DATE)" not in result
+    assert "specific (CONCEPT)" in result
+
+
+def test_location_entity_not_excluded_by_type():
+    # Deliberately scoped to DATE only -- LOCATION can be a genuinely
+    # meaningful relation anchor (e.g. "Gulf of America", "Kazakhstan"),
+    # so it must still go through ordinary frequency-based filtering
+    # rather than being excluded outright.
+    total = 722
+    entity_to_nodes = {"kazakhstan (LOCATION)": list(range(2))}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "kazakhstan (LOCATION)" in result
+
+
+def test_untyped_entity_unaffected_by_date_exclusion():
+    total = 722
+    entity_to_nodes = {"legacy untyped entity": list(range(2))}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "legacy untyped entity" in result
