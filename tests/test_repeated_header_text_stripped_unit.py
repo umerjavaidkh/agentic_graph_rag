@@ -75,6 +75,80 @@ def test_unflagged_pages_keep_original_text_untouched():
     assert extracts[-1].text == original_text_page6
 
 
+def test_header_below_old_fraction_but_above_new_one_is_flagged():
+    """Direct reproduction of the live 10-K case: a header on 35 of 264
+    pages (13.3%) -- below the old 0.15 document-wide fraction (needed 39)
+    but above the current 0.10 (needs 27). Only the first 35 of 264 pages
+    carry the header, matching a multi-section document where a running
+    header dominates one section of the document, not the whole thing."""
+    extracts = [
+        _extract(i, [("Table of Contents", 76.0), (f"Body content on page {i}", 200.0)])
+        if i <= 35
+        else _extract(i, [(f"Unrelated body page {i}", 200.0)])
+        for i in range(1, 265)
+    ]
+    parser = LightPdfParser()
+    parser._flag_repeated_headers(extracts)
+
+    for extract in extracts[:35]:
+        assert "Table of Contents" not in extract.text
+    for extract in extracts[35:]:
+        assert "Table of Contents" not in extract.text  # never had it to begin with
+
+
+def test_same_text_at_unrelated_y_positions_does_not_block_a_real_cluster():
+    """Direct reproduction of the live 10-K case: "table of contents"
+    occurred as a genuine one-off ToC heading on page 3 (y=112, alone --
+    must NOT be flagged) and as a running header at y=76 on pages 7-66
+    (31 pages -- must be flagged). The old single global min/max range
+    across ALL occurrences of this text (76 to 112, a 36pt spread) failed
+    the tolerance check entirely, so the real 31-page cluster was never
+    flagged even though it's internally consistent (y=76.0 on every one
+    of its pages) -- position clustering must isolate the unrelated
+    one-off occurrence instead of letting it poison the whole group."""
+    extracts = []
+    for i in range(1, 265):
+        if i == 3:
+            extracts.append(_extract(i, [("Table of Contents", 112.0), (f"Body {i}", 300.0)]))
+        elif 7 <= i <= 66 and i % 2 == 1:
+            extracts.append(_extract(i, [("Table of Contents", 76.0), (f"Body {i}", 300.0)]))
+        else:
+            extracts.append(_extract(i, [(f"Body {i}", 300.0)]))
+
+    parser = LightPdfParser()
+    parser._flag_repeated_headers(extracts)
+
+    by_page = {e.page: e for e in extracts}
+    assert "Table of Contents" in by_page[3].text  # genuine one-off heading, untouched
+    assert "Table of Contents" not in by_page[7].text  # real running header, flagged
+    assert "Table of Contents" not in by_page[65].text
+
+
+def test_small_cluster_below_min_pages_floor_stays_unflagged_even_when_chained():
+    """A running header seen on only a handful of pages, positioned close
+    enough to chain into a larger nearby cluster (13pt apart, under the
+    20pt tolerance), must not get swept into being flagged just because
+    it's geometrically adjacent to a real repeated header -- the min-pages
+    floor still applies to the cluster's own occurrence count."""
+    extracts = []
+    for i in range(1, 265):
+        if 7 <= i <= 66 and i % 2 == 1:
+            extracts.append(_extract(i, [("Table of Contents", 76.0), (f"Body {i}", 300.0)]))
+        elif i in (150, 152, 154):
+            # Only 3 pages, isolated far from the main cluster -- clearly
+            # below the min-pages floor on its own.
+            extracts.append(_extract(i, [("Table of Contents", 300.0), (f"Body {i}", 400.0)]))
+        else:
+            extracts.append(_extract(i, [(f"Body {i}", 300.0)]))
+
+    parser = LightPdfParser()
+    parser._flag_repeated_headers(extracts)
+
+    by_page = {e.page: e for e in extracts}
+    assert "Table of Contents" not in by_page[7].text  # main cluster still flagged
+    assert "Table of Contents" in by_page[150].text  # too few pages, left alone
+
+
 def test_section_body_text_excludes_repeated_header_via_full_pipeline():
     """End-to-end through _build_from_extracts: a repeated header must
     never appear inside any Section node's text, even though it's a
