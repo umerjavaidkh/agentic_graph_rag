@@ -47,3 +47,8 @@ qdrant-client>=1.9.0
 
 # ── Optional: local embeddings (no API key) ──
 # sentence-transformers>=3.0.0
+
+# ── Retrieval: cross-encoder reranking (RERANK_ENABLED, default on) ──
+# Pulls in torch (CPU wheel) — a real image-size cost, not optional at
+# import time since RerankerService loads it lazily on first query.
+sentence-transformers>=3.0.0

@@ -100,6 +100,20 @@ RETRIEVAL_CANDIDATE_POOL = int(os.environ.get("RETRIEVAL_CANDIDATE_POOL", "30"))
 RETRIEVAL_FINAL_LIMIT = int(os.environ.get("RETRIEVAL_FINAL_LIMIT", "8"))
 RETRIEVAL_MIN_RERANK_SCORE = float(os.environ.get("RETRIEVAL_MIN_RERANK_SCORE", "0.12"))
 
+# Cross-encoder reranking: the merged vector/fulltext/graph/lexical candidate
+# pool is scored by heuristic weights that don't judge query-relevance
+# directly, so unrelated chunks sharing generic terms/entities (dates, "u.s.")
+# can tie with the chunk that actually answers the question. A cross-encoder
+# re-scores each (query, chunk) pair directly and reorders on that, same
+# retrieve-then-rerank pattern most production RAG stacks use.
+RERANK_ENABLED = os.environ.get("RERANK_ENABLED", "true").lower() in ("1", "true", "yes")
+# Backend key resolved via src/retrieval/reranker_registry.py — swap/A-B by
+# registering a new backend under a new key and pointing this at it.
+# Default is "rrf" (reciprocal rank fusion, no dependency, no model load);
+# "cross_encoder" is more precise but requires torch/sentence-transformers.
+RERANK_BACKEND = os.environ.get("RERANK_BACKEND", "rrf")
+RERANK_MODEL = os.environ.get("RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+
 # Page vision fallback (cheap model, selective pages) — tables/charts/diagrams → visual_content
 ENABLE_PAGE_VISION = os.environ.get("ENABLE_PAGE_VISION", "false").lower() in ("1", "true", "yes")
 VISION_MODEL = os.environ.get("VISION_MODEL", "gpt-4o-mini")
@@ -227,7 +241,21 @@ DOCUMENT_SYNTHESIS_CONTEXT_MAX_CHARS = int(
 
 VISION_LLM_MAX_TOKENS = llm_max_tokens("VISION_LLM_MAX_TOKENS", 2000, minimum=256)
 
-AXIS2_NER_MAX_TOKENS = llm_max_tokens("AXIS2_NER_MAX_TOKENS", 200)
+# 200 was calibrated for the pre-chunking flat-string entity format. Two
+# compounding causes made it (and 350) too tight once chunking + typed
+# entities landed: (1) the typed {"text": ..., "type": ...} objects are
+# more verbose than flat strings, and (2) without an explicit instruction
+# the model defaults to PRETTY-PRINTED JSON (newlines + indentation), which
+# measured 3-4x the tokens of the equivalent compact JSON for the same 10
+# entities -- verified live on a real 10-K page: a single compact-JSON
+# excerpt needs ~100 tokens for 10 typed entities, the same content
+# pretty-printed needed 350+ and still got cut off mid-object, silently
+# degrading to zero entities for the whole call. Fixed at the prompt level
+# (compact-JSON instruction in axis2.py's NER prompt) so this budget is a
+# comfortable multiple of the real ~100-token measured need, not a tight
+# fit -- axis2.py also self-heals via batch-split-and-retry on any
+# remaining parse failure, so this doesn't need to be a worst-case bound.
+AXIS2_NER_MAX_TOKENS = llm_max_tokens("AXIS2_NER_MAX_TOKENS", 300)
 AXIS2_RELATION_MAX_TOKENS = llm_max_tokens("AXIS2_RELATION_MAX_TOKENS", 150)
 
 # ── Scalable ingestion pipeline ────────────────────────────────────────────
@@ -245,14 +273,29 @@ INGEST_WORKER_CONCURRENCY = int(os.environ.get("INGEST_WORKER_CONCURRENCY", "2")
 # Axis 2 — parallel NER: max simultaneous LLM calls for entity extraction.
 AXIS2_NER_CONCURRENCY = int(os.environ.get("AXIS2_NER_CONCURRENCY", "8"))
 
-# Axis 2 — nodes per NER LLM call. One call per node doesn't scale: a single
-# 7,165-node document (Section+Page nodes needing NER) burned an entire
-# 10,000-request daily OpenAI quota by itself, reproduced twice live. Batching
-# multiple nodes' text into one call cuts request count by roughly this
-# factor with no loss of coverage (every node still gets its own extracted
-# entities, just fewer round trips) — same "batch instead of one-call-per-
-# item" pattern chapter-summary enrichment already uses.
-AXIS2_NER_BATCH_SIZE = int(os.environ.get("AXIS2_NER_BATCH_SIZE", "15"))
+# Axis 2 — excerpts per NER LLM call (nodes since chunking, since a long
+# node's chunks are each their own excerpt). One call per excerpt doesn't
+# scale: a single 7,165-node document (Section+Page nodes needing NER)
+# burned an entire 10,000-request daily OpenAI quota by itself, reproduced
+# twice live. Batching multiple excerpts into one call cuts request count
+# by roughly this factor — same "batch instead of one-call-per-item"
+# pattern chapter-summary enrichment already uses.
+#
+# Was 15, lowered after finding that a *large* multi-excerpt batch has a
+# second, distinct failure mode beyond the token-overflow one the
+# self-healing split-retry already handles: the model can silently return
+# an empty array for one excerpt's index in a crowded batch without any
+# parse error at all (a real response, just wrong for that one index) --
+# not something a retry can detect or fix, since there's no exception to
+# catch. Measured live across all 142 long-text pages of a real 10-K:
+#   batch=15 (old default): 17.6% zero-entity, 26.1% <=3 entities
+#   batch=5:                 1.4% zero-entity,  3.5% <=3 entities
+#   batch=3:                 0.0% zero-entity,  0.7% <=3 entities
+# 3 costs ~5x the request count of 15 (still far below one-call-per-node),
+# and ~12s slower across 142 pages in that measurement -- worth it to
+# clear the project's 95%+ coverage target without leaving a known,
+# unfixable-by-retry gap.
+AXIS2_NER_BATCH_SIZE = int(os.environ.get("AXIS2_NER_BATCH_SIZE", "3"))
 
 # API-process thread pools (src/api.py) that run blocking work (LLM calls,
 # Neo4j reads/writes) off the asyncio event loop. Defaults match what was

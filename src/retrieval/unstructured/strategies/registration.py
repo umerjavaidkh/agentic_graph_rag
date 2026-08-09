@@ -22,6 +22,7 @@ from ..services.formatter import ResponseFormatter
 from ..services.graph_seeds import GraphSeedService
 from ..services.lexical import LexicalService
 from ..services.ranking import RankingService
+from ..services.reranker import RerankerService
 from .box import BoxStrategy
 from .filing_date import FilingDateStrategy
 from .full_hybrid import FullHybridStrategy
@@ -35,6 +36,7 @@ document_resolver = DocumentResolver(graph_seeds)
 lexical = LexicalService(ranking, document_resolver)
 chapter_summaries = ChapterSummaryService()
 formatter = ResponseFormatter()
+reranker = RerankerService()
 exec_ = DocumentQueryExecutor()
 
 register_unstructured("subsection_tree", lambda: SubsectionStrategy(document_resolver, formatter, exec_))
@@ -45,6 +47,13 @@ register_unstructured("structural_filing_date", lambda: FilingDateStrategy(docum
 register_unstructured(
     "graph_rag_hybrid",
     lambda: FullHybridStrategy(
-        get_neo4j_driver(), ranking, graph_seeds, lexical, formatter, document_resolver, chapter_summaries
+        get_neo4j_driver(),
+        ranking,
+        graph_seeds,
+        lexical,
+        formatter,
+        document_resolver,
+        chapter_summaries,
+        reranker=reranker,
     ),
 )

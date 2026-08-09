@@ -30,6 +30,7 @@ Design principles:
 import difflib
 import json
 import itertools
+import logging
 import math
 import os
 import re
@@ -37,6 +38,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from ..config.settings import (
     AXIS2_GROUND_LLM_EDGES,
@@ -329,11 +332,83 @@ _ENTITY_GENERICITY_DF_RATIO_CEILING = 0.85  # cap: small-corpus permissiveness
 # Controls how fast the ratio decays from the ceiling toward the floor as
 # total_entity_nodes grows -- chosen so a ~20-node corpus (this file's
 # motivating case) stays comfortably permissive (~75%, safely above the
-# 70% document frequency that triggered this) while a ~200-node corpus
-# (real SEC-filing scale) has decayed back to within ~0.04 of the original
-# validated 40% floor, preserving that regression's protection at the
-# scale it was actually measured on.
+# 70% document frequency that triggered this).
 _ENTITY_GENERICITY_DECAY_NODES = 80
+# An exponential decay asymptotically APPROACHES the floor but never
+# exactly reaches it -- at real SEC-filing scale (~222 entity-bearing
+# nodes) it was still sitting at ~42.8%, a permissive excess of ~3 points
+# over the validated 40%. Verified live: "Chevron" (the filer's own name)
+# landed at 95/222 = 42.8% document frequency in one ingestion run --
+# comfortably above the intended 40% floor, but just inside this excess
+# margin, so it anchored 683 of 1,833 SHARES_ENTITY edges (37.3%) despite
+# canonicalization correctly merging all its spelling variants into one
+# key (confirmed: this was NOT the type-fragmentation bug fixed above --
+# the curve itself just hadn't fully converged). At and beyond this many
+# entity-bearing nodes, use the exact validated floor with no residual
+# excess, rather than only asymptotically approaching it -- this is where
+# the original flat-40% threshold was actually measured and trusted, so
+# it should be applied exactly, not approximately.
+_ENTITY_GENERICITY_LARGE_CORPUS_NODES = 150
+
+# Fixed, small taxonomy -- enough to separate "Apple the company" from
+# "apple the fruit"-shaped ambiguity (ORG vs CONCEPT/PRODUCT) without asking
+# the model to invent an open-ended type vocabulary. Module-level (not just
+# an Axis2Builder attribute) so _entity_base_text below can recognize a
+# type suffix without importing the class.
+_ENTITY_TYPES = ("PERSON", "ORG", "LOCATION", "PRODUCT", "CONCEPT", "METRIC", "DATE", "OTHER")
+
+
+def _entity_base_text(entity_key: str) -> str:
+    """Strips a trailing " (TYPE)" suffix added by _resolve_canonical_entities's
+    _display(), so genericity can be judged on the entity's real-world
+    identity's TOTAL document frequency across every type variant it was
+    tagged with -- not on one type-suffixed key's own count in isolation.
+
+    Necessary because the LLM's type tag for the same entity isn't
+    perfectly consistent across separate NER batch calls (each covering a
+    handful of nodes) -- a large document runs many such calls. Verified
+    live on a real 264-page 10-K: "Chevron" (the filer's own name, 57% raw
+    document frequency) was tagged ORG in most batches but not all,
+    fragmenting its true frequency across type buckets so that its
+    dominant "Chevron (ORG)" bucket landed at exactly 95/223 nodes --
+    just under the adaptive threshold's cutoff of 95 -- while the real,
+    combined entity anchored 716 of 1,846 SHARES_ENTITY edges (38.8%) in
+    the ingested graph. Type-awareness must only affect which mentions are
+    treated as the same real-world entity (Apple ORG vs apple CONCEPT
+    genuinely are different things and must stay separate) -- it must
+    never be allowed to affect how OFTEN that entity is judged to appear,
+    which is what genericity filtering depends on.
+    """
+    if entity_key.endswith(")") and " (" in entity_key:
+        base, _, rest = entity_key.rpartition(" (")
+        if rest[:-1] in _ENTITY_TYPES:
+            return base
+    return entity_key
+
+
+def _entity_type(entity_key: str) -> Optional[str]:
+    """Inverse of _entity_base_text: the tagged TYPE, or None if untyped/legacy."""
+    if entity_key.endswith(")") and " (" in entity_key:
+        _, _, rest = entity_key.rpartition(" (")
+        type_str = rest[:-1]
+        if type_str in _ENTITY_TYPES:
+            return type_str
+    return None
+
+
+# DATE entities pass the document-frequency genericity filter by raw count
+# (they're rarely 40%+ of a document's nodes) but are structurally
+# meaningless as a topical-similarity anchor regardless of frequency: two
+# pages both mentioning "2025" says nothing about whether their content is
+# related, in any document. Verified live: DATE-anchored SHARES_ENTITY edges
+# were the dominant failure mode in a 10-K's sampled ontology score (all 10
+# flagged edges DATE-anchored, score 50%) even after the document-frequency
+# fixes above resolved the entity-name (self-referential-term) failure mode.
+# Deliberately scoped to DATE only, not LOCATION -- unlike a bare date, many
+# document types (supply-chain, regulatory, geological) rely on genuine
+# location-based relations, so excluding the whole type would be overreach
+# rather than a root-cause fix.
+_NON_TOPICAL_ENTITY_TYPES = frozenset({"DATE"})
 
 
 def _adaptive_genericity_ratio(total_entity_nodes: int) -> float:
@@ -343,21 +418,52 @@ def _adaptive_genericity_ratio(total_entity_nodes: int) -> float:
     Exponential decay, not linear -- most of the drop happens over the
     first ~1-2 decay constants (small/medium documents, where the true
     corpus-size-vs-genericity relationship is least certain and this
-    function's shape matters most), then flattens out approaching the
-    floor for large documents rather than continuing to fall indefinitely.
+    function's shape matters most).
+
+    At and beyond _ENTITY_GENERICITY_LARGE_CORPUS_NODES, returns the exact
+    floor rather than the exponential's asymptotic approximation of it --
+    an exponential decay gets arbitrarily close to the floor but never
+    exactly reaches it, and at real SEC-filing scale that residual excess
+    (~3 points, verified live) was enough for a document's own dominant
+    self-referential term to slip through. The original flat 40% was
+    validated at that scale, so it's applied exactly there, not
+    approximately.
     """
+    if total_entity_nodes >= _ENTITY_GENERICITY_LARGE_CORPUS_NODES:
+        return _ENTITY_GENERICITY_DF_RATIO
     decay = math.exp(-total_entity_nodes / _ENTITY_GENERICITY_DECAY_NODES)
     return _ENTITY_GENERICITY_DF_RATIO + (_ENTITY_GENERICITY_DF_RATIO_CEILING - _ENTITY_GENERICITY_DF_RATIO) * decay
 
 
 def _informative_entities(entity_to_nodes: dict[str, list[int]], total_entity_nodes: int) -> set[str]:
     """Entities NOT too generic (by document-frequency ratio) to anchor a
-    SHARES_ENTITY edge within this document. See constants above for why."""
+    SHARES_ENTITY edge within this document. See constants above for why.
+
+    Document frequency is computed per BASE TEXT (see _entity_base_text),
+    aggregating node coverage across every type-suffixed variant that base
+    text appears under, not per type-suffixed key in isolation -- a type
+    tag is occasionally inconsistent across separate NER batch calls, and
+    judging genericity on the fragmented per-type count instead of the
+    real combined one lets a genuinely dominant/generic entity slip
+    through underneath the cutoff in whichever type bucket happens to
+    hold most of its mentions.
+
+    DATE entities are excluded unconditionally (see _NON_TOPICAL_ENTITY_TYPES)
+    regardless of corpus size or frequency -- that's a type judgment, not a
+    frequency one, so it applies even below the min-nodes bypass below.
+    """
+    topical = {e for e in entity_to_nodes if _entity_type(e) not in _NON_TOPICAL_ENTITY_TYPES}
+
     if total_entity_nodes < _ENTITY_GENERICITY_MIN_NODES:
-        return set(entity_to_nodes.keys())
+        return topical
     ratio = _adaptive_genericity_ratio(total_entity_nodes)
     max_df = max(1, int(total_entity_nodes * ratio))
-    return {e for e, idxs in entity_to_nodes.items() if len(idxs) <= max_df}
+
+    base_nodes: dict[str, set[int]] = {}
+    for e, idxs in entity_to_nodes.items():
+        base_nodes.setdefault(_entity_base_text(e), set()).update(idxs)
+
+    return {e for e in topical if len(base_nodes[_entity_base_text(e)]) <= max_df}
 
 
 def _resolve_canonical_entities(nodes: list[DKGNode]) -> dict[Tuple[str, str], str]:
@@ -482,13 +588,36 @@ class Axis2Builder:
     # ─────────────────────────────────────────
     # 2. ENTITY EXTRACTION — parallel NER
     # ─────────────────────────────────────────
-    # Fixed, small taxonomy -- enough to separate "Apple the company" from
-    # "apple the fruit"-shaped ambiguity (ORG vs CONCEPT/PRODUCT) without
-    # asking the model to invent an open-ended type vocabulary, which would
-    # make _canonicalize_entities's type-bucketing unstable across batches
-    # (the same real entity getting a different type spelling in two
-    # different batches would defeat the whole point of typing it).
-    _ENTITY_TYPES = ("PERSON", "ORG", "LOCATION", "PRODUCT", "CONCEPT", "METRIC", "DATE", "OTHER")
+    # See module-level _ENTITY_TYPES for why this is a fixed, small
+    # taxonomy rather than an open-ended one the model invents per call.
+    _ENTITY_TYPES = _ENTITY_TYPES
+
+    _NER_CHUNK_CHARS = 1200
+    # Each chunk's own NER call already asks for its top 10; a node spanning
+    # several chunks can validly surface more real entities than one call
+    # would -- capped here (not just "10 per call, unbounded per node") so a
+    # very long node can't produce an unbounded entity list.
+    _NER_MAX_ENTITIES_PER_NODE = 30
+
+    @staticmethod
+    def _chunk_node_text(text: str, size: int) -> list[str]:
+        """Split `text` into <=`size`-char pieces, breaking on whitespace
+        where possible so a word isn't split mid-token. Whole-text passthrough
+        (a single chunk) when text already fits."""
+        if len(text) <= size:
+            return [text]
+        chunks: list[str] = []
+        start = 0
+        n = len(text)
+        while start < n:
+            end = min(start + size, n)
+            if end < n:
+                split_at = text.rfind(" ", start, end)
+                if split_at > start:
+                    end = split_at
+            chunks.append(text[start:end])
+            start = end
+        return chunks
 
     def _extract_entities(self, nodes: list[DKGNode]) -> list[DKGNode]:
         """
@@ -509,6 +638,17 @@ class Axis2Builder:
             lowercased entity text) so downstream canonicalization can tell
             "Apple" the ORG apart from "apple" the CONCEPT instead of
             merging same-looking strings from different real-world things.
+
+        Long node text is split into _NER_CHUNK_CHARS-sized chunks rather
+        than truncated to one -- verified live on a real 264-page 10-K: a
+        4,074-char page lost every entity past its first ~1,200 chars (OPEC,
+        Russia, "Chevron's Strategic Direction") under a flat per-node
+        truncation, since only that first slice was ever sent to the model.
+        A node's chunks can land in different batches (processed and merged
+        independently via as_completed), so results are merged additively
+        below, not assigned -- an assignment would let a later-completing
+        batch silently overwrite an earlier chunk's entities for the same
+        node.
         """
         if not self.client:
             return nodes
@@ -518,15 +658,21 @@ class Axis2Builder:
             return nodes
 
         batch_size = max(1, AXIS2_NER_BATCH_SIZE)
-        batches = [targets[i:i + batch_size] for i in range(0, len(targets), batch_size)]
         type_choices = " | ".join(self._ENTITY_TYPES)
 
-        def _ner_batch(batch: list[DKGNode]) -> tuple[dict[str, list], dict[str, dict[str, str]]]:
+        units: list[tuple[DKGNode, str]] = [
+            (node, chunk)
+            for node in targets
+            for chunk in self._chunk_node_text(node.text, self._NER_CHUNK_CHARS)
+        ]
+        batches = [units[i:i + batch_size] for i in range(0, len(units), batch_size)]
+
+        def _ner_batch(batch: list[tuple[DKGNode, str]]) -> tuple[dict[str, list], dict[str, dict[str, str]]]:
             # Excerpts are keyed by a short local index ("0", "1", ...), not
             # the node's own (long) id -- cheaper in tokens and avoids the
             # model mangling a complex id string as a JSON key. Mapped back
             # to node.id below, after parsing.
-            parts = [f"[{i}]\n{node.text[:1200]}" for i, node in enumerate(batch)]
+            parts = [f"[{i}]\n{chunk}" for i, (_, chunk) in enumerate(batch)]
             user_content = "\n\n---\n\n".join(parts)
             try:
                 resp = self.client.chat_completion(
@@ -547,8 +693,13 @@ class Axis2Builder:
                                 'string) to an array of {"text": ..., "type": ...} '
                                 'objects, e.g. {"0": [{"text": "Isaac Newton", '
                                 '"type": "PERSON"}], "1": [...]}. Include every '
-                                "excerpt number, even if its array is empty. No "
-                                "explanation."
+                                "excerpt number, even if its array is empty. Respond "
+                                "with COMPACT JSON only -- no extra whitespace, "
+                                "newlines, or indentation between entries (pretty-"
+                                "printed JSON for a 10-entity list can run 3-4x more "
+                                "tokens than compact, which was silently truncating "
+                                "responses mid-object under the token budget below). "
+                                "No explanation."
                             ),
                         },
                         {"role": "user", "content": user_content},
@@ -559,11 +710,48 @@ class Axis2Builder:
                 raw = raw.replace("```json", "").replace("```", "").strip()
                 parsed = json.loads(raw)
             except Exception:
+                # No fixed max_tokens budget is safe against an arbitrary
+                # combination of entity-dense chunks landing in the same
+                # batch (verified live: raising the per-unit budget just
+                # moved the failure to a slightly larger combination) --
+                # was silent before too, and a truncated/malformed response
+                # here zeroed out entities for every node/chunk in the
+                # batch, indistinguishable from "the model found nothing."
+                # Self-healing instead of a bigger constant: split the
+                # batch in half and retry each half independently, so only
+                # the actually-too-dense sub-batch keeps splitting, down to
+                # single units in the worst case, rather than losing an
+                # entire batch's entities to one overflow.
+                if len(batch) > 1:
+                    logger.warning(
+                        "axis2 NER batch failed to parse (%d units); retrying as two smaller batches.",
+                        len(batch),
+                        exc_info=True,
+                    )
+                    mid = len(batch) // 2
+                    left_entities, left_types = _ner_batch(batch[:mid])
+                    right_entities, right_types = _ner_batch(batch[mid:])
+                    entities_result: dict[str, list] = dict(left_entities)
+                    for node_id, texts in right_entities.items():
+                        entities_result.setdefault(node_id, []).extend(texts)
+                    types_result: dict[str, dict[str, str]] = dict(left_types)
+                    for node_id, etypes in right_types.items():
+                        types_result.setdefault(node_id, {}).update(etypes)
+                    return entities_result, types_result
+                logger.warning(
+                    "axis2 NER unit failed to parse even alone (node=%s); leaving its entities empty.",
+                    batch[0][0].id,
+                    exc_info=True,
+                )
                 parsed = {}
 
+            # Additive (setdefault+extend/update), not assignment: a node
+            # with multiple chunks can have more than one entry in this same
+            # batch, and results from other batches for the same node.id get
+            # merged in by the caller too.
             entities_result: dict[str, list] = {}
             types_result: dict[str, dict[str, str]] = {}
-            for i, node in enumerate(batch):
+            for i, (node, chunk) in enumerate(batch):
                 raw_items = parsed.get(str(i)) if isinstance(parsed, dict) else None
                 raw_items = raw_items if isinstance(raw_items, list) else []
 
@@ -587,11 +775,13 @@ class Axis2Builder:
                     if isinstance(etype, str) and etype.strip():
                         node_types[text.lower()] = etype.strip().upper()
 
-                entities_result[node.id] = texts
-                types_result[node.id] = node_types
+                entities_result.setdefault(node.id, []).extend(texts)
+                types_result.setdefault(node.id, {}).update(node_types)
             return entities_result, types_result
 
         id_to_node = {n.id: n for n in targets}
+        merged_entities: dict[str, list[str]] = {}
+        merged_types: dict[str, dict[str, str]] = {}
 
         with ThreadPoolExecutor(max_workers=AXIS2_NER_CONCURRENCY, thread_name_prefix="axis2_ner") as pool:
             futures = [pool.submit(_ner_batch, batch) for batch in batches]
@@ -601,11 +791,27 @@ class Axis2Builder:
                 except Exception:
                     continue
                 for node_id, entities in batch_entities.items():
-                    if node_id in id_to_node:
-                        id_to_node[node_id].entities = entities
+                    merged_entities.setdefault(node_id, []).extend(entities)
                 for node_id, etypes in batch_types.items():
-                    if node_id in id_to_node:
-                        id_to_node[node_id].entity_types = etypes
+                    merged_types.setdefault(node_id, {}).update(etypes)
+
+        for node_id, entities in merged_entities.items():
+            node = id_to_node.get(node_id)
+            if node is None:
+                continue
+            seen: set[str] = set()
+            deduped: list[str] = []
+            for e in entities:
+                key = e.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(e)
+            node.entities = deduped[: self._NER_MAX_ENTITIES_PER_NODE]
+        for node_id, etypes in merged_types.items():
+            node = id_to_node.get(node_id)
+            if node is not None:
+                node.entity_types = etypes
 
         return nodes
 

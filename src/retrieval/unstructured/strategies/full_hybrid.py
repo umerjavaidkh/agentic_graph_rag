@@ -48,6 +48,7 @@ from ..services.formatter import ResponseFormatter
 from ..services.graph_seeds import GraphSeedService
 from ..services.lexical import LexicalService
 from ..services.ranking import RankingService
+from ..services.reranker import RerankerService
 
 _T = TypeVar("_T")
 
@@ -65,6 +66,7 @@ class FullHybridStrategy:
         document_resolver: DocumentResolver,
         chapter_summaries: Optional[ChapterSummaryService] = None,
         financial_summaries: Optional[FinancialSummaryService] = None,
+        reranker: Optional[RerankerService] = None,
     ):
         self._driver = driver
         self._ranking = ranking
@@ -74,6 +76,7 @@ class FullHybridStrategy:
         self._document_resolver = document_resolver
         self._chapter_summaries = chapter_summaries or ChapterSummaryService()
         self._financial_summaries = financial_summaries or FinancialSummaryService()
+        self._reranker = reranker or RerankerService()
         # One process-wide pool, not a fresh ThreadPoolExecutor spun up and
         # torn down on every retrieve() call — this strategy is itself a
         # process-wide singleton (see strategies/registration.py), so the
@@ -283,6 +286,17 @@ class FullHybridStrategy:
             synthesis=synthesis,
             chapter_summary_boost=wants_overview,
             limit=max(1, int(fetch_limit)),
+        )
+        items = self._reranker.rerank(
+            query,
+            items,
+            sources={
+                "vector": vector_hits,
+                "fulltext": fulltext_hits,
+                "graph": graph_hits,
+                "lexical": lexical_hits,
+                "chapter_summary": chapter_summary_hits,
+            },
         )
         if lexical_hits:
             items = self._ranking._pin_precision_lexical_chunks(

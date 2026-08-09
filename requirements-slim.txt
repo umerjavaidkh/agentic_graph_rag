@@ -30,6 +30,11 @@ langgraph>=0.2.0
 numpy>=1.26.0,<2.0.0
 hdbscan>=0.8.33            # density-based clustering for SAME_CATEGORY
 
+# ── Retrieval: cross-encoder reranking (RERANK_ENABLED, default on) ──
+# Pulls in torch (CPU wheel) — a real image-size cost. Lazily loaded by
+# RerankerService on first query, not at import time.
+sentence-transformers>=3.0.0
+
 # ── Neo4j ───────────────────────────────
 neo4j>=5.20.0
 
