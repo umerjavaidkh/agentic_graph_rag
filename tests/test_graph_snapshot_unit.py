@@ -2,9 +2,13 @@
 tests/test_graph_snapshot_unit.py — graph-construction snapshot
 serialization for the graph-inspector UI (src/document/graph_snapshot.py).
 
-Covers build_snapshot (pure serialization) and write_snapshot/read_snapshot
-against a fake in-memory blob store. query_final_snapshot_sync (live Neo4j
-query) is integration-level and not covered here.
+Covers build_snapshot (pure serialization), write_snapshot/read_snapshot
+against a fake in-memory blob store, and query_page_scoped_snapshot_sync's
+internal/external merge logic against a fake queued-response Neo4j session
+(query_final_snapshot_sync is a simple single-query pass-through and stays
+integration-level, not covered here -- query_page_scoped_snapshot_sync earns
+its own coverage since it runs three queries and merges/dedups their results,
+real logic that can silently break the graph-inspector's page view).
 
 Run with:
     python -m pytest tests/test_graph_snapshot_unit.py -v
@@ -23,6 +27,7 @@ from src.document.graph_snapshot import (
     X1_STAGE,
     X2_STAGE,
     build_snapshot,
+    query_page_scoped_snapshot_sync,
     read_snapshot,
     write_snapshot,
 )
@@ -181,3 +186,129 @@ def test_write_snapshot_propagates_blob_store_failure_to_caller():
         write_snapshot(
             RaisingStore(), X1_STAGE, tenant_id="t", logical_doc_id="d", revision_id="d:r1", nodes=[], edges=[],
         )
+
+
+# ── query_page_scoped_snapshot_sync (internal + external merge) ─────────────
+
+
+class _FakeSession:
+    """Returns queued responses in call order -- query_page_scoped_snapshot_sync
+    runs exactly 3 queries (nodes, internal edges, external edges), in that
+    order, each expecting a different row shape."""
+
+    def __init__(self, responses: list[list[dict]]):
+        self._responses = list(responses)
+
+    def run(self, cypher, **kwargs):
+        return self._responses.pop(0)
+
+
+def _node_row(node_id: str, *, page: int = 1) -> dict:
+    return {
+        "id": node_id, "labels": ["Section"], "title": node_id, "order": 0,
+        "depth": 1, "page_start": page, "page_end": page, "text_len": 10,
+        "n_entities": 0, "has_embedding": False, "region_kind": None,
+    }
+
+
+def _internal_edge_row(source_id: str, target_id: str) -> dict:
+    return {
+        "source_id": source_id, "target_id": target_id, "rel_type": "CONTAINS",
+        "axis": 1, "weight": 1.0, "confidence": 1.0, "confidence_tier": "EXTRACTED",
+        "properties": "{}",
+    }
+
+
+def _external_edge_row(source_id: str, target_id: str, *, b_id: str, weight: float = 1.0) -> dict:
+    return {
+        "source_id": source_id, "target_id": target_id, "rel_type": "SHARES_ENTITY",
+        "axis": 2, "weight": weight, "confidence": 0.8, "confidence_tier": "INFERRED",
+        "properties": "{}",
+        "b_id": b_id, "b_labels": ["Page"], "b_title": f"Page for {b_id}", "b_order": 5,
+        "b_depth": 99, "b_page_start": 9, "b_page_end": 9, "b_text_len": 20,
+        "b_n_entities": 3, "b_has_embedding": False, "b_region_kind": None,
+    }
+
+
+def test_page_scoped_snapshot_internal_only_when_no_external_edges():
+    session = _FakeSession([
+        [_node_row("n1"), _node_row("n2")],
+        [_internal_edge_row("n1", "n2")],
+        [],
+    ])
+    snap = query_page_scoped_snapshot_sync(session, "doc1", "doc1:r1", 1)
+
+    assert snap["stage"] == "page_scoped"
+    assert snap["node_count"] == 2
+    assert snap["edge_count"] == 1
+    assert snap["internal_node_count"] == 2
+    assert snap["external_node_count"] == 0
+    assert all(n["is_external"] is False for n in snap["nodes"])
+    assert snap["edges"][0]["scope"] == "internal"
+
+
+def test_page_scoped_snapshot_includes_external_edges_and_neighbor_nodes():
+    session = _FakeSession([
+        [_node_row("n1")],
+        [],
+        [_external_edge_row("n1", "ext1", b_id="ext1")],
+    ])
+    snap = query_page_scoped_snapshot_sync(session, "doc1", "doc1:r1", 1)
+
+    assert snap["external_edge_count"] == 1
+    assert snap["external_node_count"] == 1
+    node_ids = {n["id"] for n in snap["nodes"]}
+    assert "ext1" in node_ids  # external neighbor node included, not just referenced
+    ext_node = next(n for n in snap["nodes"] if n["id"] == "ext1")
+    assert ext_node["is_external"] is True
+    assert snap["edges"][0]["scope"] == "external"
+    assert snap["edges"][0]["target_id"] == "ext1"
+
+
+def test_page_scoped_snapshot_external_edges_do_not_dangle_reference_missing_nodes():
+    """An edge referencing a node outside the internal node set must bring
+    that node along -- otherwise a renderer that drops dangling-reference
+    edges (as graph_inspector.html's does) would silently show nothing for
+    every external edge despite them being present in the response."""
+    session = _FakeSession([
+        [_node_row("n1")],
+        [],
+        [_external_edge_row("n1", "ext1", b_id="ext1")],
+    ])
+    snap = query_page_scoped_snapshot_sync(session, "doc1", "doc1:r1", 1)
+
+    node_ids = {n["id"] for n in snap["nodes"]}
+    for e in snap["edges"]:
+        assert e["source_id"] in node_ids
+        assert e["target_id"] in node_ids
+
+
+def test_page_scoped_snapshot_dedupes_external_node_shared_by_multiple_edges():
+    session = _FakeSession([
+        [_node_row("n1"), _node_row("n2")],
+        [],
+        [
+            _external_edge_row("n1", "ext1", b_id="ext1"),
+            _external_edge_row("n2", "ext1", b_id="ext1"),
+        ],
+    ])
+    snap = query_page_scoped_snapshot_sync(session, "doc1", "doc1:r1", 1)
+
+    ext_nodes = [n for n in snap["nodes"] if n["id"] == "ext1"]
+    assert len(ext_nodes) == 1  # not duplicated despite 2 edges referencing it
+    assert snap["external_edge_count"] == 2
+    assert snap["external_node_count"] == 1
+
+
+def test_page_scoped_snapshot_counts_are_consistent():
+    session = _FakeSession([
+        [_node_row("n1"), _node_row("n2")],
+        [_internal_edge_row("n1", "n2")],
+        [_external_edge_row("n1", "ext1", b_id="ext1"), _external_edge_row("n1", "ext2", b_id="ext2")],
+    ])
+    snap = query_page_scoped_snapshot_sync(session, "doc1", "doc1:r1", 1)
+
+    assert snap["node_count"] == snap["internal_node_count"] + snap["external_node_count"]
+    assert snap["edge_count"] == snap["internal_edge_count"] + snap["external_edge_count"]
+    assert snap["node_count"] == 4  # n1, n2, ext1, ext2
+    assert snap["edge_count"] == 3  # 1 internal + 2 external

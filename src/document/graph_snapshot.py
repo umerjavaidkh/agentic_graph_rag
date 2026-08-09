@@ -146,17 +146,18 @@ def _live_node_rows_to_dicts(node_rows) -> list[dict[str, Any]]:
     ]
 
 
+def _parse_edge_properties(props: Any) -> dict[str, Any]:
+    if isinstance(props, str) and props:
+        try:
+            return json.loads(props)
+        except Exception:
+            return {"_raw": props}
+    return props or {}
+
+
 def _live_edge_rows_to_dicts(edge_rows) -> list[dict[str, Any]]:
     edges = []
     for r in edge_rows:
-        props = r["properties"]
-        if isinstance(props, str) and props:
-            try:
-                props = json.loads(props)
-            except Exception:
-                props = {"_raw": props}
-        elif not props:
-            props = {}
         edges.append({
             "source_id": r["source_id"],
             "target_id": r["target_id"],
@@ -165,7 +166,7 @@ def _live_edge_rows_to_dicts(edge_rows) -> list[dict[str, Any]]:
             "weight": r["weight"],
             "confidence": r["confidence"],
             "confidence_tier": r["confidence_tier"],
-            "properties": props,
+            "properties": _parse_edge_properties(r["properties"]),
         })
     return edges
 
@@ -223,27 +224,46 @@ def query_final_snapshot_sync(session, logical_doc_id: str, revision_id: str) ->
     }
 
 
+_EXTERNAL_EDGE_LIMIT_DEFAULT = 60
+
+
 def query_page_scoped_snapshot_sync(
-    session, logical_doc_id: str, revision_id: str, page_number: int
+    session,
+    logical_doc_id: str,
+    revision_id: str,
+    page_number: int,
+    *,
+    external_edge_limit: int = _EXTERNAL_EDGE_LIMIT_DEFAULT,
 ) -> dict[str, Any]:
-    """The graph-inspector's page-level ("inner edges") view: every node
-    whose page range covers this page (page_start <= N <= page_end) --
-    NOT only nodes that collapse to exactly this one page. An earlier
-    version required exact single-page containment, which excludes every
-    multi-page Chapter/Section from every page's view entirely (verified
-    live: a document where most sections happen to be single-page looked
-    fine, but any document with a real multi-page section -- the common
-    case for SEC filings, textbooks, anything with substantial chapters --
-    would show nothing for most pages at all).
+    """The graph-inspector's page-level view: every node whose page range
+    covers this page (page_start <= N <= page_end) -- NOT only nodes that
+    collapse to exactly this one page. An earlier version required exact
+    single-page containment, which excludes every multi-page Chapter/
+    Section from every page's view entirely (verified live: a document
+    where most sections happen to be single-page looked fine, but any
+    document with a real multi-page section -- the common case for SEC
+    filings, textbooks, anything with substantial chapters -- would show
+    nothing for most pages at all).
 
     The Document root (and its DocRevision sibling) is excluded even
     though its range technically covers every page -- including it would
     make every page's "focused" view balloon to the size of the whole
-    document, which defeats the point of a page-scoped view. In practice
-    only the handful of Chapter/Section/Page/Region nodes whose range
-    actually reaches this page remain, which is usually a small, useful
-    set (one chapter, the section(s) inside it that reach this page, the
-    page itself, any regions on it) -- not "everything"."""
+    document, which defeats the point of a page-scoped view.
+
+    Both internal (within this page's own node set) and external (this
+    page's nodes connecting out to nodes elsewhere in the document, e.g. a
+    SHARES_ENTITY link to a different page, or PRECEDES/FOLLOWS to an
+    adjacent one) edges are included, each tagged with a "scope" field so
+    the UI can render them distinctly -- an earlier version only fetched
+    internal edges, making a page's real connectivity (verified live: a
+    page with 10 internal edges had 64 external ones) invisible from this
+    view entirely. External neighbor nodes are included too (tagged
+    "is_external": true) since an edge referencing a node outside the
+    returned node set would otherwise be silently dropped by the UI's
+    dangling-reference guard. Capped and ordered by edge weight, not
+    unbounded, to keep this a small, useful set on a heavily-connected
+    page rather than ballooning to the size of the whole document -- same
+    reasoning as excluding the Document root above."""
     node_rows = session.run(
         f"""
         MATCH (n) WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
@@ -254,8 +274,10 @@ def query_page_scoped_snapshot_sync(
         logical_doc_id=logical_doc_id, revision_id=revision_id, page_number=page_number,
     )
     nodes = _live_node_rows_to_dicts(node_rows)
+    for n in nodes:
+        n["is_external"] = False
 
-    edge_rows = session.run(
+    internal_edge_rows = session.run(
         f"""
         MATCH (a)-[r]->(b)
         WHERE a.logical_doc_id = $logical_doc_id AND a.revision_id = $revision_id
@@ -267,7 +289,67 @@ def query_page_scoped_snapshot_sync(
         """,
         logical_doc_id=logical_doc_id, revision_id=revision_id, page_number=page_number,
     )
-    edges = _live_edge_rows_to_dicts(edge_rows)
+    internal_edges = _live_edge_rows_to_dicts(internal_edge_rows)
+    for e in internal_edges:
+        e["scope"] = "internal"
+
+    external_rows = session.run(
+        f"""
+        MATCH (a)-[r]-(b)
+        WHERE a.logical_doc_id = $logical_doc_id AND a.revision_id = $revision_id
+          AND a.page_start <= $page_number AND a.page_end >= $page_number
+          AND NOT a:{DOCUMENT_ROOT_CYPHER} AND NOT a:{DOC_REVISION_LABEL}
+          AND NOT b:{DOCUMENT_ROOT_CYPHER} AND NOT b:{DOC_REVISION_LABEL}
+          AND NOT (b.page_start <= $page_number AND b.page_end >= $page_number)
+        WITH r, b
+        ORDER BY coalesce(r.weight, 1.0) DESC
+        LIMIT $external_edge_limit
+        RETURN startNode(r).id AS source_id, endNode(r).id AS target_id, type(r) AS rel_type,
+               coalesce(r.axis, 0) AS axis, coalesce(r.weight, 1.0) AS weight,
+               coalesce(r.confidence, 1.0) AS confidence,
+               coalesce(r.confidence_tier, '') AS confidence_tier,
+               coalesce(r.properties, '') AS properties,
+               b.id AS b_id, labels(b) AS b_labels, b.title AS b_title, b.order AS b_order,
+               b.depth AS b_depth, b.page_start AS b_page_start, b.page_end AS b_page_end,
+               size(coalesce(b.search_text, '')) AS b_text_len,
+               size(coalesce(b.entities, [])) AS b_n_entities,
+               b.embedding IS NOT NULL AS b_has_embedding, b.region_kind AS b_region_kind
+        """,
+        logical_doc_id=logical_doc_id, revision_id=revision_id, page_number=page_number,
+        external_edge_limit=external_edge_limit,
+    )
+    external_edges: list[dict[str, Any]] = []
+    external_nodes_by_id: dict[str, dict[str, Any]] = {}
+    for r in external_rows:
+        external_edges.append({
+            "source_id": r["source_id"],
+            "target_id": r["target_id"],
+            "rel_type": r["rel_type"],
+            "axis": r["axis"],
+            "weight": r["weight"],
+            "confidence": r["confidence"],
+            "confidence_tier": r["confidence_tier"],
+            "properties": _parse_edge_properties(r["properties"]),
+            "scope": "external",
+        })
+        if r["b_id"] not in external_nodes_by_id:
+            external_nodes_by_id[r["b_id"]] = {
+                "id": r["b_id"],
+                "type": next((l for l in r["b_labels"] if l != "DocRevision"), r["b_labels"][0] if r["b_labels"] else "Unknown"),
+                "title": r["b_title"],
+                "order": r["b_order"],
+                "depth": r["b_depth"],
+                "page_start": r["b_page_start"],
+                "page_end": r["b_page_end"],
+                "text_len": r["b_text_len"],
+                "n_entities": r["b_n_entities"],
+                "has_embedding": r["b_has_embedding"],
+                "region_kind": r["b_region_kind"],
+                "is_external": True,
+            }
+
+    all_nodes = nodes + list(external_nodes_by_id.values())
+    all_edges = internal_edges + external_edges
 
     return {
         "stage": "page_scoped",
@@ -275,8 +357,12 @@ def query_page_scoped_snapshot_sync(
         "revision_id": revision_id,
         "page_number": page_number,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "node_count": len(nodes),
-        "edge_count": len(edges),
-        "nodes": nodes,
-        "edges": edges,
+        "node_count": len(all_nodes),
+        "edge_count": len(all_edges),
+        "internal_node_count": len(nodes),
+        "internal_edge_count": len(internal_edges),
+        "external_node_count": len(external_nodes_by_id),
+        "external_edge_count": len(external_edges),
+        "nodes": all_nodes,
+        "edges": all_edges,
     }
