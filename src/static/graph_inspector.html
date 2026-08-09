@@ -207,7 +207,7 @@
           <button class="secondary" id="check_pages_btn" type="button" title="Free — re-parses the stored PDF, no LLM calls">Check pages (free)</button>
           <button class="secondary" id="back_to_doc_btn" type="button" style="display:none;">Back to document graph</button>
         </div>
-        <div class="hint" id="pages_hint">Coverage = re-parsed page text vs. what's in the graph. Click a page to see its inner edges.</div>
+        <div class="hint" id="pages_hint">Coverage = re-parsed page text vs. what's in the graph. Click a page to see its inner and outer edges.</div>
         <div class="pages-summary" id="pages_summary"></div>
         <div class="page-list" id="page_list" style="display:none;"></div>
       </div>
@@ -526,6 +526,9 @@
       for (const r of rels) {
         html += `<div class="legend-item"><span class="swatch" style="background:${EDGE_COLORS[r] || '#cbd5e1'}"></span>${r}</div>`;
       }
+      if (snapshot.nodes.some(n => n.is_external)) {
+        html += `<div class="legend-item"><span class="swatch" style="background:#94a3b8;opacity:0.45;border:1px dashed #64748b;"></span>dimmed/dashed = outer (other pages)</div>`;
+      }
       document.getElementById('legend_items').innerHTML = html;
     }
 
@@ -685,6 +688,14 @@
         .attr('d', 'M0,0 L10,5 L0,10 Z')
         .attr('fill', d => EDGE_COLORS[d] || '#cbd5e1');
 
+      // External edges (this page's nodes connecting out to nodes elsewhere
+      // in the document, see query_page_scoped_snapshot_sync) are dimmer
+      // and dashed regardless of axis, distinct from the existing axis-2
+      // dimming and rel-type dashing -- both signals compose (an external
+      // axis-2 edge is dimmer still).
+      const edgeOpacity = d => (d.scope === 'external' ? (d.axis === 2 ? 0.3 : 0.4) : (d.axis === 2 ? 0.5 : 0.8));
+      const edgeWidth = d => (d.axis === 2 ? Math.min(1.2 + (d.weight || 1) * 0.35, 4) : 1.4);
+
       const edgeSel = g.selectAll('path.graph-edge')
         .data(renderEdges)
         .enter()
@@ -692,15 +703,15 @@
         .attr('class', 'graph-edge')
         .attr('d', d => edgePath(byId.get(d.source_id), byId.get(d.target_id), structuralOnly, edgeOffsets.get(d) || 0))
         .attr('stroke', d => EDGE_COLORS[d.rel_type] || '#cbd5e1')
-        .attr('stroke-width', d => (d.axis === 2 ? Math.min(1.2 + (d.weight || 1) * 0.35, 4) : 1.4))
-        .attr('stroke-dasharray', d => (EDGE_DASH.has(d.rel_type) ? '3,3' : null))
-        .attr('opacity', d => (d.axis === 2 ? 0.5 : 0.8))
+        .attr('stroke-width', edgeWidth)
+        .attr('stroke-dasharray', d => (d.scope === 'external' || EDGE_DASH.has(d.rel_type) ? '3,3' : null))
+        .attr('opacity', edgeOpacity)
         .attr('marker-end', d => `url(#arrow-${markerSafeId(d.rel_type)})`)
         .style('cursor', 'pointer')
         .on('click', (event, d) => { event.stopPropagation(); showEdgeDetail(d); })
         .on('mouseenter', function () { d3.select(this).attr('opacity', 1).attr('stroke-width', 4); })
         .on('mouseleave', function (event, d) {
-          d3.select(this).attr('opacity', d.axis === 2 ? 0.5 : 0.8).attr('stroke-width', d.axis === 2 ? Math.min(1.2 + (d.weight || 1) * 0.35, 4) : 1.4);
+          d3.select(this).attr('opacity', edgeOpacity(d)).attr('stroke-width', edgeWidth(d));
         });
 
       // Relationship-name label at each edge's midpoint, matching Neo4j
@@ -777,13 +788,22 @@
         .on('mouseenter', function (event, d) { d3.select(this).select('circle').attr('r', (NODE_RADIUS[d.type] || 5.5) * 1.35); })
         .on('mouseleave', function (event, d) { d3.select(this).select('circle').attr('r', NODE_RADIUS[d.type] || 5.5); });
 
+      // External neighbor nodes (this page's edges reaching out to other
+      // pages, see query_page_scoped_snapshot_sync) are dimmed with a
+      // dashed ring so it's visually clear at a glance which nodes are
+      // actually on this page vs. just context for an outgoing edge.
       nodeSel.append('circle')
         .attr('r', d => NODE_RADIUS[d.type] || 5.5)
-        .attr('fill', d => NODE_COLORS[d.type] || NODE_COLORS.Unknown);
+        .attr('fill', d => NODE_COLORS[d.type] || NODE_COLORS.Unknown)
+        .attr('fill-opacity', d => (d.is_external ? 0.45 : 1))
+        .attr('stroke', d => (d.is_external ? '#64748b' : 'none'))
+        .attr('stroke-width', d => (d.is_external ? 1.25 : 0))
+        .attr('stroke-dasharray', d => (d.is_external ? '2,2' : null));
 
       nodeSel.append('text')
         .attr('x', d => (NODE_RADIUS[d.type] || 5.5) + 4)
         .attr('y', 3.5)
+        .attr('opacity', d => (d.is_external ? 0.6 : 1))
         .text(d => nodeLabel(d));
 
       svg.on('click', () => {
@@ -984,7 +1004,7 @@
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
-        document.getElementById('pages_hint').textContent = "Coverage = re-parsed page text vs. what's in the graph. Click a page to see its inner edges.";
+        document.getElementById('pages_hint').textContent = "Coverage = re-parsed page text vs. what's in the graph. Click a page to see its inner and outer edges.";
       }
     }
 
@@ -1010,7 +1030,7 @@
         renderLegend(snapshot);
         const banner = document.createElement('div');
         banner.className = 'page-scoped-banner';
-        banner.innerHTML = `<span>Page ${pageNumber} — inner edges only</span>`;
+        banner.innerHTML = `<span>Page ${pageNumber} — ${snapshot.internal_edge_count} inner edge(s), ${snapshot.external_edge_count} outer edge(s) (dashed/dim) to other pages</span>`;
         document.getElementById('graph-canvas').appendChild(banner);
         document.getElementById('back_to_doc_btn').style.display = 'block';
       } catch (err) {
