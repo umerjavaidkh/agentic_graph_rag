@@ -70,15 +70,20 @@ def _sample_edges(session, logical_doc_id: str, revision_id: str, n: int) -> lis
     `.text` off Neo4j directly (docs/DESIGN_unstructured_graph_v2.md phase
     3) -- full-text hydration, not search_text, so this scoring pass reads
     the exact same text pre- and post-migration. score_axis2_idea_linking
-    truncates to [:800] regardless, so identical source text in means
-    identical judge input."""
+    centers an 800-char window on the shared entity when there is one (a
+    plain [:800] prefix can miss it entirely in a long section -- verified
+    live) -- also fetches each node's own `entities` here as a fallback
+    anchor for edge types with no "shared" entity to center on at all (e.g.
+    SAME_CATEGORY, whose properties are just {cluster_id, signal})."""
     rows = session.run(
         """
         MATCH (a)-[r]->(b)
         WHERE a.logical_doc_id = $logical_doc_id AND a.revision_id = $revision_id
           AND type(r) IN $rel_types
         RETURN a.blob_key_text AS source_blob_key, b.blob_key_text AS target_blob_key,
-               type(r) AS rel_type, coalesce(r.properties, '') AS shared
+               type(r) AS rel_type, coalesce(r.properties, '') AS shared,
+               coalesce(a.entities, []) AS source_entities,
+               coalesce(b.entities, []) AS target_entities
         ORDER BY rand()
         LIMIT $n
         """,
@@ -94,6 +99,8 @@ def _sample_edges(session, logical_doc_id: str, revision_id: str, n: int) -> lis
             "target_text": hydrator.hydrate(r["target_blob_key"]),
             "rel_type": r["rel_type"],
             "shared": r["shared"],
+            "source_entities": r["source_entities"],
+            "target_entities": r["target_entities"],
         }
         for r in rows
     ]

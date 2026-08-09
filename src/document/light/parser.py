@@ -79,8 +79,23 @@ class _PageExtract:
 # AFTER each page's .text had already been joined, so it never actually
 # kept repeated headers out of what gets embedded/NER'd; only out of what
 # got classified as a heading.
+# Was 0.15 -- verified live on a real 264-page 10-K: "Table of Contents",
+# printed at a fixed position at the top of nearly every page in the front
+# narrative section, occurred on exactly 35 pages (consistent bbox
+# confirmed geometrically) but needed 39 (264*0.15) to clear the old
+# fraction, missing by a narrow margin. A multi-section filing like this
+# has DIFFERENT running headers per section (this document also has a
+# separate "Financial Table of Contents" header later on) rather than one
+# header spanning the whole document, so no single string reaches a high
+# fraction of ALL pages even though each one clearly dominates its own
+# section -- the missed case wasn't misdetected, it was a real repeated
+# header caught by an overly strict whole-document threshold. Left
+# unflagged, it fed straight into embeddings as a Chapter-level node
+# titled "Table of Contents" with near-empty body text, collapsing dozens
+# of otherwise-unrelated chapters' embeddings onto nearly the same vector
+# and producing a meaningless SEMANTICALLY_SIMILAR hairball across them.
 _REPEAT_MIN_PAGES = 3
-_REPEAT_MIN_PAGE_FRACTION = 0.15
+_REPEAT_MIN_PAGE_FRACTION = 0.10
 _REPEAT_Y_TOLERANCE_PT = 20.0
 _REPEAT_HEADER_WS_RE = re.compile(r"\s+")
 
@@ -480,6 +495,34 @@ class LightPdfParser:
         joined = " ".join(ln.strip() for ln in (text or "").splitlines() if ln.strip())
         return _REPEAT_HEADER_WS_RE.sub(" ", joined).strip().lower()
 
+    @staticmethod
+    def _cluster_by_y(
+        occurrences: list[tuple[int, float, "_PdfBlock"]]
+    ) -> list[list[tuple[int, float, "_PdfBlock"]]]:
+        """Bucket same-text occurrences by rounded Y position (bucket width
+        _REPEAT_Y_TOLERANCE_PT / 2), not a single global min/max range
+        across every occurrence -- the same normalized text can legitimately
+        occur in unrelated roles at very different Y positions (a genuine
+        one-off heading vs. an actual running header elsewhere), and a
+        global range spuriously fails even when the real repeated-header
+        occurrences are tightly clustered together.
+
+        Rounding into fixed buckets, not sorting + chaining consecutive
+        occurrences within tolerance of each other: chaining has the
+        classic single-linkage problem where a long, steady drift of small
+        per-step gaps (each under tolerance) "walks" transitively into one
+        large false cluster spanning far more than the tolerance overall --
+        verified against test_does_not_flag_repeated_text_at_varying_
+        vertical_position's 7 occurrences stepping 15pt apart (each step
+        under the 20pt tolerance, chaining merged all 7 into one flagged
+        cluster; rounding correctly keeps them in 7 separate one-occurrence
+        buckets)."""
+        bucket_width = max(1.0, _REPEAT_Y_TOLERANCE_PT / 2)
+        buckets: dict[float, list[tuple[int, float, "_PdfBlock"]]] = defaultdict(list)
+        for occ in occurrences:
+            buckets[round(occ[1] / bucket_width) * bucket_width].append(occ)
+        return list(buckets.values())
+
     def _flag_repeated_headers(self, extracts: list[_PageExtract]) -> None:
         """Flag blocks that repeat across most of the document at a
         consistent vertical position (running headers/footers -- a company
@@ -504,15 +547,25 @@ class LightPdfParser:
         min_pages_needed = max(_REPEAT_MIN_PAGES, int(total_pages * _REPEAT_MIN_PAGE_FRACTION))
         touched_pages: set[int] = set()
         for occurrences in groups.values():
-            distinct_pages = {p for p, _, _ in occurrences}
-            if len(distinct_pages) < min_pages_needed:
-                continue
-            y_values = [y for _, y, _ in occurrences]
-            if max(y_values) - min(y_values) > _REPEAT_Y_TOLERANCE_PT:
-                continue  # position varies too much to be a running header/footer
-            for page, _, block in occurrences:
-                block.is_repeated_header = True
-                touched_pages.add(page)
+            # Cluster by Y position before testing frequency, not one range
+            # check across every occurrence of this text in the whole
+            # document -- the same normalized text can legitimately occur
+            # in multiple unrelated roles at different vertical positions
+            # (verified live on a real 264-page 10-K: "table of contents"
+            # was the document's own genuine, one-off ToC heading on page 3
+            # at y=112, a running header at y=76 on 31 pages in the front
+            # narrative section, AND a running header at y=63 on 4 pages in
+            # a different section near the end). A single min/max range
+            # across all of them spuriously exceeds the tolerance even
+            # though each individual cluster is internally consistent, so
+            # the real repeated header was never flagged at all.
+            for cluster in self._cluster_by_y(occurrences):
+                distinct_pages = {p for p, _, _ in cluster}
+                if len(distinct_pages) < min_pages_needed:
+                    continue
+                for page, _, block in cluster:
+                    block.is_repeated_header = True
+                    touched_pages.add(page)
 
         if not touched_pages:
             return

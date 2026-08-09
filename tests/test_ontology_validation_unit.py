@@ -21,6 +21,8 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from src.document.ontology_validation import (
+    _entity_centered_window,
+    _shared_entity_texts,
     ONTOLOGY_ACCURACY_TARGET,
     Axis1Report,
     Axis2Report,
@@ -251,3 +253,128 @@ def test_axis2_report_as_dict_handles_none_precisions():
     d = report.as_dict()
     assert d["edge_precision"] is None
     assert d["entity_grounding_precision"] is None
+
+
+# ── _entity_centered_window / _shared_entity_texts ───────────────────────────
+# Regression: found live via a real 10-K's ontology score -- "tco (ORG)" was
+# flagged "not meaningfully connected" by the judge, but TCO (Tengizchevroil)
+# genuinely was mentioned in the source section, at character offset 1789 of
+# a 3,299-char passage. The judge only ever saw the first 800 chars (a plain
+# prefix truncation), so it was judging a passage that -- from its point of
+# view -- didn't contain the entity at all. Not a graph-quality problem;
+# a measurement artifact in how evidence was shown to the judge.
+
+
+def test_entity_centered_window_short_text_returned_as_is():
+    assert _entity_centered_window("short text", ["text"]) == "short text"
+
+
+def test_entity_centered_window_centers_on_late_occurrence():
+    text = ("padding " * 200) + "TCO operates the Tengiz field." + ("more padding " * 200)
+    window = _entity_centered_window(text, ["tco (ORG)"], window=100)
+    assert "TCO operates the Tengiz field" in window
+    assert len(window) <= 100
+
+
+def test_entity_centered_window_direct_reproduction_of_live_bug():
+    """Direct reproduction: a 3,299-char passage with the claimed entity at
+    offset 1789 -- the old plain text[:800] truncation would never include
+    it; the fix must."""
+    text = ("x" * 1789) + "TCO" + ("y" * (3299 - 1789 - 3))
+    assert len(text) == 3299
+    old_naive_window = text[:800]
+    assert "TCO" not in old_naive_window  # confirms the bug this fix targets
+
+    new_window = _entity_centered_window(text, ["tco (ORG)"], window=800)
+    assert "TCO" in new_window
+
+
+def test_entity_centered_window_falls_back_to_prefix_when_entity_not_found():
+    # Paraphrase-only match a substring search can't locate -- same
+    # behavior as before this fix for this harder case.
+    text = "a" * 1000
+    assert _entity_centered_window(text, ["nowhere to be found"], window=800) == text[:800]
+
+
+def test_entity_centered_window_empty_needles_falls_back_to_prefix():
+    text = "a" * 1000
+    assert _entity_centered_window(text, [], window=800) == text[:800]
+
+
+def test_entity_centered_window_uses_first_needle_in_list_that_matches():
+    # Needle-list order decides, not textual order -- a SHARES_ENTITY edge's
+    # entity list is short and any one being visible is reasonable evidence,
+    # so this is a simple, deliberate choice, not an accident.
+    text = ("z" * 500) + "SECOND" + ("z" * 500) + "FIRST" + ("z" * 500)
+    window = _entity_centered_window(text, ["FIRST", "SECOND"], window=50)
+    assert "FIRST" in window
+    assert "SECOND" not in window
+
+
+def test_shared_entity_texts_parses_json_string():
+    shared = '{"shared_entities": ["tco (ORG)", "hess (ORG)"], "rarity_score": 3.88}'
+    assert _shared_entity_texts(shared) == ["tco (ORG)", "hess (ORG)"]
+
+
+def test_shared_entity_texts_accepts_dict_directly():
+    shared = {"shared_entities": ["kazakhstan (LOCATION)"]}
+    assert _shared_entity_texts(shared) == ["kazakhstan (LOCATION)"]
+
+
+def test_shared_entity_texts_returns_empty_for_unrelated_shape():
+    # SEMANTICALLY_SIMILAR edges carry {"score": ...}, no entities to
+    # center on -- must not crash, just fall back to no needles.
+    assert _shared_entity_texts('{"score": 0.81}') == []
+
+
+def test_shared_entity_texts_returns_empty_for_malformed_json():
+    assert _shared_entity_texts("not json") == []
+
+
+def test_axis2_same_category_edge_falls_back_to_each_side_own_entities():
+    """SAME_CATEGORY (and CONTRADICTS/ELABORATES/PREREQUISITE_OF) have no
+    "shared" entity field at all ({cluster_id, signal} only) -- the window
+    must fall back to each side's OWN entity list rather than an arbitrary
+    first-800-char prefix that might land on boilerplate."""
+    provider = FakeModelProvider(['{"valid": true}'])
+    source_long = ("boilerplate header text. " * 40) + "Tengizchevroil expansion project details here."
+    target_long = ("different boilerplate. " * 40) + "Kazakhstan production volumes discussed here."
+    edges = [{
+        "source_text": source_long,
+        "target_text": target_long,
+        "rel_type": "SAME_CATEGORY",
+        "shared": '{"cluster_id": 0, "signal": "entity_cooccurrence"}',
+        "source_entities": ["Tengizchevroil"],
+        "target_entities": ["Kazakhstan"],
+    }]
+    score_axis2_idea_linking(edges, [], provider=provider, model="m", logical_doc_id="doc1")
+
+    sent_prompt = provider.calls[0]["messages"][0]["content"]
+    assert "Tengizchevroil expansion project" in sent_prompt
+    assert "Kazakhstan production volumes" in sent_prompt
+
+
+def test_axis2_edge_missing_entities_fields_degrades_to_prefix_not_crash():
+    # Backward-compat: an edges_sample dict without source_entities/
+    # target_entities (e.g. a caller not yet updated) must not KeyError.
+    provider = FakeModelProvider(['{"valid": true}'])
+    edges = [{"source_text": "a" * 1000, "target_text": "b" * 1000, "rel_type": "SAME_CATEGORY", "shared": ""}]
+    report = score_axis2_idea_linking(edges, [], provider=provider, model="m", logical_doc_id="doc1")
+    assert report.edge_precision == 1.0
+
+
+def test_axis2_judge_receives_entity_centered_window_not_naive_prefix():
+    """End-to-end through score_axis2_idea_linking: the judge's prompt must
+    actually contain the entity-centered window, not the first 800 chars."""
+    provider = FakeModelProvider(['{"valid": true}'])
+    long_text = ("x" * 1789) + "TCO operates the Tengiz field." + ("y" * 2000)
+    edges = [{
+        "source_text": long_text,
+        "target_text": "short target text",
+        "rel_type": "SHARES_ENTITY",
+        "shared": '{"shared_entities": ["tco (ORG)"], "rarity_score": 3.88}',
+    }]
+    score_axis2_idea_linking(edges, [], provider=provider, model="m", logical_doc_id="doc1")
+
+    sent_prompt = provider.calls[0]["messages"][0]["content"]
+    assert "TCO operates the Tengiz field" in sent_prompt
