@@ -295,9 +295,11 @@ def test_build_entity_edges_weight_reflects_capped_entities_only():
     builder = _builder()
     edges = builder._build_entity_edges([a, b])
     # Both nodes share all 4 entities identically -> each entity's idf =
-    # log((2+1)/(2+1)) + 1 = 1.0 exactly; capped to 2 entities -> weight 2.0,
-    # not 4.0 (what summing all 4 uncapped would give).
-    assert edges[0].weight == 2.0
+    # log((2+1)/(2+1)) + 1 = 1.0 exactly; capped to 2 entities. The score is
+    # best-anchor-dominant (_ANCHOR_SECONDARY_WEIGHT), not a sum: max(idf) +
+    # 0.25 * sum(rest) = 1.0 + 0.25 * 1.0 = 1.25 -- not 2.0 (summing the two
+    # capped entities) and certainly not 4.0 (summing all four uncapped).
+    assert edges[0].weight == 1.25
 
 
 # ── _entity_base_text / type-fragmentation regression ───────────────────────

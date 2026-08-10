@@ -487,6 +487,61 @@ def _adaptive_genericity_ratio(total_entity_nodes: int) -> float:
 
 _ENUMERATION_SAME_TYPE_CAP = 2
 
+# How a SHARES_ENTITY edge's shared entities combine into its weight. Summing
+# idf across every shared entity (the previous behavior) rewards a laundry
+# list: two independent boilerplate enumeration paragraphs sharing three
+# medium-frequency terms (idf ~3 each) summed to ~9 -- tying or beating a
+# single genuinely rare shared entity (idf ~9), the strongest possible
+# signal. Verified live: the sampled LLM judge flagged exactly those summed
+# laundry-list edges ("united states, natural gas, crude oil";
+# "kazakhstan, hess, venezuela") as "not meaningfully connected", while they
+# outranked specific single-anchor links. Score by the STRONGEST anchor
+# instead (max idf), giving each ADDITIONAL shared entity only fractional
+# credit -- classic best-matching-term dominance (BM25/max-sim ranking),
+# so "one strong" always beats "many weak" instead of the reverse. The
+# secondary weight stays > 0 so a genuine multi-entity overlap still scores
+# above an otherwise-identical single-entity one, just not by summing.
+_ANCHOR_SECONDARY_WEIGHT = 0.25
+
+# An edge must be anchored on at least ONE entity that is genuinely
+# distinctive WITHIN this document, not merely under the 40%-document-
+# frequency genericity gate. Verified live: "u.s. (LOCATION)" at ~18%
+# document frequency (idf 2.70) passed the gate and anchored an edge the
+# judge flagged -- the gate is a coarse binary cutoff, too permissive to be
+# the sole distinctiveness test. The floor is a PERCENTILE of this
+# document's own idf distribution over entities that can actually co-occur
+# (document frequency >= 2 -- a df=1 entity is in a single node and can
+# never be shared, so including singletons would inflate the floor), so it
+# self-calibrates per document with no tuned constant: on a normal long-tail
+# entity distribution the median co-occurring-entity idf sits well above the
+# ~2.7-3.5 idf of pervasive domain vocabulary, rejecting generic-only edges
+# while keeping edges anchored on an entity mentioned in just 2-3 sections.
+# Only applied once there are enough co-occurring entities for the
+# distribution to mean anything; below that the 40% gate alone still runs.
+#
+# The percentile is the BOTTOM QUARTILE, not the median, chosen by measuring
+# both precision and recall on a synthetic 220-entity-bearing-node corpus
+# shaped like the 10-K this was found on (pervasive domain vocabulary at ~18%
+# document frequency, plus a long tail of genuinely specific terms). Measured
+# sweep, generic-only-anchored edges vs edges retained:
+#   percentile   0 -> 1723 edges, 46% generic-anchored (i.e. the bug itself)
+#   percentile  10 ->  932 edges,  0% generic-anchored
+#   percentile  25 ->  537 edges,  0% generic-anchored
+#   percentile  50 ->  282 edges,  0% generic-anchored
+# Precision saturates by the 10th percentile -- everything at or above it
+# removes the entire generic-anchored population, because a document's
+# pervasive vocabulary and its specific terms form two well-separated idf
+# clusters rather than a continuum. So a HIGHER percentile buys no additional
+# precision and only costs real edges: the median discards ~half the
+# legitimate edges the quartile keeps, for no measured quality gain. The
+# quartile is preferred over the 10th percentile purely for margin -- it
+# still cleanly separates the two clusters when pervasive vocabulary makes up
+# a much larger share of the entity vocabulary (verified holding at 0%
+# generic-anchored with generic terms at 6%, 16%, 27% and 38% of vocabulary),
+# rather than sitting right at the edge of the generic cluster.
+_ANCHOR_DISTINCTIVENESS_PERCENTILE = 25
+_ANCHOR_DISTINCTIVENESS_MIN_ENTITIES = 5
+
 
 def _dedupe_enumeration_types(shared: set[str], *, max_same_type: int = _ENUMERATION_SAME_TYPE_CAP) -> set[str]:
     """A shared-entity set containing 3+ entities of the SAME type (e.g.
@@ -1013,14 +1068,32 @@ class Axis2Builder:
             for a, b in itertools.combinations(sorted(idx_list), 2):
                 pair_entities.setdefault((a, b), set()).add(entity)
 
+        # Per-document distinctiveness floor (see _ANCHOR_DISTINCTIVENESS_*):
+        # the idf percentile over entities that can actually co-occur (df>=2),
+        # not all informative entities -- df=1 singletons never anchor an edge
+        # and would only inflate the floor. An edge whose strongest shared
+        # entity falls below this floor is dropped, not merely down-weighted.
+        sharable_idfs = [idf[e] for e in idf if len(entity_to_nodes[e]) >= 2]
+        distinctiveness_floor = (
+            float(np.percentile(sharable_idfs, _ANCHOR_DISTINCTIVENESS_PERCENTILE))
+            if len(sharable_idfs) >= _ANCHOR_DISTINCTIVENESS_MIN_ENTITIES
+            else 0.0
+        )
+
         pair_scores: dict[Tuple[int, int], float] = {}
         pair_shared: dict[Tuple[int, int], set[str]] = {}
         for pair, ents in pair_entities.items():
             filtered = _dedupe_enumeration_types(ents)
             if not filtered:
                 continue
+            # Strongest anchor dominates; additional shared entities add only
+            # fractional credit (see _ANCHOR_SECONDARY_WEIGHT), so a laundry
+            # list of medium-frequency terms can't outscore a single rare one.
+            ent_idfs = sorted((idf[e] for e in filtered), reverse=True)
+            if ent_idfs[0] < distinctiveness_floor:
+                continue
             pair_shared[pair] = filtered
-            pair_scores[pair] = sum(idf[e] for e in filtered)
+            pair_scores[pair] = ent_idfs[0] + _ANCHOR_SECONDARY_WEIGHT * sum(ent_idfs[1:])
 
         candidates = [(i, j, score) for (i, j), score in pair_scores.items()]
         cap = AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
