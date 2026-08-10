@@ -64,6 +64,8 @@ from src.semantic.axis2 import (
     _ENTITY_GENERICITY_DF_RATIO_CEILING,
     _ENTITY_GENERICITY_LARGE_CORPUS_NODES,
     _ENTITY_GENERICITY_MIN_NODES,
+    _NON_TOPICAL_CONTINENT_NAMES,
+    _NON_TOPICAL_ENTITY_PHRASES,
     _adaptive_genericity_ratio,
     _dedupe_enumeration_types,
     _entity_base_text,
@@ -476,3 +478,118 @@ def test_untyped_entity_unaffected_by_date_exclusion():
     entity_to_nodes = {"legacy untyped entity": list(range(2))}
     result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
     assert "legacy untyped entity" in result
+
+
+# ── SEC-filing boilerplate phrases: excluded regardless of frequency ────────
+# Regression: found via sampled LLM-judge audit of a real 10-K -- these
+# flagged as the dominant remaining failure mode even after the DATE and
+# enumeration-cap fixes. Unlike DATE, they don't share one NER type (OTHER/
+# METRIC/CONCEPT all show up), so a type-based exclusion can't catch them --
+# and unlike the self-referential-entity bugs, raw document frequency can't
+# either: verified live, all of these sat at 0.6%-3.0% document frequency,
+# far below any reasonable threshold, yet are standard SEC-filing/accounting
+# citation vocabulary any 10-K/10-Q uses regardless of filer.
+
+
+def test_consolidated_balance_sheet_excluded_even_at_low_frequency():
+    total = 636
+    entity_to_nodes = {
+        "consolidated balance sheet (OTHER)": list(range(19)),
+        "tco (ORG)": list(range(2)),
+    }
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "consolidated balance sheet (OTHER)" not in result
+    assert "tco (ORG)" in result
+
+
+def test_millions_of_dollars_excluded_regardless_of_type_tag():
+    # Same phrase, different type tags across NER batches (the same
+    # inconsistency _entity_base_text already accounts for elsewhere) --
+    # the phrase-based exclusion must match on base text, not exact key.
+    total = 636
+    entity_to_nodes = {"millions of dollars (METRIC)": list(range(14))}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "millions of dollars (METRIC)" not in result
+
+
+def test_boilerplate_phrase_excluded_below_min_nodes_bypass():
+    # A type/frequency judgment is bypassed below the min-nodes floor, but
+    # this is neither -- it must still apply.
+    entity_to_nodes = {"regulation s-k (OTHER)": [0, 1], "specific (CONCEPT)": [0]}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=2)
+    assert "regulation s-k (OTHER)" not in result
+    assert "specific (CONCEPT)" in result
+
+
+def test_untyped_boilerplate_phrase_also_excluded():
+    # Unlike DATE (a type judgment), the phrase list works on base text
+    # regardless of whether a type tag is present at all.
+    total = 636
+    entity_to_nodes = {"exchange act": list(range(4))}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "exchange act" not in result
+
+
+def test_similar_but_distinct_phrase_not_excluded():
+    # Sanity check the fix targets the specific known phrases, not any
+    # string that merely overlaps with one -- "balance sheet" alone (a
+    # genuinely generic accounting term, arguably, but not one of the
+    # phrases actually measured/verified live) must not be swept in by
+    # accident via a substring match.
+    total = 636
+    entity_to_nodes = {"balance sheet": list(range(2))}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "balance sheet" in result
+
+
+def test_non_topical_entity_phrases_are_all_lowercase():
+    # The exclusion check lowercases the entity's base text before
+    # comparing -- the phrase set itself must already be lowercase or the
+    # comparison silently never matches.
+    assert all(p == p.lower() for p in _NON_TOPICAL_ENTITY_PHRASES)
+
+
+# ── continent names: excluded regardless of frequency ───────────────────────
+# Regression: found via sampled LLM-judge audit of a real 10-K -- "asia
+# (LOCATION), africa (LOCATION)" shared between two sections was flagged
+# "not meaningfully connected". A continent is categorically different from
+# the filing-boilerplate phrases above (a geographic-hierarchy fact, not
+# this document TYPE's own vocabulary) and generalizes to every document,
+# not just SEC filings -- the same structural argument as DATE, for a much
+# smaller, closed, universally recognizable set.
+
+
+def test_continent_name_excluded_even_at_low_frequency():
+    total = 636
+    entity_to_nodes = {
+        "asia (LOCATION)": list(range(2)),
+        "africa (LOCATION)": list(range(2)),
+        "kazakhstan (LOCATION)": list(range(2)),
+    }
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "asia (LOCATION)" not in result
+    assert "africa (LOCATION)" not in result
+    assert "kazakhstan (LOCATION)" in result  # a real country, not a continent
+
+
+def test_continent_name_excluded_below_min_nodes_bypass():
+    entity_to_nodes = {"europe (LOCATION)": [0, 1], "guyana (LOCATION)": [0]}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=2)
+    assert "europe (LOCATION)" not in result
+    assert "guyana (LOCATION)" in result
+
+
+def test_all_seven_continents_excluded():
+    total = 636
+    entity_to_nodes = {f"{c} (LOCATION)": list(range(2)) for c in _NON_TOPICAL_CONTINENT_NAMES}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert result == set()
+
+
+def test_country_within_a_continent_not_excluded():
+    # Sanity check the fix targets the continent name specifically, not any
+    # LOCATION generally associated with one.
+    total = 636
+    entity_to_nodes = {"nigeria (LOCATION)": list(range(2))}
+    result = _informative_entities(entity_to_nodes, total_entity_nodes=total)
+    assert "nigeria (LOCATION)" in result

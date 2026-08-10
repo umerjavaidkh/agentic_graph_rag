@@ -410,6 +410,56 @@ def _entity_type(entity_key: str) -> Optional[str]:
 # rather than a root-cause fix.
 _NON_TOPICAL_ENTITY_TYPES = frozenset({"DATE"})
 
+# Unlike DATE, these don't share one NER type (OTHER/METRIC/CONCEPT all show
+# up here), so a type-based exclusion can't catch them -- and unlike the
+# self-referential-entity/DATE bugs above, raw document frequency can't
+# either: verified live on a real 10-K, all of these sat at 0.6%-3.0%
+# document frequency (far below even a strict threshold) yet were the
+# dominant flagged failure mode in the sampled ontology score. They're
+# generic for a different reason: standard SEC-filing/accounting citation
+# and statement-name vocabulary ("Consolidated Balance Sheet", "Regulation
+# S-K", "Securities Exchange Act of 1934") that any 10-K/10-Q uses
+# regardless of filer, not specific to this document's own content -- the
+# same category of "boilerplate" as a repeated running header, just too
+# rare within any ONE document to be caught by a frequency-based signal.
+# Deliberately scoped to this filing type's own standard citations (not a
+# guess at document-agnostic stopwords), so it generalizes across any SEC
+# filing without being tuned to Chevron specifically -- kept small and
+# reviewable rather than an attempt at an exhaustive list.
+_NON_TOPICAL_ENTITY_PHRASES = frozenset({
+    "consolidated balance sheet",
+    "consolidated statement of income",
+    "consolidated statement of cash flows",
+    "consolidated statement of equity",
+    "consolidated statement of comprehensive income",
+    "notes to the consolidated financial statements",
+    "millions of dollars",
+    "form 10-k",
+    "form 10-q",
+    "form 8-k",
+    "securities exchange act of 1934",
+    "securities act of 1933",
+    "exchange act",
+    "regulation s-k",
+    "management's discussion and analysis",
+    "management’s discussion and analysis",
+})
+
+# A continent name is categorically different from the filing-boilerplate
+# phrases above: it's a fact about geographic hierarchy, not this document
+# type's own vocabulary, and it generalizes to every document, not just SEC
+# filings. Verified live: "asia (LOCATION), africa (LOCATION)" shared
+# between two sections was flagged "not meaningfully connected" -- two
+# sections both mentioning a continent says nothing specific, the same
+# structural argument as DATE, just for a much smaller, closed, universally
+# recognizable set rather than a whole NER type (an actual country --
+# "Kazakhstan", "Guyana" -- or a specific place within one is still a
+# meaningful, specific anchor and must NOT be swept in here).
+_NON_TOPICAL_CONTINENT_NAMES = frozenset({
+    "asia", "africa", "europe", "australia", "antarctica",
+    "north america", "south america",
+})
+
 
 def _adaptive_genericity_ratio(total_entity_nodes: int) -> float:
     """Document-frequency cutoff above which an entity is "too generic" to
@@ -482,11 +532,19 @@ def _informative_entities(entity_to_nodes: dict[str, list[int]], total_entity_no
     through underneath the cutoff in whichever type bucket happens to
     hold most of its mentions.
 
-    DATE entities are excluded unconditionally (see _NON_TOPICAL_ENTITY_TYPES)
-    regardless of corpus size or frequency -- that's a type judgment, not a
-    frequency one, so it applies even below the min-nodes bypass below.
+    DATE entities are excluded unconditionally (see _NON_TOPICAL_ENTITY_TYPES),
+    and so are known SEC-filing boilerplate phrases and bare continent names
+    (see _NON_TOPICAL_ENTITY_PHRASES / _NON_TOPICAL_CONTINENT_NAMES) --
+    regardless of corpus size or frequency in all three cases, since none of
+    them is a frequency judgment, so all apply even below the min-nodes
+    bypass below.
     """
-    topical = {e for e in entity_to_nodes if _entity_type(e) not in _NON_TOPICAL_ENTITY_TYPES}
+    topical = {
+        e for e in entity_to_nodes
+        if _entity_type(e) not in _NON_TOPICAL_ENTITY_TYPES
+        and _entity_base_text(e).lower() not in _NON_TOPICAL_ENTITY_PHRASES
+        and _entity_base_text(e).lower() not in _NON_TOPICAL_CONTINENT_NAMES
+    }
 
     if total_entity_nodes < _ENTITY_GENERICITY_MIN_NODES:
         return topical
