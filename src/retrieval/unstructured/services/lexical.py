@@ -18,6 +18,21 @@ from ..text_utils import _extract_urls
 from .document_resolver import DocumentResolver
 from .ranking import RankingService
 
+# A query phrase may only scope retrieval when it is discriminating WITHIN
+# the document -- present in some nodes, absent from most. Above this share
+# of the document's text nodes a phrase is the document's own boilerplate
+# (its subject's name, "Annual Report", a running header), which would scope
+# retrieval to nearly everything and therefore scope it to nothing. Set well
+# below the 0.40 genericity cutoff semantic/axis2.py uses for entity
+# anchoring: that threshold answers "may this term justify a link between two
+# sections", a far weaker claim than "may this term decide which section
+# answers the question", so the bar here is deliberately stricter.
+_SCOPE_PHRASE_MAX_DF_RATIO = 0.25
+# Small on purpose -- these are pinned into a context window alongside the
+# vector/graph candidates, so this is a precision instrument, not a
+# recall net.
+_SCOPE_PHRASE_LIMIT = 6
+
 
 class LexicalService:
     def __init__(self, ranking: RankingService, document_resolver: DocumentResolver):
@@ -241,5 +256,136 @@ class LexicalService:
                 "page_start": r.get("page_start"),
                 "score": score,
                 "related": ["via:phrase_search"],
+            })
+        return items
+
+    def scope_phrase_retrieve(
+        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
+    ) -> list[dict]:
+        """
+        Retrieve chunks by a SHORT, discriminating scope phrase from the query
+        ("International Upstream"), rather than the long whole-question
+        n-grams structural_phrase_retrieve uses.
+
+        Why this exists: a filing repeats identical row labels under every
+        segment -- verified live on a real 10-K, 15 nodes contain "net
+        oil-equivalent production", 18 contain "liquids production". The only
+        token distinguishing one segment's table from another's is the scope
+        heading, and it is a few characters inside a ~2,000-character chunk,
+        so vector cosine cannot separate them: asked for International
+        Upstream's liquids production (962 MBD) the pipeline answered with a
+        sibling segment's figure instead. Long phrases could not rescue it
+        either -- they match nothing, because the document states facts in its
+        own words, not the question's.
+
+        The document-frequency guard is what keeps this general rather than a
+        list of segment names: a phrase is only allowed to scope retrieval
+        when it is DISCRIMINATING within this document (present in some nodes,
+        absent from most). "Chevron" and "Annual Report" appear nearly
+        everywhere and are dropped automatically; "International Upstream"
+        appears in a handful and survives. Nothing here knows what a segment
+        is, so it works the same way for regions, notes, exhibits or chapters
+        in any other document.
+
+        `document_id`: see structural_keyword_retrieve — same
+        skip-re-resolution contract.
+        """
+        phrases = self._ranking.scope_phrases_from_query(query)
+        if not phrases:
+            return []
+
+        if document_id is None:
+            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        else:
+            doc_id = document_id or None
+
+        lowered = [p.lower() for p in phrases]
+        # One pass to measure each phrase's document frequency, so a phrase
+        # that is really boilerplate never gets to scope anything.
+        stats = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
+            MATCH (n)
+            WHERE any(l IN labels(n) WHERE l IN $labels)
+              AND coalesce(n.search_text, '') <> ''
+              AND (
+                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
+                OR n.id STARTS WITH d.id + '_'
+              )
+            WITH collect(toLower(n.search_text)) AS texts
+            UNWIND $phrases AS phrase
+            RETURN phrase,
+                   size([t IN texts WHERE t CONTAINS phrase]) AS df,
+                   size(texts) AS total
+            """,
+            doc_id=doc_id,
+            phrases=lowered,
+            labels=list(_TEXT_NODE_LABELS),
+            tenant_id=tenant_id,
+        )
+        scoping: list[str] = []
+        for row in stats:
+            df, total = int(row.get("df") or 0), int(row.get("total") or 0)
+            if total <= 0 or df <= 0:
+                continue
+            if df / total <= _SCOPE_PHRASE_MAX_DF_RATIO:
+                scoping.append(row["phrase"])
+        if not scoping:
+            return []
+
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
+            MATCH (n)
+            WHERE any(l IN labels(n) WHERE l IN $labels)
+              AND coalesce(n.search_text, '') <> ''
+              AND (
+                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
+                OR n.id STARTS WITH d.id + '_'
+              )
+              AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
+            WITH n, d,
+              size([p IN $phrases WHERE toLower(n.search_text) CONTAINS p]) AS phrase_hits
+            RETURN
+              coalesce(n.id, '') AS id,
+              coalesce(n.title, '') AS title,
+              n.blob_key_text AS blob_key_text,
+              coalesce(n.search_text, '') AS search_text,
+              n.page_start AS page_start,
+              phrase_hits,
+              coalesce(d.title, d.id) AS doc_title
+            ORDER BY phrase_hits DESC, size(coalesce(n.search_text, '')) ASC
+            LIMIT $limit
+            """,
+            doc_id=doc_id,
+            phrases=scoping,
+            labels=list(_TEXT_NODE_LABELS),
+            tenant_id=tenant_id,
+            limit=_SCOPE_PHRASE_LIMIT,
+        )
+
+        hydrator = get_hydrator()
+        items: list[dict] = []
+        for r in rows:
+            if not r.get("id"):
+                continue
+            title = r.get("title") or r["id"]
+            full_text = hydrator.hydrate(r.get("blob_key_text"), r.get("search_text") or "")
+            items.append({
+                "id": r["id"],
+                "title": title,
+                "text": self.enrich_chunk_text_for_facts(title, full_text),
+                "page_start": r.get("page_start"),
+                # Scaled by how many of the query's scope phrases the chunk
+                # satisfies -- a chunk matching both "International" and
+                # "Upstream" scoping is a better scope match than one
+                # matching either alone.
+                "score": 1.0 + 0.1 * int(r.get("phrase_hits") or 0),
+                "related": ["via:scope_phrase"],
+                "doc_title": r.get("doc_title"),
             })
         return items

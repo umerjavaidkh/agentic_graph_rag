@@ -178,6 +178,59 @@ class RankingService:
                 return False
         return True
 
+    def scope_phrases_from_query(self, query: str) -> list[str]:
+        """Short proper-noun phrases from the query that may name a SCOPE the
+        document partitions its content by ("International Upstream", "U.S.
+        Downstream", "Note 15").
+
+        Distinct from _search_phrases_from_query, which builds long 6-8 word
+        n-grams spanning the whole question. Those are good at pinning a
+        chunk that restates the question almost verbatim, but they never
+        match a document that states the same fact in its own words -- and
+        crucially they cannot isolate a scope, because the scope terms are
+        diluted among six other tokens. Verified live on a 10-K: the question
+        "International Upstream net oil-equivalent production" produced only
+        long phrases, none of which appear contiguously anywhere in the
+        filing, so lexical retrieval contributed nothing and vector search
+        returned a DIFFERENT segment's table with the same row labels -- the
+        answer was a confidently wrong number, not a miss.
+
+        Extraction is deliberately permissive (any run of capitalized tokens,
+        2-3 words), because the caller applies a document-frequency filter
+        that is far better at telling a scope from boilerplate than any
+        pattern could be: "Chevron" or "Annual Report" appear in most nodes
+        and get dropped, while "International Upstream" appears in few and
+        survives. Same generic-vs-distinctive IDF reasoning this repo already
+        uses for entity anchoring (semantic/axis2.py) and lexical ranking.
+        """
+        if not query:
+            return []
+        phrases: list[str] = []
+        # Runs of capitalized/abbreviated tokens: "U.S. Downstream",
+        # "International Upstream", "Note 15". Case is meaningful here, so
+        # this reads the raw query rather than the lowercased forms the other
+        # phrase helpers work from.
+        for run in re.findall(
+            r"\b(?:[A-Z][\w.&'’-]*|\d{1,3})(?:\s+(?:[A-Z][\w.&'’-]*|\d{1,3})){1,2}\b",
+            query,
+        ):
+            tokens = run.split()
+            for size in (3, 2):
+                for i in range(len(tokens) - size + 1):
+                    phrase = " ".join(tokens[i : i + size])
+                    if any(c.isalpha() for c in phrase):
+                        phrases.append(phrase)
+        # Preserve order, drop duplicates case-insensitively.
+        seen: set[str] = set()
+        out: list[str] = []
+        for p in phrases:
+            key = p.lower()
+            if key in seen or key in _KEYWORD_STOP:
+                continue
+            seen.add(key)
+            out.append(p)
+        return out[:8]
+
     def _precision_pin_patterns(self, query: str) -> list[str]:
         """Long query-derived phrases used to pin compact high-signal chunks."""
         min_len = 10 if is_enumeration_question(query) else 8
@@ -362,6 +415,65 @@ class RankingService:
                     ),
                 }
             )
+
+        for item in items:
+            cid = item.get("id")
+            if cid and cid not in seen:
+                out.append(item)
+            if len(out) >= limit:
+                break
+        return out[:limit]
+
+    def _pin_scope_chunks(
+        self,
+        items: list[dict],
+        scope_hits: list[dict],
+        *,
+        limit: int,
+    ) -> list[dict]:
+        """
+        Pin chunks belonging to the scope (segment/region/note) the question
+        actually named, ahead of same-shaped chunks from sibling scopes.
+
+        Ranking alone cannot fix this, which is why it is a pin: the correct
+        chunk was retrievable the whole time and still never reached the
+        context window, because every sibling segment's table scores nearly
+        identically on a metric name they all share. Verified live on a 10-K
+        -- a question about International Upstream's liquids production was
+        answered with a different segment's figure, and querying the
+        document's own verbatim sentence did not surface its own chunk.
+
+        Ordered like the other pins: chunks carrying actual figures first,
+        shorter (denser) ones ahead of long ones -- a scope's summary table
+        answers a metric question better than the prose section that merely
+        mentions it.
+        """
+        if not scope_hits:
+            return items
+
+        def _rank_key(h: dict) -> tuple:
+            text = h.get("text") or ""
+            low_conf = "[low confidence extract]" in text.lower()
+            has_figures = ("$" in text) or any(ch.isdigit() for ch in text)
+            return (low_conf, not has_figures, -float(h.get("score") or 0.0), len(text))
+
+        seen: set[str] = set()
+        out: list[dict] = []
+        for hit in sorted(scope_hits, key=_rank_key):
+            cid = hit.get("id")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            out.append({
+                "id": cid,
+                "title": hit.get("title") or cid,
+                "text": hit.get("text") or "",
+                "page_start": hit.get("page_start"),
+                "score": float(hit.get("score", 1.0)) + 10.0,
+                "related": list(
+                    dict.fromkeys([*(hit.get("related") or []), "via:scope_pin"])
+                ),
+            })
 
         for item in items:
             cid = item.get("id")
