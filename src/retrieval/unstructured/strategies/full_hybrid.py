@@ -339,6 +339,15 @@ class FullHybridStrategy:
             items = self._ranking._pin_scope_chunks(
                 items, scope_hits, limit=max(1, int(fetch_limit))
             )
+        # Last, and only when no more specific scope was identified: a scope
+        # phrase names the answer's location explicitly, so it should not be
+        # displaced by a mere keyword leader. With no scope to go on, the
+        # best idf-ranked keyword match is the strongest remaining signal
+        # for a narrow factual question.
+        if not scope_hits and keyword_hits:
+            items = self._ranking._pin_keyword_leader(
+                items, keyword_hits, limit=max(1, int(fetch_limit))
+            )
 
         response = self._formatter.format(query, items, ctx=ctx)
         if mode_hint == "graph_rag_lexical":
