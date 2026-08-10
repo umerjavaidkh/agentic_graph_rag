@@ -193,6 +193,29 @@ class FullHybridStrategy:
             tenant_id=tenant_id,
             document_id=document_id,
         )
+        # Scope-phrase retrieval: finds the chunk belonging to the SEGMENT the
+        # question names, which neither vector nor the other lexical passes
+        # can isolate when a document repeats identical row labels under every
+        # segment (see LexicalService.scope_phrase_retrieve). Runs on the same
+        # pool as the other fetches, so it costs no extra wall-clock time.
+        scope_future = pool.submit(
+            self._neo4j_session_call,
+            self._lexical.scope_phrase_retrieve,
+            query,
+            tenant_id=tenant_id,
+            document_id=document_id,
+        )
+        # A counting question is answered by a numeral next to the counted
+        # noun, which keyword/vector retrieval cannot isolate when that noun
+        # is common in the document (see quantity_evidence_retrieve). Returns
+        # [] immediately for every non-counting question.
+        quantity_future = pool.submit(
+            self._neo4j_session_call,
+            self._lexical.quantity_evidence_retrieve,
+            query,
+            tenant_id=tenant_id,
+            document_id=document_id,
+        )
         # Only fetched for overview-shaped questions ("what does this
         # document/chapter discuss") — chapter_summary_weight in
         # _merge_and_rank already de-prioritizes these for everything else,
@@ -249,7 +272,15 @@ class FullHybridStrategy:
             quarterly_summary_future.result() if quarterly_summary_future is not None else []
         )
 
+        scope_hits = scope_future.result()
+        quantity_hits = quantity_future.result()
         lexical_hits = self._ranking._merge_retrieval_chunks(phrase_hits, keyword_hits)
+        # Merged into the lexical pool so scope hits reach _merge_and_rank and
+        # the reranker as ordinary candidates; they are additionally pinned
+        # below, because ranking alone is exactly what failed here -- the
+        # right chunk was reachable all along and still never made the cut.
+        lexical_hits = self._ranking._merge_retrieval_chunks(lexical_hits, scope_hits)
+        lexical_hits = self._ranking._merge_retrieval_chunks(lexical_hits, quantity_hits)
         seed_ids = [h["id"] for h in vector_hits if h.get("id")]
         seed_scores = {h["id"]: float(h["score"]) for h in vector_hits if h.get("id")}
 
@@ -310,6 +341,32 @@ class FullHybridStrategy:
         if pin_summary_hits:
             items = self._ranking._pin_firmwide_summary_chunks(
                 items, pin_summary_hits, limit=max(1, int(fetch_limit))
+            )
+        # Pinned AFTER the firmwide pin so the two never fight: a question
+        # naming a specific segment is by definition not a firmwide one
+        # (is_firmwide_financial_metric_question excludes segment-scoped
+        # queries), so in practice only one of these ever has hits. When a
+        # question somehow produces both, the more specific scope should win
+        # the top of the context window.
+        if scope_hits:
+            items = self._ranking._pin_scope_chunks(
+                items, scope_hits, limit=max(1, int(fetch_limit))
+            )
+        # Last, and only when no more specific scope was identified: a scope
+        # phrase names the answer's location explicitly, so it should not be
+        # displaced by a mere keyword leader. With no scope to go on, the
+        # best idf-ranked keyword match is the strongest remaining signal
+        # for a narrow factual question.
+        # Numeric evidence is the most specific signal available for a
+        # counting question -- pinned above scope, which only narrows WHERE
+        # to look, not what actually answers it.
+        if quantity_hits:
+            items = self._ranking._pin_scope_chunks(
+                items, quantity_hits, limit=max(1, int(fetch_limit))
+            )
+        if not scope_hits and not quantity_hits and keyword_hits:
+            items = self._ranking._pin_keyword_leader(
+                items, keyword_hits, limit=max(1, int(fetch_limit))
             )
 
         response = self._formatter.format(query, items, ctx=ctx)

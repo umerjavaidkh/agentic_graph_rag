@@ -364,6 +364,16 @@ class Neo4jExporter:
             "page_end": node.page_end,
             "depth": node.depth,
             "entities": node.entities,
+            # JSON string, not a native map: Neo4j properties cannot hold a
+            # nested map. Persisted (rather than left in memory as it was
+            # originally) so Axis-2 edges can be REBUILT from the stored
+            # graph without re-running NER -- entity type drives the DATE
+            # exclusion, the same-type enumeration cap and homonym
+            # separation, so rebuilding without it would silently produce
+            # worse edges than the ingestion that created them, not merely
+            # equivalent ones. NER is the expensive, quota-limited step, so
+            # this is what makes iterating on edge quality cheap.
+            "entity_types": json.dumps(node.entity_types or {}),
             "cluster_id": node.cluster_id,
             "summary": node.summary,
             "visual_content": node.visual_content,
@@ -496,7 +506,7 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
 
         fieldnames = ["id", "type", "title", "text", "order",
                       "page_start", "page_end", "depth",
-                      "entities", "cluster_id"]
+                      "entities", "entity_types", "cluster_id"]
 
         for label, type_nodes in buckets.items():
             fname = f"{self._safe_name(label)}s.csv"
@@ -514,6 +524,7 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
                         "page_end":   n.page_end,
                         "depth":      n.depth,
                         "entities":   json.dumps(n.entities),
+                        "entity_types": json.dumps(n.entity_types or {}),
                         "cluster_id": n.cluster_id if n.cluster_id is not None else "",
                     })
 
@@ -571,6 +582,7 @@ SET   n.title      = row.title,
       n.page_end   = toInteger(row.page_end),
       n.depth      = toInteger(row.depth),
       n.entities   = row.entities,
+      n.entity_types = row.entity_types,
       n.cluster_id = CASE row.cluster_id WHEN '' THEN null ELSE toInteger(row.cluster_id) END;
 """)
 
@@ -623,6 +635,7 @@ YIELD rel RETURN count(rel);
 
         for n in nodes:
             entities_str  = json.dumps(n.entities).replace("'", "\\'")
+            etypes_str    = json.dumps(n.entity_types or {}).replace("'", "\\'")
             text_escaped  = n.text.replace("'", "\\'").replace("\n", "\\n")
             title_escaped = n.title.replace("'", "\\'")
             cluster       = f", n.cluster_id={n.cluster_id}" if n.cluster_id is not None else ""
@@ -632,7 +645,8 @@ YIELD rel RETURN count(rel);
                 f" SET n.title='{title_escaped}', n.text='{text_escaped}',"
                 f" n.order={n.order}, n.page_start={n.page_start},"
                 f" n.page_end={n.page_end}, n.depth={n.depth},"
-                f" n.entities='{entities_str}'{cluster};"
+                f" n.entities='{entities_str}',"
+                f" n.entity_types='{etypes_str}'{cluster};"
             )
 
         lines += ["\n// ── AXIS 1 — STRUCTURAL EDGES ───────────────"]

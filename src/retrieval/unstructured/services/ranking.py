@@ -20,6 +20,55 @@ from ..query_intent import (
 from ..text_utils import _query_anchor_terms
 
 
+# Suffix rules for _morphological_stem, ordered LONGEST FIRST so the most
+# specific rule wins ("abbreviations" -> "abbreviation" via "s", but
+# "implemented" -> "implement" via "ed" rather than mangling it via "d").
+# Covers the three morphology classes that actually break CONTAINS matching
+# between a question and a document: plurals (hospitals/Hospital), verb
+# inflections (implemented/implement), and demonyms or derived adjectives
+# (Jordanian/Jordan, Spanish/Spain-ish, Portuguese/Portugal-ese) -- the last
+# of which no plain plural stemmer would catch, and which questions about
+# countries and regions produce constantly.
+# "ies" strips to the bare consonant stem ("countries" -> "countr") rather
+# than restoring "country": the stem only has to be a prefix of BOTH forms
+# for CONTAINS to find them, and "countri" would match "countries" while
+# silently missing "country".
+_STEM_SUFFIXES = ("ians", "ies", "ian", "ing", "ese", "ish", "ed", "es", "s")
+# Don't touch short words: below this length, suffix stripping is far more
+# likely to destroy a word ("data" -> "dat", "uses" -> "us") than to recover
+# a real base form.
+_STEM_MIN_SOURCE_LEN = 6
+# And never emit a stub as a stem -- a 3-character CONTAINS fragment matches
+# a huge amount of unrelated text.
+_STEM_MIN_RESULT_LEN = 4
+
+
+# Structural nouns every document type shares, optionally followed by an
+# identifier ("Table A2", "Figure 1", "Annex 3", "list of abbreviations").
+# Matched case-insensitively so lowercase phrasing scopes retrieval exactly
+# as capitalized phrasing does.
+_STRUCTURAL_REF_RE = re.compile(
+    # "fig\." precedes "fig" so the abbreviated form claims its own period --
+    # otherwise "fig" matches first and the trailing "." blocks the
+    # identifier from being read ("Fig. 1" would yield "fig" with no number).
+    r"\b(list\s+of\s+\w+|table\s+of\s+contents|table|figure|fig\.|fig|annex|appendix|"
+    r"exhibit|section|chapter|box|note|glossary|abbreviations|references|"
+    r"bibliography)\s*([A-Za-z]?\d+(?:\.\d+)?)?",
+    re.I,
+)
+# A document writes one surface form and the question uses the other; both
+# must be searched. Only genuine spelling variants of the SAME structural
+# noun belong here -- this is not a place for topical synonyms.
+_STRUCTURAL_SYNONYMS = {
+    "figure": ("figure", "fig."),
+    "fig": ("fig.", "figure"),
+    "fig.": ("fig.", "figure"),
+    "appendix": ("appendix", "annex"),
+    "annex": ("annex", "appendix"),
+    "abbreviations": ("abbreviations", "list of abbreviations"),
+}
+
+
 class RankingService:
     def _merge_and_rank(
         self,
@@ -177,6 +226,75 @@ class RankingService:
             if not any(g.lower().replace(" ", "").replace(".", "") in norm for g in group):
                 return False
         return True
+
+    def scope_phrases_from_query(self, query: str) -> list[str]:
+        """Short proper-noun phrases from the query that may name a SCOPE the
+        document partitions its content by ("International Upstream", "U.S.
+        Downstream", "Note 15").
+
+        Distinct from _search_phrases_from_query, which builds long 6-8 word
+        n-grams spanning the whole question. Those are good at pinning a
+        chunk that restates the question almost verbatim, but they never
+        match a document that states the same fact in its own words -- and
+        crucially they cannot isolate a scope, because the scope terms are
+        diluted among six other tokens. Verified live on a 10-K: the question
+        "International Upstream net oil-equivalent production" produced only
+        long phrases, none of which appear contiguously anywhere in the
+        filing, so lexical retrieval contributed nothing and vector search
+        returned a DIFFERENT segment's table with the same row labels -- the
+        answer was a confidently wrong number, not a miss.
+
+        Extraction is deliberately permissive (any run of capitalized tokens,
+        2-3 words), because the caller applies a document-frequency filter
+        that is far better at telling a scope from boilerplate than any
+        pattern could be: "Chevron" or "Annual Report" appear in most nodes
+        and get dropped, while "International Upstream" appears in few and
+        survives. Same generic-vs-distinctive IDF reasoning this repo already
+        uses for entity anchoring (semantic/axis2.py) and lexical ranking.
+        """
+        if not query:
+            return []
+        phrases: list[str] = []
+        # Structural references ("list of abbreviations", "table A2", "annex
+        # 1") name a scope just as precisely as a proper noun does, but users
+        # type them in lowercase, so the capitalization rule below never sees
+        # them -- verified live: "What is in the List of Abbreviations?"
+        # returned all 24 entries while the identical lowercase question
+        # answered "this document does not cover" it. The vocabulary is
+        # document-STRUCTURE words (every document has sections, tables and
+        # figures), never document content, so it carries no corpus
+        # assumptions. Both surface forms of the abbreviated ones are emitted
+        # ("Figure 1" / "Fig. 1") because a document picks one and the
+        # question picks the other independently -- the same live failure:
+        # asking "Figure 1" missed a region titled "Fig. 1:".
+        for m in _STRUCTURAL_REF_RE.finditer(query):
+            noun, ident = m.group(1).lower(), (m.group(2) or "").strip()
+            for form in _STRUCTURAL_SYNONYMS.get(noun, (noun,)):
+                phrases.append(f"{form} {ident}".strip() if ident else form)
+        # Runs of capitalized/abbreviated tokens: "U.S. Downstream",
+        # "International Upstream", "Note 15". Case is meaningful here, so
+        # this reads the raw query rather than the lowercased forms the other
+        # phrase helpers work from.
+        for run in re.findall(
+            r"\b(?:[A-Z][\w.&'’-]*|\d{1,3})(?:\s+(?:[A-Z][\w.&'’-]*|\d{1,3})){1,2}\b",
+            query,
+        ):
+            tokens = run.split()
+            for size in (3, 2):
+                for i in range(len(tokens) - size + 1):
+                    phrase = " ".join(tokens[i : i + size])
+                    if any(c.isalpha() for c in phrase):
+                        phrases.append(phrase)
+        # Preserve order, drop duplicates case-insensitively.
+        seen: set[str] = set()
+        out: list[str] = []
+        for p in phrases:
+            key = p.lower()
+            if key in seen or key in _KEYWORD_STOP:
+                continue
+            seen.add(key)
+            out.append(p)
+        return out[:8]
 
     def _precision_pin_patterns(self, query: str) -> list[str]:
         """Long query-derived phrases used to pin compact high-signal chunks."""
@@ -371,6 +489,110 @@ class RankingService:
                 break
         return out[:limit]
 
+    def _pin_scope_chunks(
+        self,
+        items: list[dict],
+        scope_hits: list[dict],
+        *,
+        limit: int,
+    ) -> list[dict]:
+        """
+        Pin chunks belonging to the scope (segment/region/note) the question
+        actually named, ahead of same-shaped chunks from sibling scopes.
+
+        Ranking alone cannot fix this, which is why it is a pin: the correct
+        chunk was retrievable the whole time and still never reached the
+        context window, because every sibling segment's table scores nearly
+        identically on a metric name they all share. Verified live on a 10-K
+        -- a question about International Upstream's liquids production was
+        answered with a different segment's figure, and querying the
+        document's own verbatim sentence did not surface its own chunk.
+
+        Ordered like the other pins: chunks carrying actual figures first,
+        shorter (denser) ones ahead of long ones -- a scope's summary table
+        answers a metric question better than the prose section that merely
+        mentions it.
+        """
+        if not scope_hits:
+            return items
+
+        def _rank_key(h: dict) -> tuple:
+            text = h.get("text") or ""
+            low_conf = "[low confidence extract]" in text.lower()
+            has_figures = ("$" in text) or any(ch.isdigit() for ch in text)
+            return (low_conf, not has_figures, -float(h.get("score") or 0.0), len(text))
+
+        seen: set[str] = set()
+        out: list[dict] = []
+        for hit in sorted(scope_hits, key=_rank_key):
+            cid = hit.get("id")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            out.append({
+                "id": cid,
+                "title": hit.get("title") or cid,
+                "text": hit.get("text") or "",
+                "page_start": hit.get("page_start"),
+                "score": float(hit.get("score", 1.0)) + 10.0,
+                "related": list(
+                    dict.fromkeys([*(hit.get("related") or []), "via:scope_pin"])
+                ),
+            })
+
+        for item in items:
+            cid = item.get("id")
+            if cid and cid not in seen:
+                out.append(item)
+            if len(out) >= limit:
+                break
+        return out[:limit]
+
+    def _pin_keyword_leader(
+        self,
+        items: list[dict],
+        lexical_hits: list[dict],
+        *,
+        limit: int,
+    ) -> list[dict]:
+        """
+        Pin the single best keyword match so a narrow factual question can
+        still reach the one chunk that answers it.
+
+        structural_keyword_retrieve already ranks by idf, so its first hit is
+        the chunk matching the query's RAREST terms -- precisely the chunk a
+        specific factual question is about. But lexical scores enter
+        _merge_and_rank around 1.0 while vector hits come out of the
+        relevance boost around 4-5, so that leader is routinely ranked off
+        the end of the context window by broadly-similar prose.
+
+        Verified live: "Which Jordanian hospitals implemented Go.Data in
+        January 2021?" returned "this document does not cover" while
+        structural_keyword_retrieve ranked the very page holding all eight
+        hospitals FIRST -- the answer was retrieved and then discarded before
+        synthesis ever saw it. Only the leader is pinned (not the whole
+        lexical list), so this stays a precision instrument: it costs exactly
+        one slot, and only when a keyword search found something at all.
+        """
+        if not lexical_hits or not items:
+            return items
+        leader = lexical_hits[0]
+        leader_id = leader.get("id")
+        if not leader_id or any(i.get("id") == leader_id for i in items[:limit]):
+            return items
+
+        pinned = {
+            "id": leader_id,
+            "title": leader.get("title") or leader_id,
+            "text": leader.get("text") or "",
+            "page_start": leader.get("page_start"),
+            "score": float(leader.get("score", 1.0)) + 10.0,
+            "related": list(
+                dict.fromkeys([*(leader.get("related") or []), "via:keyword_leader"])
+            ),
+        }
+        return ([pinned] + [i for i in items if i.get("id") != leader_id])[:limit]
+
     def _search_phrases_from_query(self, query: str) -> list[str]:
         """
         Build document-agnostic search phrases from the question (dates + word n-grams).
@@ -415,6 +637,43 @@ class RankingService:
                 ordered.append(pl)
         return ordered[:14]
 
+    @staticmethod
+    def _morphological_stem(word: str) -> Optional[str]:
+        """Shortest safe base form of `word`, or None when no rule applies.
+
+        Every lexical predicate in this file matches with CONTAINS, which is
+        exact-substring: a question asking about "hospitals" or "Jordanian"
+        never matches a document that writes "Hospital" and "Jordan", because
+        neither of those CONTAINS the longer query word. Verified live -- the
+        question "Which Jordanian hospitals implemented Go.Data in January
+        2021?" was answered "this document does not cover" by a graph that,
+        one question earlier, had correctly listed all eight of those
+        hospitals from the same table. Two morphological misses in one
+        question ("jordanian" vs "Jordan", "hospitals" vs "Hospital") were
+        enough to lose it entirely.
+
+        Stemming the QUERY side (rather than indexing stems) is what makes
+        this work with CONTAINS instead of against it: the stem is always a
+        prefix of the original, so CONTAINS(stem) matches a strict superset
+        of what CONTAINS(original) matched -- "hospital" finds both
+        "hospital" and "hospitals". Recall can only improve, never regress,
+        and precision is still handled downstream by the existing idf
+        weighting (a stem that matches too much simply weighs little).
+
+        Plain English suffix rules, no wordlist and no per-corpus vocabulary,
+        so this behaves identically on any document in any domain. The
+        minimum stem length keeps short words ("data", "site") untouched,
+        where suffix stripping is far likelier to destroy a word than to
+        recover its base form.
+        """
+        w = (word or "").lower()
+        if len(w) < _STEM_MIN_SOURCE_LEN or not w.isalpha():
+            return None
+        for suffix in _STEM_SUFFIXES:
+            if w.endswith(suffix) and len(w) - len(suffix) >= _STEM_MIN_RESULT_LEN:
+                return w[: -len(suffix)]
+        return None
+
     def _content_keywords_from_query(self, query: str) -> list[str]:
         """
         Distinct content terms for AND-style overlap scoring (corpus-agnostic).
@@ -446,6 +705,13 @@ class RankingService:
                 continue
             if w not in keywords:
                 keywords.append(w)
+            # The stem REPLACES nothing -- it is added alongside, because a
+            # stem is a prefix of the word and therefore matches everything
+            # the word did plus its other inflections. Keeping both lets the
+            # idf weighting prefer the exact form when the document uses it.
+            stem = self._morphological_stem(w)
+            if stem and stem not in keywords:
+                keywords.append(stem)
 
         words = [
             w
