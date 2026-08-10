@@ -65,6 +65,7 @@ from src.semantic.axis2 import (
     _ENTITY_GENERICITY_LARGE_CORPUS_NODES,
     _ENTITY_GENERICITY_MIN_NODES,
     _adaptive_genericity_ratio,
+    _dedupe_enumeration_types,
     _entity_base_text,
     _entity_type,
     _informative_entities,
@@ -210,6 +211,91 @@ def test_small_document_below_min_nodes_unaffected_by_genericity_filter():
     edges = builder._build_entity_edges([a, b])
     assert len(edges) == 1
     assert "company" in edges[0].properties["shared_entities"]
+
+
+# ── enumeration-type cap (multi-entity "laundry list" edges) ────────────────
+# Regression: found via sampled LLM-judge audit of a real 10-K -- edges
+# shared 3-4 LOCATION entities at once ("kazakhstan, u.s., canada, dj
+# basin"), the signature of two independent boilerplate enumeration
+# paragraphs ("the company operates in X, Y, Z...") rather than a genuine
+# topical connection. These scored artificially HIGH (idf summed across
+# every listed entity) despite being the judge's most consistently flagged
+# failure mode, outranking genuinely specific single-entity edges.
+
+
+def test_dedupe_enumeration_types_caps_same_type_at_two():
+    shared = {"kazakhstan (LOCATION)", "u.s. (LOCATION)", "canada (LOCATION)", "dj basin (LOCATION)"}
+    result = _dedupe_enumeration_types(shared)
+    assert len(result) == 2
+    assert result <= shared
+
+
+def test_dedupe_enumeration_types_preserves_specific_entity_of_different_type():
+    # A soft cap, not a wholesale exclusion -- the one specific, non-
+    # repeated-type entity survives alongside the capped locations.
+    shared = {"kazakhstan (LOCATION)", "u.s. (LOCATION)", "canada (LOCATION)", "tco (ORG)"}
+    result = _dedupe_enumeration_types(shared)
+    assert "tco (ORG)" in result
+    assert sum(1 for e in result if "(LOCATION)" in e) == 2
+
+
+def test_dedupe_enumeration_types_two_same_type_unaffected():
+    shared = {"kazakhstan (LOCATION)", "canada (LOCATION)"}
+    assert _dedupe_enumeration_types(shared) == shared
+
+
+def test_dedupe_enumeration_types_untyped_entities_not_capped():
+    # Legacy/untyped entities have no reliable type signal to group by --
+    # left alone rather than risk incorrectly capping them.
+    shared = {"alpha", "beta", "gamma", "delta"}
+    assert _dedupe_enumeration_types(shared) == shared
+
+
+def test_build_entity_edges_caps_laundry_list_location_edge():
+    """Direct reproduction of the live 10-K bug: two sections sharing 4
+    LOCATION entities at once must not get full credit for every one of
+    them."""
+    a = _node("a", ["kazakhstan", "u.s.", "canada", "dj basin"])
+    b = _node("b", ["kazakhstan", "u.s.", "canada", "dj basin"])
+    for n in (a, b):
+        n.entity_types = {e: "LOCATION" for e in n.entities}
+
+    builder = _builder()
+    edges = builder._build_entity_edges([a, b])
+
+    assert len(edges) == 1
+    assert len(edges[0].properties["shared_entities"]) == 2  # capped from 4
+
+
+def test_build_entity_edges_keeps_specific_entity_alongside_capped_locations():
+    a = _node("a", ["kazakhstan", "u.s.", "canada", "tco"])
+    b = _node("b", ["kazakhstan", "u.s.", "canada", "tco"])
+    for n in (a, b):
+        n.entity_types = {"kazakhstan": "LOCATION", "u.s.": "LOCATION", "canada": "LOCATION", "tco": "ORG"}
+
+    builder = _builder()
+    edges = builder._build_entity_edges([a, b])
+
+    shared = edges[0].properties["shared_entities"]
+    assert any("tco" in s.lower() for s in shared)
+    assert sum(1 for s in shared if "location" in s.lower()) == 2
+
+
+def test_build_entity_edges_weight_reflects_capped_entities_only():
+    """The reported weight/rarity_score must match the FILTERED shared set,
+    not the full uncapped one -- otherwise a laundry-list edge would still
+    outrank a genuinely specific single-entity edge despite being capped."""
+    a = _node("a", ["kazakhstan", "u.s.", "canada", "dj basin"])
+    b = _node("b", ["kazakhstan", "u.s.", "canada", "dj basin"])
+    for n in (a, b):
+        n.entity_types = {e: "LOCATION" for e in n.entities}
+
+    builder = _builder()
+    edges = builder._build_entity_edges([a, b])
+    # Both nodes share all 4 entities identically -> each entity's idf =
+    # log((2+1)/(2+1)) + 1 = 1.0 exactly; capped to 2 entities -> weight 2.0,
+    # not 4.0 (what summing all 4 uncapped would give).
+    assert edges[0].weight == 2.0
 
 
 # ── _entity_base_text / type-fragmentation regression ───────────────────────

@@ -435,6 +435,40 @@ def _adaptive_genericity_ratio(total_entity_nodes: int) -> float:
     return _ENTITY_GENERICITY_DF_RATIO + (_ENTITY_GENERICITY_DF_RATIO_CEILING - _ENTITY_GENERICITY_DF_RATIO) * decay
 
 
+_ENUMERATION_SAME_TYPE_CAP = 2
+
+
+def _dedupe_enumeration_types(shared: set[str], *, max_same_type: int = _ENUMERATION_SAME_TYPE_CAP) -> set[str]:
+    """A shared-entity set containing 3+ entities of the SAME type (e.g.
+    "kazakhstan (LOCATION), u.s. (LOCATION), canada (LOCATION), dj basin
+    (LOCATION)") is the signature of two independent boilerplate
+    enumeration paragraphs ("the company operates in X, Y, Z, and other
+    regions...") rather than evidence the two sections are about the same
+    thing -- verified live: these were exactly the edges an LLM judge
+    flagged as "not meaningfully connected", and (before this fix) they
+    scored artificially HIGH -- idf weight summed across every listed
+    entity -- despite being the weakest signal, outranking genuinely
+    specific single-entity connections.
+
+    A soft cap (drop entities of a type past `max_same_type`), not a
+    wholesale edge exclusion: two sections that genuinely both discuss the
+    same two or three specific things (people, products, orgs) of one type
+    are unaffected, and even a pair sharing many same-type entities still
+    forms an edge anchored on the first `max_same_type` -- it just stops
+    getting extra credit for every additional one, rather than vanishing
+    outright. Type-agnostic (not LOCATION-specific) so it generalizes to
+    any document's own recurring enumeration shape, not just this one's.
+    """
+    by_type: dict[Optional[str], list[str]] = {}
+    for e in shared:
+        by_type.setdefault(_entity_type(e), []).append(e)
+    kept: set[str] = set()
+    for etype, ents in by_type.items():
+        limit = max_same_type if etype is not None else len(ents)
+        kept.update(sorted(ents)[:limit])
+    return kept
+
+
 def _informative_entities(entity_to_nodes: dict[str, list[int]], total_entity_nodes: int) -> set[str]:
     """Entities NOT too generic (by document-frequency ratio) to anchor a
     SHARES_ENTITY edge within this document. See constants above for why.
@@ -879,10 +913,8 @@ class Axis2Builder:
         canonical = _resolve_canonical_entities(entity_nodes)
 
         entity_to_nodes: dict[str, list[int]] = {}
-        node_entity_sets: list[set] = []
         for idx, node in enumerate(entity_nodes):
             ents = {canonical[(node.id, e.lower())] for e in node.entities}
-            node_entity_sets.append(ents)
             for e in ents:
                 entity_to_nodes.setdefault(e, []).append(idx)
 
@@ -910,21 +942,33 @@ class Axis2Builder:
             if e in informative
         }
 
-        pair_scores: dict[Tuple[int, int], float] = {}
+        # Per-pair shared-entity sets first (via the same inverted-index
+        # scan, so still bounded by actual co-occurrence, not O(n^2)), THEN
+        # the enumeration cap, THEN the score -- the cap must apply to both
+        # the reported shared_entities and the weight consistently (an
+        # edge's score can no longer include credit for entities its own
+        # cap excluded).
+        pair_entities: dict[Tuple[int, int], set[str]] = {}
         for entity, idx_list in entity_to_nodes.items():
             if entity not in informative:
                 continue
-            weight = idf[entity]
             for a, b in itertools.combinations(sorted(idx_list), 2):
-                pair_scores[(a, b)] = pair_scores.get((a, b), 0.0) + weight
+                pair_entities.setdefault((a, b), set()).add(entity)
+
+        pair_scores: dict[Tuple[int, int], float] = {}
+        pair_shared: dict[Tuple[int, int], set[str]] = {}
+        for pair, ents in pair_entities.items():
+            filtered = _dedupe_enumeration_types(ents)
+            if not filtered:
+                continue
+            pair_shared[pair] = filtered
+            pair_scores[pair] = sum(idf[e] for e in filtered)
 
         candidates = [(i, j, score) for (i, j), score in pair_scores.items()]
         cap = AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
         for i, j, score in _cap_edges_by_degree(candidates, cap):
             a, b = entity_nodes[i], entity_nodes[j]
-            shared = (node_entity_sets[i] & node_entity_sets[j]) & informative
-            if not shared:
-                continue
+            shared = pair_shared[(i, j)]
             edges.append(DKGEdge(
                 source_id  = a.id,
                 target_id  = b.id,
