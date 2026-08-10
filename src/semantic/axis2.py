@@ -192,6 +192,62 @@ def _is_entity_grounded(entity: str, source_text: str) -> bool:
     return bool(stripped) and stripped in norm_text
 
 
+# Words skipped when deriving an expansion's initials, so the conventional
+# acronym form matches: "securities and exchange commission" -> "sec", not
+# "saec". Both the all-words and significant-words-only forms are accepted
+# (see _expansion_initials), since real acronyms use either convention
+# ("u.s.a." keeps every word; "sec" drops the conjunction).
+_ACRONYM_SKIP_WORDS = frozenset({"and", "of", "the", "for", "in", "on", "&"})
+# An acronym is short by nature. Bounded to avoid treating an ordinary short
+# word as an acronym for some unrelated multi-word entity that happens to
+# start with the same letters -- the longer the candidate, the likelier a
+# coincidental initials match is a false merge rather than a real alias.
+_ACRONYM_MAX_LEN = 5
+_ACRONYM_LETTERS_RE = re.compile(r"[^a-z0-9]")
+
+
+def _acronym_letters(base: str) -> Optional[str]:
+    """The letters of `base` if it is orthographically marked as an
+    abbreviation ("u.s." -> "us", "u.s.a." -> "usa"), else None.
+
+    Requires the internal separator, and deliberately does NOT accept bare
+    letter runs like "sec" or "opec". Casing is the only other thing that
+    distinguishes an undotted acronym from an ordinary short word, and it is
+    long gone by the time canonicalization runs (entities are lowercased on
+    the way in) -- so accepting undotted forms means matching any short word
+    against any multi-word entity's initials, which measurably misfires:
+    verified on this repo's own motivating corpus, "oil" merged into
+    "offshore installation license" (o-i-l), silently destroying one of an
+    oil-company filing's most important entities.
+
+    The asymmetry is deliberate: a missed merge only leaves an alias
+    un-merged (the pre-existing behavior, a mild recall cost), while a wrong
+    merge corrupts a real entity's identity and its document frequency,
+    which is precisely what the genericity and distinctiveness filters
+    depend on. Dotted forms are the case actually observed failing in the
+    judge audit ("u.s." vs "united states"), and an orthographic rule
+    generalizes across corpora without naming any entity.
+    """
+    if not base or " " in base or "." not in base:
+        return None
+    letters = _ACRONYM_LETTERS_RE.sub("", base)
+    if 2 <= len(letters) <= _ACRONYM_MAX_LEN:
+        return letters
+    return None
+
+
+def _expansion_initials(base: str) -> set[str]:
+    """Initials of a multi-word entity, in both the all-words and
+    skip-common-words conventions (see _ACRONYM_SKIP_WORDS). Empty for a
+    single-word entity, which has no expansion to abbreviate."""
+    words = [w for w in _ACRONYM_LETTERS_RE.sub(" ", base).split() if w]
+    if len(words) < 2:
+        return set()
+    full = "".join(w[0] for w in words)
+    significant = "".join(w[0] for w in words if w not in _ACRONYM_SKIP_WORDS)
+    return {f for f in (full, significant) if len(f) >= 2}
+
+
 def _canonicalize_entities(
     all_entities: set[str], entity_types: Optional[dict[str, str]] = None
 ) -> dict[str, str]:
@@ -273,6 +329,47 @@ def _canonicalize_entities(
                         break
                     if difflib.SequenceMatcher(None, a[1], b[1]).ratio() >= _ENTITY_SIMILARITY_THRESHOLD:
                         union(a, b)
+
+    # Acronym/expansion merging ("u.s." <-> "united states"), which the
+    # fuzzy pass above structurally cannot do: it only compares strings
+    # inside the same first-N-character prefix bucket, and an acronym never
+    # shares a prefix with its expansion -- nor would character-similarity
+    # recognize them as related if it did ("u.s." vs "united states" scores
+    # far below the threshold). Verified live on a real 10-K: "u.s." and
+    # "united states" stayed two separate entities, each carrying its own
+    # SPLIT document frequency, so both sat under the genericity cutoff and
+    # both got an inflated rarity weight -- they appeared as the anchors of
+    # two separately-flagged SHARES_ENTITY edges in the sampled judge audit.
+    # Counting one real-world entity as two is what let pervasive vocabulary
+    # look distinctive, so this is the root cause behind that symptom.
+    #
+    # Structural (exact initials match), not fuzzy, and guarded three ways
+    # against merging a genuinely short entity into an unrelated longer one:
+    # same type only (keys carry their type), acronym shape required, and
+    # ambiguity rejected -- an acronym matching two or more distinct
+    # expansion clusters is left alone rather than merged into an
+    # arbitrary one. Indexed by initials rather than compared pairwise, so
+    # the pass stays linear in vocabulary size at any corpus scale.
+    initials_index: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for k in keys:
+        etype, base = k
+        for initials in _expansion_initials(base):
+            initials_index.setdefault((etype, initials), set()).add(k)
+
+    for k in keys:
+        etype, base = k
+        letters = _acronym_letters(base)
+        if letters is None:
+            continue
+        matches = initials_index.get((etype, letters))
+        if not matches:
+            continue
+        # Distinct EXPANSION CLUSTERS, not raw keys: several surface variants
+        # of the same expansion ("united states", "united states of america")
+        # may already be unioned together, which is not ambiguity.
+        roots = {find(m) for m in matches if find(m) != find(k)}
+        if len(roots) == 1:
+            union(k, roots.pop())
 
     cluster_members: dict[tuple[str, str], list[tuple[str, str]]] = {}
     for k in keys:
