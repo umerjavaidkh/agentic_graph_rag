@@ -50,3 +50,6 @@ sample_data_to_test/unstructured/*.pdf
 !sample_data_to_test/unstructured/rag_document.pdf
 sample_data_to_test/unstructured/sec_edgar/
 sample_data_to_test/unstructured/textbooks/
+
+# Local screenshots/scratch images (README uses docs/images/)
+images/

@@ -11,10 +11,6 @@
 
 **One Neo4j graph. Two knowledge modes. Structured business data and unstructured documents under the same roof — answers that flat RAG cannot reliably give.**
 
-![Graph Inspector — inspecting a document's structural graph, with the X1 / X2 / Final stage toggle, live node and edge type counts, and the CONTAINS / PRECEDES hierarchy rendered per document](images/graph_inspector.png)
-
-<sub>**Graph Inspector** — step through graph construction stage by stage: **X1** (structural), **X2** (+ semantic edges), and **Final** (as loaded into Neo4j). Node and edge types are counted per stage, so you can see exactly what each stage added and click any node or edge to inspect it.</sub>
-
 **Every layer is a plug-in point, not a fixed pipeline.** Parsing, ingestion, and retrieval are each built behind a real interface — `DocumentParser`, `ModelProvider`/`BlobStore`/`VectorStore`, `StructuredStrategy`/`UnstructuredStrategy` — so you can bring your own PDF parser, embedding/LLM provider, storage backend, or retrieval strategy and register it, without forking or touching existing code. Retrieval alone already ships 6 unstructured + 2 structured strategies resolved by name at runtime; parsing ships 3 (a geometry-first default with correct RTL/bidi handling and vector-rule table detection, a plain PyMuPDF/pdfplumber fallback, and a table-aware variant that fixes real over-segmentation bugs found on live SEC filings). See [Pluggable by design](#pluggable-by-design) below for the exact seams and how to add your own.
 
 Agentic GraphRAG keeps **structured business data** and **unstructured documents** in the same graph database, with an explicit retrieval-mode switch — structured, unstructured, or hybrid — instead of an LLM guessing which one you meant. SQL-grade analytics _and_ multi-hop reasoning over PDFs/DOCX, without separate vector DBs, ETL pipelines, or ad-hoc orchestration glue, and without a misrouted question silently producing the wrong kind of answer.
