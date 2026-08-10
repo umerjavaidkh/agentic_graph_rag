@@ -39,3 +39,14 @@ eval/ui_runs/
 .claude/
 CLAUDE.md
 graphify-out/
+
+# Sample/test documents — real source PDFs are not pushed to GitHub.
+# Exception: rag_document.pdf is committed deliberately because six unit
+# tests parse it as a fixture (golden structural snapshot, IR parsing,
+# rtldoc/table-aware parser behaviour, search_text derivation), so the suite
+# cannot run on a fresh clone without it. It is small (868K) and
+# redistributable; the larger corpora below are not.
+sample_data_to_test/unstructured/*.pdf
+!sample_data_to_test/unstructured/rag_document.pdf
+sample_data_to_test/unstructured/sec_edgar/
+sample_data_to_test/unstructured/textbooks/
