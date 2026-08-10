@@ -205,6 +205,17 @@ class FullHybridStrategy:
             tenant_id=tenant_id,
             document_id=document_id,
         )
+        # A counting question is answered by a numeral next to the counted
+        # noun, which keyword/vector retrieval cannot isolate when that noun
+        # is common in the document (see quantity_evidence_retrieve). Returns
+        # [] immediately for every non-counting question.
+        quantity_future = pool.submit(
+            self._neo4j_session_call,
+            self._lexical.quantity_evidence_retrieve,
+            query,
+            tenant_id=tenant_id,
+            document_id=document_id,
+        )
         # Only fetched for overview-shaped questions ("what does this
         # document/chapter discuss") — chapter_summary_weight in
         # _merge_and_rank already de-prioritizes these for everything else,
@@ -262,12 +273,14 @@ class FullHybridStrategy:
         )
 
         scope_hits = scope_future.result()
+        quantity_hits = quantity_future.result()
         lexical_hits = self._ranking._merge_retrieval_chunks(phrase_hits, keyword_hits)
         # Merged into the lexical pool so scope hits reach _merge_and_rank and
         # the reranker as ordinary candidates; they are additionally pinned
         # below, because ranking alone is exactly what failed here -- the
         # right chunk was reachable all along and still never made the cut.
         lexical_hits = self._ranking._merge_retrieval_chunks(lexical_hits, scope_hits)
+        lexical_hits = self._ranking._merge_retrieval_chunks(lexical_hits, quantity_hits)
         seed_ids = [h["id"] for h in vector_hits if h.get("id")]
         seed_scores = {h["id"]: float(h["score"]) for h in vector_hits if h.get("id")}
 
@@ -344,7 +357,14 @@ class FullHybridStrategy:
         # displaced by a mere keyword leader. With no scope to go on, the
         # best idf-ranked keyword match is the strongest remaining signal
         # for a narrow factual question.
-        if not scope_hits and keyword_hits:
+        # Numeric evidence is the most specific signal available for a
+        # counting question -- pinned above scope, which only narrows WHERE
+        # to look, not what actually answers it.
+        if quantity_hits:
+            items = self._ranking._pin_scope_chunks(
+                items, quantity_hits, limit=max(1, int(fetch_limit))
+            )
+        if not scope_hits and not quantity_hits and keyword_hits:
             items = self._ranking._pin_keyword_leader(
                 items, keyword_hits, limit=max(1, int(fetch_limit))
             )

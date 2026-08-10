@@ -191,3 +191,44 @@ def test_only_the_leader_is_pinned_not_the_whole_lexical_list():
 def test_no_lexical_hits_leaves_items_untouched():
     items = [_item("a", 2.0), _item("b", 1.0)]
     assert _r()._pin_keyword_leader(items, [], limit=5) == items
+
+
+# ── quantity questions ──────────────────────────────────────────────────────
+# Regression: "How many countries and institutions used Go.Data?" answered
+# "this document does not cover", while the chunk holding both "65 countries"
+# and "115 institutions" did not place in the top TEN keyword hits. Not a
+# ranking bug: in a document about country implementations those nouns are
+# everywhere, so idf correctly finds them uninformative and everything ties.
+# What identifies the answer is a numeral sitting next to the counted noun.
+
+
+def test_quantity_question_detected():
+    from src.retrieval.unstructured.services.lexical import _QUANTITY_QUESTION_RE
+    for q in ("How many countries used it?", "What is the number of sites?",
+              "How much funding?", "total number of users"):
+        assert _QUANTITY_QUESTION_RE.search(q), q
+
+
+def test_non_quantity_question_not_detected():
+    """The path must stay completely inert for ordinary questions."""
+    from src.retrieval.unstructured.services.lexical import _QUANTITY_QUESTION_RE
+    for q in ("What does Figure 1 show?", "Who wrote this report?",
+              "Describe the methodology"):
+        assert not _QUANTITY_QUESTION_RE.search(q), q
+
+
+def test_quantity_pattern_matches_number_before_noun():
+    """The generalizable shape: a numeral, optionally with a qualifier, then
+    the counted noun — true of prose in any domain."""
+    import re as _re
+    pattern = r"(?s).*\d[\d,.]*\s+(?:\w+\s+){0,2}institutions.*"
+    for text in ("used by 115 institutions worldwide",
+                 "over 115 institutions",
+                 "115 total participating institutions"):
+        assert _re.match(pattern, text.lower()), text
+
+
+def test_quantity_pattern_rejects_noun_without_number():
+    import re as _re
+    pattern = r"(?s).*\d[\d,.]*\s+(?:\w+\s+){0,2}institutions.*"
+    assert not _re.match(pattern, "institutions across the region adopted it")

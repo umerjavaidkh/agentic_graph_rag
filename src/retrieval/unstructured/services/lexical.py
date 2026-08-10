@@ -34,6 +34,15 @@ _SCOPE_PHRASE_MAX_DF_RATIO = 0.25
 # recall net.
 _SCOPE_PHRASE_LIMIT = 6
 
+# Questions asking for a count/total, where the answer is a numeral rather
+# than a passage. Phrasing only -- no domain vocabulary.
+_QUANTITY_QUESTION_RE = re.compile(
+    r"\b(how\s+many|how\s+much|number\s+of|total\s+number|count\s+of)\b", re.I
+)
+# Each noun costs one regex scan across the document's chunks, so cap it.
+_QUANTITY_MAX_NOUNS = 6
+_QUANTITY_LIMIT = 4
+
 
 class LexicalService:
     def __init__(self, ranking: RankingService, document_resolver: DocumentResolver):
@@ -257,6 +266,100 @@ class LexicalService:
                 "page_start": r.get("page_start"),
                 "score": score,
                 "related": ["via:phrase_search"],
+            })
+        return items
+
+    def quantity_evidence_retrieve(
+        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
+    ) -> list[dict]:
+        """
+        For a counting question ("how many X"), retrieve chunks that actually
+        contain a NUMBER counting X -- "115 institutions", "65 countries".
+
+        Keyword retrieval cannot answer these, and not because of a bug: in a
+        document about country implementations, "countries" and
+        "institutions" appear nearly everywhere, so idf correctly judges them
+        uninformative and every chunk ties. Verified live: "How many
+        countries and institutions used Go.Data?" returned "this document
+        does not cover", while the answering chunk (holding both "65
+        countries" and "115 institutions") did not even place in the top ten
+        keyword hits -- it matched the same terms as everything else and then
+        lost the length tie-break for being the longest.
+
+        What separates the answer from every other mention is not WHICH words
+        appear but that a numeral sits immediately before the counted noun.
+        That is a fact about how quantities are written in prose, not about
+        this document or this domain, so the pattern generalizes: "12
+        patients", "40 municipalities", "7 exhibits".
+        """
+        if not _QUANTITY_QUESTION_RE.search(query or ""):
+            return []
+        nouns = [
+            k for k in self._ranking._content_keywords_from_query(query)
+            if k.isalpha() and len(k) >= 4
+        ][:_QUANTITY_MAX_NOUNS]
+        if not nouns:
+            return []
+
+        if document_id is None:
+            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+        else:
+            doc_id = document_id or None
+
+        # "<number> <noun>", allowing thousands separators and an optional
+        # qualifier between them ("over 65 countries", "115 total institutions").
+        patterns = [rf"(?s).*\d[\d,.]*\s+(?:\w+\s+){{0,2}}{re.escape(n)}.*" for n in nouns]
+        rows = session.run(
+            f"""
+            MATCH (d:{DOCUMENT_ROOT_CYPHER})
+            WHERE {_doc_scope_cypher("d")}
+              AND {tenant_filter("d")}
+            MATCH (n)
+            WHERE any(l IN labels(n) WHERE l IN $labels)
+              AND coalesce(n.search_text, '') <> ''
+              AND (
+                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
+                OR n.id STARTS WITH d.id + '_'
+              )
+              AND any(p IN $patterns WHERE toLower(n.search_text) =~ p)
+            WITH n, d,
+              size([p IN $patterns WHERE toLower(n.search_text) =~ p]) AS matched
+            RETURN
+              coalesce(n.id, '') AS id,
+              coalesce(n.title, '') AS title,
+              n.blob_key_text AS blob_key_text,
+              coalesce(n.search_text, '') AS search_text,
+              n.page_start AS page_start,
+              matched,
+              coalesce(d.title, d.id) AS doc_title
+            ORDER BY matched DESC, size(coalesce(n.search_text, '')) DESC
+            LIMIT $limit
+            """,
+            doc_id=doc_id,
+            patterns=patterns,
+            labels=list(_TEXT_NODE_LABELS),
+            tenant_id=tenant_id,
+            limit=_QUANTITY_LIMIT,
+        )
+
+        hydrator = get_hydrator()
+        items: list[dict] = []
+        for r in rows:
+            if not r.get("id"):
+                continue
+            title = r.get("title") or r["id"]
+            full_text = hydrator.hydrate(r.get("blob_key_text"), r.get("search_text") or "")
+            items.append({
+                "id": r["id"],
+                "title": title,
+                "text": self.enrich_chunk_text_for_facts(title, full_text),
+                "page_start": r.get("page_start"),
+                # A chunk quantifying BOTH nouns the question asked about
+                # ("65 countries" and "115 institutions") answers it outright,
+                # so it must outrank one quantifying only half of it.
+                "score": 1.0 + float(r.get("matched") or 0),
+                "related": ["via:quantity_evidence"],
+                "doc_title": r.get("doc_title"),
             })
         return items
 
