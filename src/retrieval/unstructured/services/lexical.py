@@ -6,6 +6,7 @@ RankingService (query keyword/phrase extraction) and DocumentResolver
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Optional
 
@@ -325,13 +326,24 @@ class LexicalService:
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
         )
+        # Weight each surviving phrase by RARITY, don't treat them as equal.
+        # A frequency CUTOFF alone is not enough: verified live, a question
+        # mentioning "the Chevron 2025 Annual Report" yields both "Annual
+        # Report" (27/632 chunks) and "International Upstream" (12/632).
+        # Both clear any sane cutoff, but only one names the scope -- and
+        # weighted equally, short chunks matching merely "Annual Report"
+        # outranked the segment's own table, which is the exact failure this
+        # whole path exists to fix. idf makes the rarer, more specific phrase
+        # dominate, the same way axis2 weights entity anchors.
         scoping: list[str] = []
+        weights: list[float] = []
         for row in stats:
             df, total = int(row.get("df") or 0), int(row.get("total") or 0)
             if total <= 0 or df <= 0:
                 continue
             if df / total <= _SCOPE_PHRASE_MAX_DF_RATIO:
                 scoping.append(row["phrase"])
+                weights.append(math.log(total / df) + 1.0)
         if not scoping:
             return []
 
@@ -349,20 +361,23 @@ class LexicalService:
               )
               AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
             WITH n, d,
-              size([p IN $phrases WHERE toLower(n.search_text) CONTAINS p]) AS phrase_hits
+              reduce(w = 0.0, i IN range(0, size($phrases) - 1) |
+                w + CASE WHEN toLower(n.search_text) CONTAINS $phrases[i]
+                         THEN $weights[i] ELSE 0.0 END) AS phrase_weight
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
               n.blob_key_text AS blob_key_text,
               coalesce(n.search_text, '') AS search_text,
               n.page_start AS page_start,
-              phrase_hits,
+              phrase_weight,
               coalesce(d.title, d.id) AS doc_title
-            ORDER BY phrase_hits DESC, size(coalesce(n.search_text, '')) ASC
+            ORDER BY phrase_weight DESC, size(coalesce(n.search_text, '')) DESC
             LIMIT $limit
             """,
             doc_id=doc_id,
             phrases=scoping,
+            weights=weights,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
             limit=_SCOPE_PHRASE_LIMIT,
@@ -384,7 +399,7 @@ class LexicalService:
                 # satisfies -- a chunk matching both "International" and
                 # "Upstream" scoping is a better scope match than one
                 # matching either alone.
-                "score": 1.0 + 0.1 * int(r.get("phrase_hits") or 0),
+                "score": 1.0 + float(r.get("phrase_weight") or 0.0),
                 "related": ["via:scope_phrase"],
                 "doc_title": r.get("doc_title"),
             })

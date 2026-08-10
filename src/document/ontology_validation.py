@@ -188,6 +188,37 @@ def score_axis1_against_toc(
     )
 
 
+def _bad_title_reason(title: Optional[str]) -> Optional[str]:
+    """Why `title` is not a plausible authored heading, or None if it is.
+
+    Shape-based and document-agnostic on purpose -- it asserts only things
+    true of headings in any document, never anything about this corpus's
+    vocabulary:
+
+    * a heading is ONE line (a multi-line "title" is wrapped body text or a
+      wrapped running header that got joined together);
+    * a heading is not a table row (markdown pipes, or nothing but numbers
+      and punctuation);
+    * a heading is not the parser's own "no heading found here" placeholder;
+    * a heading is not a whole sentence.
+    """
+    text = (title or "").strip()
+    if not text:
+        return "empty title"
+    if "\n" in (title or ""):
+        return "multi-line title"
+    if text.startswith("|") or text.count("|") >= 2:
+        return "table row as title"
+    if text == "Preamble":
+        return "synthetic Preamble catch-all"
+    stripped = re.sub(r"[\d\s.,%$()\-–—/]", "", text)
+    if not stripped:
+        return "numeric/table fragment as title"
+    if len(text.split()) > 20:
+        return "sentence-length title"
+    return None
+
+
 def score_axis1_structural_invariants(
     constructed: list[dict],  # [{id, parent_id, depth, page_start, page_end}, ...]
     logical_doc_id: str,
@@ -227,6 +258,34 @@ def score_axis1_structural_invariants(
                 f"page range outside parent: {node['id']} [{ps}-{pe}] not within "
                 f"{parent['id']} [{pps}-{ppe}]"
             )
+
+    # Title quality. The page-range invariants above are self-consistency
+    # checks: they cannot tell an authored heading from document furniture,
+    # so a document whose structure is badly mis-detected still scores ~100%
+    # as long as the bogus sections nest tidily. Verified live on a 264-page
+    # 10-K that scored 99.76% here while 95 of its 172 section titles were
+    # junk -- wrapped running headers ("Management's Discussion and Analysis
+    # of / Financial Condition and Results of Operations", used as 25
+    # separate section titles), table data rows ("24 % / 14,703 / 33 % ..."),
+    # body sentences, and 49 synthetic "Preamble" catch-alls emitted whenever
+    # heading detection found nothing. That structure then poisons entities,
+    # edges and retrieval downstream, so the gate must be able to see it.
+    for node in constructed:
+        if (node.get("depth") or 0) <= 0:
+            continue  # the document root's title is its filename, not a heading
+        if node.get("title") is None:
+            # No title supplied at all — not assessable, so not counted either
+            # way. Distinct from an EMPTY title, which is a real defect: this
+            # is the "caller didn't fetch titles" case, and scoring it as a
+            # failure would silently penalise every caller that only cares
+            # about the page-range invariants.
+            continue
+        checks += 1
+        bad = _bad_title_reason(node.get("title"))
+        if bad is None:
+            passed += 1
+        else:
+            mismatches.append(f"{bad}: {node['id']} title={(node.get('title') or '')[:60]!r}")
 
     siblings_by_parent: dict[str, list[dict]] = {}
     for node in constructed:
