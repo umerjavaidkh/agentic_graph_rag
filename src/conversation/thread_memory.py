@@ -6,19 +6,36 @@ Used to resolve short follow-ups ("Development Timeline", "show image on that pa
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from typing import Any, Optional
 
 from ..retrieval.unstructured.visual_retrieval import extract_visual_focus_terms
 from .clarification import match_clarification_choice
 
-# thread_id -> last critical turn snapshot
-_store: dict[str, dict[str, Any]] = {}
+# thread_id -> last critical turn snapshot.
+#
+# Bounded, and an LRU rather than a plain dict: a thread_id is only ever
+# removed by an explicit clear_turn(), so a long-running process accumulated
+# one snapshot per thread it had EVER seen, for the life of the process --
+# unbounded growth with no eviction, since nothing calls clear_turn() on an
+# idle conversation. This store exists purely to resolve a short follow-up
+# against the immediately preceding turn, so only recently-active threads can
+# ever be read; evicting the least-recently-used one costs nothing a user
+# would notice (an old thread's follow-up simply resolves as a fresh
+# question, the same as before that thread's snapshot existed).
+_MAX_THREADS = 5_000
+_store: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
 
 
 def get_turn(thread_id: str) -> Optional[dict[str, Any]]:
     if not thread_id:
         return None
-    return _store.get(thread_id)
+    snapshot = _store.get(thread_id)
+    if snapshot is not None:
+        # A read marks the thread as active, so an in-use conversation is
+        # never the one evicted.
+        _store.move_to_end(thread_id)
+    return snapshot
 
 
 def save_turn(thread_id: str, user_question: str, result: dict) -> None:
@@ -27,6 +44,9 @@ def save_turn(thread_id: str, user_question: str, result: dict) -> None:
     snapshot = extract_critical_from_result(user_question, result)
     if snapshot:
         _store[thread_id] = snapshot
+        _store.move_to_end(thread_id)
+        while len(_store) > _MAX_THREADS:
+            _store.popitem(last=False)
 
 
 def clear_turn(thread_id: str) -> None:
