@@ -5,6 +5,18 @@
 
 > 🚧 **Development in progress.** Core structured + unstructured retrieval, ingestion, and the storage-split architecture below are working and covered by tests, but this is not yet a tagged release — see [Current status](#current-status) for exactly what's done vs. in flight.
 
+## Why this is different
+
+| Typical flat RAG                   | Agentic GraphRAG                                            |
+| ---------------------------------- | ----------------------------------------------------------- |
+| One chunk index for everything     | Dedicated graphs for tables vs. documents                   |
+| Similarity search only             | Cypher for metrics + hybrid retrieval for PDFs              |
+| Weak on counts, joins, time series | Aggregations, rankings, charts from live Neo4j              |
+| Loses document structure           | Hierarchy: Document → Chapter → Section → Page → Region     |
+| Guesses when context is missing    | Eval suite covers anti-hallucination and empty-result cases |
+
+The same user session can ask _"Top 5 products by revenue in 1997"_ (structured) and _"Which network deployed fellows to Greece and Kosovo?"_ (unstructured, multi-hop) — you pick `structured`/`unstructured`/`hybrid` per query (dropdown in the UI, `retrieval_mode` in the API), RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
+
 ![Two axes over one corpus: pages linked in reading order around the ring (Axis 1 — PRECEDES / FOLLOWS), and semantic edges cutting across the middle to connect related pages that are nowhere near each other in the document (Axis 2)](docs/images/Gemini_Generated_Image_y27bnoy27bnoy27b.png)
 
 <sub>*Conceptual illustration.* The ring is **Axis 1** — pages in reading order. The chords across the middle are **Axis 2** — semantic links between pages that are far apart structurally. Both axes live in the same graph, which is what lets a question reach a related page that keyword or page-order navigation would never surface.</sub>
@@ -73,18 +85,6 @@ Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, A
 </td>
 </tr>
 </table>
-
-## Why this is different
-
-| Typical flat RAG                   | Agentic GraphRAG                                            |
-| ---------------------------------- | ----------------------------------------------------------- |
-| One chunk index for everything     | Dedicated graphs for tables vs. documents                   |
-| Similarity search only             | Cypher for metrics + hybrid retrieval for PDFs              |
-| Weak on counts, joins, time series | Aggregations, rankings, charts from live Neo4j              |
-| Loses document structure           | Hierarchy: Document → Chapter → Section → Page → Region     |
-| Guesses when context is missing    | Eval suite covers anti-hallucination and empty-result cases |
-
-The same user session can ask _"Top 5 products by revenue in 1997"_ (structured) and _"Which network deployed fellows to Greece and Kosovo?"_ (unstructured, multi-hop) — you pick `structured`/`unstructured`/`hybrid` per query (dropdown in the UI, `retrieval_mode` in the API), RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
 
 ### Pluggable by design
 
