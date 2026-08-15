@@ -62,6 +62,28 @@ def parent_number(num_str: str) -> str | None:
     return f"{prefix}{'.'.join(parts[:-1])}"
 
 
+def _is_titlelike(candidate: str) -> bool:
+    """Whether the text following a leading number reads as a title at all.
+
+    NUMBERED_HEADING accepts anything after the number, so a table's first
+    data cell was read as a section number and the rest of the row as its
+    title: "24 % 14,703 33 % 2,632 16 % 2,779" parsed as section "24" titled
+    "% 14,703 33 % ...". Verified live on a 264-page 10-K, rows like that
+    became real Section nodes, and their row text became the section title.
+
+    The test is that a title is made of words, not figures: it must contain
+    letters, and more letters than digits. "ENVIRONMENTAL PROTECTION" passes;
+    a run of percentages and thousands-separated numbers does not. A title
+    that merely CONTAINS numbers ("Note 1 70", "Item 1A Risk Factors") still
+    passes, so this only rejects rows that are essentially numeric -- it is
+    not an attempt to fix the separate, documented sub-TOC leader false
+    positive (see _is_heading's note on "35 Note 1 70").
+    """
+    letters = sum(c.isalpha() for c in candidate)
+    digits = sum(c.isdigit() for c in candidate)
+    return letters > 0 and letters > digits
+
+
 def parse_numbered_title(text: str) -> tuple[str | None, str]:
     """Return (section_number, title) from '4.5 ENVIRONMENTAL PROTECTION',
     'Item 1A. Risk Factors', or plain title. section_number is normalized
@@ -71,7 +93,7 @@ def parse_numbered_title(text: str) -> tuple[str | None, str]:
     if m:
         return f"Item {m.group(1).upper()}", m.group(2).strip()
     m = NUMBERED_HEADING.match(text.strip())
-    if m:
+    if m and _is_titlelike(m.group(2)):
         return m.group(1).rstrip("."), m.group(2).strip()
     return None, text.strip()
 

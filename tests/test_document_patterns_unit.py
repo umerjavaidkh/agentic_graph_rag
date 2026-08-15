@@ -94,3 +94,35 @@ def test_non_item_text_starting_with_a_number_word_is_not_matched():
     num, title = parse_numbered_title("3D printing is transforming manufacturing")
     assert num is None
     assert title == "3D printing is transforming manufacturing"
+
+
+# ── numbered-heading false positives on table rows ──────────────────────────
+# NUMBERED_HEADING accepts anything after a leading number, so a table's first
+# data cell was read as a section number and the rest of the row as its title.
+# Verified live on a 264-page 10-K: rows like "24 % 14,703 33 % 2,632" became
+# Section nodes whose title was the row text.
+
+
+def test_numeric_table_row_is_not_a_numbered_heading():
+    assert parse_numbered_title("24 % 14,703 33 % 2,632 16 % 2,779") == (
+        None,
+        "24 % 14,703 33 % 2,632 16 % 2,779",
+    )
+
+
+def test_row_of_bare_figures_is_not_a_numbered_heading():
+    assert parse_numbered_title("1,865 1,739 1,771")[0] is None
+    assert parse_numbered_title("12 5,416 5,494")[0] is None
+
+
+def test_real_numbered_headings_still_parse():
+    assert parse_numbered_title("4.5 ENVIRONMENTAL PROTECTION") == ("4.5", "ENVIRONMENTAL PROTECTION")
+    assert parse_numbered_title("1. Introduction") == ("1", "Introduction")
+    assert parse_numbered_title("2.3.1 OpenWHO") == ("2.3.1", "OpenWHO")
+
+
+def test_heading_containing_numbers_still_parses():
+    """Only essentially-numeric rows are rejected — a title that merely
+    contains figures is still a title."""
+    num, title = parse_numbered_title("4 Revenue in 2024 and 2025")
+    assert num == "4" and title == "Revenue in 2024 and 2025"
