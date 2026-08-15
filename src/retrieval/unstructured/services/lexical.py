@@ -285,16 +285,28 @@ class LexicalService:
         no retrieval query has to select the column and every strategy gets
         this without changing. Returns only the siblings; the hit itself is
         already in the candidate set.
+
+        BOTH matches carry a label filter, and that is not cosmetic. An
+        unlabelled MATCH scans every node in the database -- and because
+        Neo4j indexes are per-label, even `hit.id IN $ids` cannot use the id
+        index without one, so finding eight ids read all 550k nodes. Invisible
+        against a few thousand demo rows; once a large structured dataset
+        shared the graph, document questions stopped returning at all and the
+        request simply never completed. Fixing only one of the two matches
+        was not enough, which is why they are called out together here.
         """
         ids = [i for i in item_ids if i]
         if not ids:
             return []
         rows = session.run(
             f"""
-            MATCH (hit) WHERE hit.id IN $ids
+            MATCH (hit)
+            WHERE any(l IN labels(hit) WHERE l IN $labels)
+              AND hit.id IN $ids
               AND coalesce(hit.unit_id, '') <> ''
             MATCH (part)
-            WHERE part.unit_id = hit.unit_id
+            WHERE any(l IN labels(part) WHERE l IN $labels)
+              AND part.unit_id = hit.unit_id
               AND part.revision_id = hit.revision_id
               AND part.id <> hit.id
               AND {tenant_filter("part")}
@@ -309,6 +321,7 @@ class LexicalService:
             LIMIT 12
             """,
             ids=ids,
+            labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
         )
         hydrator = get_hydrator()
