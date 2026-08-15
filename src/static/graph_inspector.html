@@ -466,7 +466,14 @@
       if (a2) {
         html += `<div class="qs-row"><span class="k">Axis-2 (idea-linking)</span><span class="v">${pct(a2.score)}${badge(a2.score >= 0.9)}</span></div>`;
         html += `<div class="qs-row"><span class="k">Edge precision</span><span class="v">${a2.edge_precision ?? '—'}${ci(a2.edge_precision_ci)}</span></div>`;
-        html += breakdown(a2.edge_precision_by_type, 'By relationship type');
+        // Each type carries its own sample count — a rate without its
+        // denominator is unreadable, and these denominators are small.
+        const byType = Object.fromEntries(
+          Object.entries(a2.edge_precision_by_type || {}).map(([k, v]) => [
+            `${k} (n=${v.sampled})`, v.precision,
+          ])
+        );
+        html += breakdown(byType, 'By relationship type');
         html += `<div class="qs-row"><span class="k">Entity grounding</span><span class="v">${a2.entity_grounding_precision ?? '—'}${ci(a2.entity_grounding_ci)}</span></div>`;
         html += `<div class="qs-row"><span class="k">Sampled</span><span class="v">${a2.sampled_edges} edges, ${a2.sampled_entities} entities</span></div>`;
         if (a2.sampled_edges && a2.sampled_edges < 50) {
