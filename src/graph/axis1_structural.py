@@ -32,6 +32,7 @@ from ..document.page_numbers import enrich_page_nodes
 from ..document.patterns import (
     REFERENCE_PATTERN,
     clean_heading_text,
+    continuation_base_title,
     is_standalone_number,
     number_depth,
     parent_number,
@@ -137,6 +138,33 @@ def _page_buckets_from_chunks(chunks: list[Chunk]) -> dict[int, list[str]]:
     return buckets
 
 
+def _link_continuations(nodes: list[DKGNode]) -> None:
+    """Tie "<title> (continued)" chunks back to the chunk they continue, so a
+    table spanning pages is one addressable unit instead of several unrelated
+    ones (see continuation_base_title for the failure this fixes).
+
+    Walks in document order and links a continuation to the most recent node
+    carrying its base title. The base-title match is what makes this safe: a
+    marker alone would weld together any two chunks ending in "continued",
+    whereas this only links where the document itself repeated the title.
+    """
+    heads: dict[str, DKGNode] = {}
+    parts: dict[str, int] = {}
+    for node in nodes:
+        base = continuation_base_title(node.title)
+        if base is None:
+            heads[slug(node.title)] = node
+            continue
+        head = heads.get(slug(base))
+        if head is None:
+            continue
+        if not head.unit_id:
+            head.unit_id, head.unit_part = head.id, 1
+            parts[head.id] = 1
+        parts[head.unit_id] += 1
+        node.unit_id, node.unit_part = head.unit_id, parts[head.unit_id]
+
+
 class Axis1StructuralBuilder:
     """Converts a DocumentIR into the structural (Axis 1) node/edge graph."""
 
@@ -144,8 +172,11 @@ class Axis1StructuralBuilder:
         self, ir: DocumentIR, chunks: list[Chunk]
     ) -> tuple[list[DKGNode], list[DKGEdge]]:
         if ir.toc is not None:
-            return self._build_from_toc(ir, chunks)
-        return self._build_from_extracts(ir, chunks)
+            nodes, edges = self._build_from_toc(ir, chunks)
+        else:
+            nodes, edges = self._build_from_extracts(ir, chunks)
+        _link_continuations(nodes)
+        return nodes, edges
 
     # ─────────────────────────────────────────
     # TOC-driven construction

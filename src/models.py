@@ -72,6 +72,12 @@ class DKGNode:
     # Populated only by NER paths that extract typed entities; empty dict
     # means "no type info", not "no entities".
     entity_types: dict = field(default_factory=dict)
+    # A logical unit spanning several chunks -- a table continued across
+    # pages. Shared by every part; `unit_part` is 1-based reading order.
+    # Empty means "not part of a multi-chunk unit", which is the common case
+    # and what every pre-existing node has.
+    unit_id: Optional[str] = None
+    unit_part: int = 0
     cluster_id: Optional[int] = None                 # for SAME_CATEGORY
     summary:    Optional[str] = None                 # Chapter-level rollup (chapter_summary enrichment)
     visual_content: Optional[str] = None  # vision LLM: tables, charts, diagrams, shapes (Page)
