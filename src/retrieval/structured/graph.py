@@ -153,11 +153,14 @@ def _generate_structured_answer(
     if denied:
         # RBAC denial resolved deep inside the retrieval layer (Text2Cypher/
         # multistep's own can_query check), not the router's top-level
-        # pre-gate — same remedy applies: the question may be answerable
-        # from documents even though structured access is denied.
+        # pre-gate. Marked with a strategy so the caller can tell a denial
+        # from a merely weak answer: low_confidence alone made the router's
+        # document fallback swallow it and reply "this document does not
+        # cover it", naming the corpus instead of the missing permission.
         return {
             "answer": (denied.get("text") or "Access denied for structured data.").strip(),
             "low_confidence": True,
+            "strategy": "access_denied",
         }
 
     has_error = any(c.get("id") == "error" for c in chunks)

@@ -520,3 +520,46 @@ def make_structured_access_denied_result(
         "_route_method": "structured_access_denied",
         "_access_level": user_context.role.value if user_context else None,
     }
+
+
+def enforce_mode(result: dict, forced_tool: Optional[str]) -> dict:
+    """Hold the caller to the source they asked for.
+
+    Several layers below this can reroute between structured and documents --
+    a weak answer, zero rows, an RBAC denial -- and each has a decent local
+    reason. None of them is visible from the outside: the reply just arrives
+    from the other source, saying "this document does not cover it" for a
+    question that was asked of the business data. Guarding each site
+    individually kept missing one, so the boundary is enforced once, here,
+    where the requested mode and the delivered answer are both in hand.
+
+    Only applies when a mode was named. With no mode the router is meant to
+    choose, and every fallback below stays exactly as it was.
+    """
+    if not forced_tool:
+        return result
+    wanted = TOOL_TO_AGENT.get(forced_tool, forced_tool)
+    if result.get("agent") == wanted:
+        return result
+    if wanted == "structured":
+        answer = (
+            "That could not be answered from the structured data. "
+            "It was not answered from your documents either, because "
+            "\"Structured data\" was the selected source -- switch to "
+            "Documents to search those instead."
+        )
+    else:
+        answer = (
+            "That could not be answered from your documents. "
+            "\"Documents\" was the selected source, so the structured data "
+            "was not searched -- switch to Structured data to query it."
+        )
+    return {
+        **result,
+        "answer": answer,
+        "agent": wanted,
+        "sources": [],
+        "low_confidence": True,
+        "confidence_note": f"no answer available from the selected source ({wanted})",
+        "presentation": {"kind": "plain", "blocks": [{"type": "markdown", "content": answer}]},
+    }

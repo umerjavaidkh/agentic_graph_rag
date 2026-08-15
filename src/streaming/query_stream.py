@@ -326,6 +326,7 @@ def iter_query_stream(
                 question,
                 user_context=user_context,
                 resolved_question=resolved.get("question") or question,
+                mode_locked=forced_tool is not None,
             )
         elif tool_name == "query_hybrid":
             stream = iter_hybrid_stream(question, user_context=user_context)
