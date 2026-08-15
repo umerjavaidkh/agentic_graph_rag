@@ -47,12 +47,31 @@ def _print_report(report: dict) -> None:
         print(f"    axis1 ({a1['method']}): score={a1['score']:.2%} "
               f"precision={a1['precision']} recall={a1['recall']} "
               f"matched={a1['matched']}/{a1['total_ground_truth']}")
+        # score is the WORST dimension, so always show which one that was --
+        # otherwise a single number gives no clue where to look.
+        dims = a1.get("dimensions") or {}
+        if dims:
+            print("      dimensions: " + "  ".join(
+                f"{name}={value:.1%}" for name, value in sorted(dims.items(), key=lambda kv: kv[1])
+            ))
         if a1["mismatches"]:
             print(f"      mismatches: {a1['mismatches'][:3]}")
     if a2 is not None:
         print(f"    axis2: score={a2['score']:.2%} "
               f"edge_precision={a2['edge_precision']} entity_grounding={a2['entity_grounding_precision']} "
               f"(sampled {a2['sampled_edges']} edges, {a2['sampled_entities']} entities)")
+        by_type = a2.get("edge_precision_by_type") or {}
+        if by_type:
+            print("      edge precision by type: " + "  ".join(
+                f"{rel}={value:.1%}" for rel, value in sorted(by_type.items(), key=lambda kv: kv[1])
+            ))
+        # An interval, not just a point: a sampled run is not a measurement,
+        # and two runs whose intervals overlap have not shown a difference.
+        for label, key in (("edge", "edge_precision_ci"), ("entity", "entity_grounding_ci")):
+            ci = a2.get(key)
+            if ci:
+                print(f"      {label} precision 95% CI: [{ci[0]:.2f}, {ci[1]:.2f}]"
+                      f"  (width {ci[1] - ci[0]:.2f})")
         if a2["invalid_examples"]:
             print(f"      invalid examples: {a2['invalid_examples'][:3]}")
 

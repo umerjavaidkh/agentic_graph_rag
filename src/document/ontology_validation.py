@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -73,6 +74,10 @@ class Axis1Report:
     total_ground_truth: int = 0
     total_constructed: int = 0
     mismatches: list[str] = field(default_factory=list)
+    # Per-dimension pass rates, e.g. {"containment": 0.998, "titles": 0.448}.
+    # `score` is the WORST of these, not their pooled average -- see
+    # score_axis1_structural_invariants for why pooling hid a real failure.
+    dimensions: dict[str, float] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -85,6 +90,7 @@ class Axis1Report:
             "total_ground_truth": self.total_ground_truth,
             "total_constructed": self.total_constructed,
             "mismatches": self.mismatches[:10],
+            "dimensions": {k: round(v, 4) for k, v in self.dimensions.items()},
         }
 
 
@@ -97,6 +103,15 @@ class Axis2Report:
     sampled_edges: int = 0
     sampled_entities: int = 0
     invalid_examples: list[str] = field(default_factory=list)
+    # Precision per relationship type. Pooled edge precision hides which of
+    # the three edge builders is actually weak, and shifts when one builder's
+    # edge COUNT changes even if its quality didn't.
+    edge_precision_by_type: dict[str, float] = field(default_factory=dict)
+    # 95% Wilson intervals. Reported because a single sampled run is not a
+    # measurement: at n=15 two runs over an identical graph returned 63% and
+    # 80%, and both were read as real movement.
+    edge_precision_ci: Optional[tuple[float, float]] = None
+    entity_grounding_ci: Optional[tuple[float, float]] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -111,6 +126,15 @@ class Axis2Report:
             "sampled_edges": self.sampled_edges,
             "sampled_entities": self.sampled_entities,
             "invalid_examples": self.invalid_examples[:10],
+            "edge_precision_by_type": {
+                k: round(v, 4) for k, v in self.edge_precision_by_type.items()
+            },
+            "edge_precision_ci": (
+                [round(x, 4) for x in self.edge_precision_ci] if self.edge_precision_ci else None
+            ),
+            "entity_grounding_ci": (
+                [round(x, 4) for x in self.entity_grounding_ci] if self.entity_grounding_ci else None
+            ),
         }
 
 
@@ -188,6 +212,29 @@ def score_axis1_against_toc(
     )
 
 
+def _wilson_interval(successes: int, total: int, z: float = 1.96) -> Optional[tuple[float, float]]:
+    """95% Wilson score interval for a proportion, or None with no samples.
+
+    Wilson rather than the textbook normal approximation because these
+    samples are small and the proportions land near 0 or 1, exactly where the
+    normal approximation misbehaves (it happily reports bounds below 0 or
+    above 1, and collapses to zero width at p=0 or p=1 -- claiming perfect
+    certainty from 15 observations).
+
+    Reported alongside every sampled precision so a run cannot be read as a
+    point measurement: verified live, two n=15 runs against a byte-identical
+    graph returned 63% and 80%, and the difference was taken seriously before
+    anyone noticed the interval spanned both.
+    """
+    if total <= 0:
+        return None
+    p = successes / total
+    denom = 1 + z**2 / total
+    center = (p + z**2 / (2 * total)) / denom
+    margin = z * math.sqrt(p * (1 - p) / total + z**2 / (4 * total**2)) / denom
+    return (max(0.0, center - margin), min(1.0, center + margin))
+
+
 def _bad_title_reason(title: Optional[str]) -> Optional[str]:
     """Why `title` is not a plausible authored heading, or None if it is.
 
@@ -236,24 +283,41 @@ def score_axis1_structural_invariants(
     bug and the physics-textbook TOC-outline blowup from a broken
     bookmark (both documented in repo memory)."""
     by_id = {n["id"]: n for n in constructed}
-    checks = 0
-    passed = 0
+    # Tallied per DIMENSION, not into one running total. Pooling them was the
+    # bug: the dimensions measure unrelated properties and have wildly
+    # different check counts, so a dimension that fails outright is averaged
+    # away by dimensions that pass. Measured on a real 264-page 10-K:
+    # containment 411/412 (99.8%) and sibling ordering 100% pooled with title
+    # quality 77/172 (44.8%) to report 86.9% -- a document whose section
+    # titles were more than half junk read as "pretty good", and the number
+    # moved barely at all when the title check was added, because 172 title
+    # checks were diluted by ~560 passing ones.
+    tally: dict[str, list[int]] = {"containment": [0, 0], "titles": [0, 0], "siblings": [0, 0]}
+
+    def _check(dimension: str, ok: bool, failure_message: str = "") -> None:
+        tally[dimension][1] += 1
+        if ok:
+            tally[dimension][0] += 1
+        elif failure_message:
+            mismatches.append(failure_message)
+
     mismatches: list[str] = []
 
     for node in constructed:
         parent = by_id.get(node.get("parent_id"))
-        checks += 1
         if parent is None:
-            if (node.get("depth") or 0) <= 1:
-                passed += 1
-            else:
-                mismatches.append(f"orphan node (no parent): {node['id']}")
+            _check(
+                "containment",
+                (node.get("depth") or 0) <= 1,
+                f"orphan node (no parent): {node['id']}",
+            )
             continue
         ps, pe = node.get("page_start") or 0, node.get("page_end") or 0
         pps, ppe = parent.get("page_start") or 0, parent.get("page_end") or 0
         if pps <= ps and pe <= ppe:
-            passed += 1
+            _check("containment", True)
         else:
+            _check("containment", False)
             mismatches.append(
                 f"page range outside parent: {node['id']} [{ps}-{pe}] not within "
                 f"{parent['id']} [{pps}-{ppe}]"
@@ -280,12 +344,12 @@ def score_axis1_structural_invariants(
             # failure would silently penalise every caller that only cares
             # about the page-range invariants.
             continue
-        checks += 1
         bad = _bad_title_reason(node.get("title"))
-        if bad is None:
-            passed += 1
-        else:
-            mismatches.append(f"{bad}: {node['id']} title={(node.get('title') or '')[:60]!r}")
+        _check(
+            "titles",
+            bad is None,
+            f"{bad}: {node['id']} title={(node.get('title') or '')[:60]!r}",
+        )
 
     siblings_by_parent: dict[str, list[dict]] = {}
     for node in constructed:
@@ -293,13 +357,25 @@ def score_axis1_structural_invariants(
     for siblings in siblings_by_parent.values():
         ordered = sorted(siblings, key=lambda n: n.get("page_start") or 0)
         for a, b in zip(ordered, ordered[1:]):
-            checks += 1
-            if (a.get("page_end") or 0) <= (b.get("page_start") or 0):
-                passed += 1
-            else:
-                mismatches.append(f"overlapping siblings: {a['id']} and {b['id']}")
+            _check(
+                "siblings",
+                (a.get("page_end") or 0) <= (b.get("page_start") or 0),
+                f"overlapping siblings: {a['id']} and {b['id']}",
+            )
 
-    score = passed / checks if checks else 1.0
+    # A dimension with no checks is not evidence of quality, so it is left out
+    # entirely rather than counted as a free 100% that could become the
+    # reported score.
+    dimensions = {
+        name: ok / total for name, (ok, total) in tally.items() if total > 0
+    }
+    # The WORST dimension, not the pooled average. A gate phrased as ">= 90%
+    # ontology accuracy" has to mean every dimension clears 90%; letting a
+    # strong dimension carry a failing one is precisely how a document with
+    # 55% junk titles reported 99.76% and passed.
+    score = min(dimensions.values()) if dimensions else 1.0
+    checks = sum(total for _, total in tally.values())
+    passed = sum(ok for ok, _ in tally.values())
     return Axis1Report(
         logical_doc_id=logical_doc_id,
         method="structural_invariants",
@@ -308,6 +384,7 @@ def score_axis1_structural_invariants(
         total_ground_truth=checks,
         total_constructed=len(constructed),
         mismatches=mismatches,
+        dimensions=dimensions,
     )
 
 
@@ -450,6 +527,7 @@ def score_axis2_idea_linking(
             return False
 
     edge_valid = 0
+    per_type: dict[str, list[int]] = {}
     for e in edges_sample:
         # A shared entity (SHARES_ENTITY) is the actual connecting evidence,
         # so both windows center on it. Edge types with no single shared
@@ -469,8 +547,18 @@ def score_axis2_idea_linking(
                 shared=e.get("shared", ""),
             )
         )
+        # Tallied per relationship type as well as overall. The pooled number
+        # actively misleads when one edge builder is fixed: edges are sampled
+        # uniformly across SHARES_ENTITY / SAME_CATEGORY / SEMANTICALLY_SIMILAR,
+        # so removing ~1,900 bad SHARES_ENTITY edges re-weighted the population
+        # (SEMANTICALLY_SIMILAR went 6.6% -> 31.1% of it) and the pooled score
+        # went DOWN while the builder being worked on had genuinely improved.
+        # Without a per-type breakdown that reads as a regression.
+        by_type = per_type.setdefault(e.get("rel_type") or "UNKNOWN", [0, 0])
+        by_type[1] += 1
         if ok:
             edge_valid += 1
+            by_type[0] += 1
         else:
             invalid_examples.append(f"edge {e.get('rel_type')} shared={e.get('shared')!r}")
 
@@ -490,7 +578,12 @@ def score_axis2_idea_linking(
     edge_precision = edge_valid / len(edges_sample) if edges_sample else None
     entity_precision = entity_valid / len(entities_sample) if entities_sample else None
     parts = [p for p in (edge_precision, entity_precision) if p is not None]
-    score = sum(parts) / len(parts) if parts else 1.0
+    # The WORSE of the two, not their mean. They measure different things --
+    # "are these two nodes really related" and "was this entity really in the
+    # text" -- so averaging lets one carry the other: measured live, edge
+    # precision 0.26 and entity grounding 0.98 reported as 62%, which reads
+    # like a middling score rather than "one of the two halves is broken".
+    score = min(parts) if parts else 1.0
 
     return Axis2Report(
         logical_doc_id=logical_doc_id,
@@ -500,4 +593,9 @@ def score_axis2_idea_linking(
         sampled_edges=len(edges_sample),
         sampled_entities=len(entities_sample),
         invalid_examples=invalid_examples,
+        edge_precision_by_type={
+            rel: ok / total for rel, (ok, total) in sorted(per_type.items()) if total
+        },
+        edge_precision_ci=_wilson_interval(edge_valid, len(edges_sample)),
+        entity_grounding_ci=_wilson_interval(entity_valid, len(entities_sample)),
     )
