@@ -24,7 +24,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ── Minimal stubs — must come before ANY src.* imports ──────────────────────
+# ── Minimal stubs — installed in setup_module(), not at module level ────────
+# pytest collection imports every test module in the session before any test
+# executes, so stubbing sys.modules here at import time would leak into every
+# other file's test-execution phase until this file's own tests finished and
+# teardown_module ran below — a collection-vs-execution ordering bug that
+# corrupted src.model_providers.factory (get_chat_provider etc. resolved to
+# this file's MagicMock) for any test file whose tests ran before this file's
+# position in the suite. setup_module() runs immediately before this file's
+# own first test executes, matching teardown_module's timing.
 
 def _stub_module(name: str) -> types.ModuleType:
     mod = types.ModuleType(name)
@@ -32,147 +40,15 @@ def _stub_module(name: str) -> types.ModuleType:
     return mod
 
 
-# --- neo4j stubs ---
-if "neo4j" not in sys.modules:
-    _stub_module("neo4j")
-if "neo4j.exceptions" not in sys.modules:
-    _stub_module("neo4j.exceptions")
-sys.modules["neo4j"].GraphDatabase = MagicMock()
-sys.modules["neo4j.exceptions"].ClientError = type("ClientError", (Exception,), {"message": "", "code": ""})
-
-# --- fastapi stubs ---
-if "fastapi" not in sys.modules:
-    _stub_module("fastapi")
-if "fastapi.responses" not in sys.modules:
-    _stub_module("fastapi.responses")
-if "fastapi.staticfiles" not in sys.modules:
-    _stub_module("fastapi.staticfiles")
-_fa = sys.modules["fastapi"]
-_fa.UploadFile = MagicMock()
-_fa.File = MagicMock()
-_fa.Form = MagicMock()
-_fa.HTTPException = type("HTTPException", (Exception,), {"status_code": 0, "detail": ""})
-_fa.BackgroundTasks = MagicMock()
-_fa.FastAPI = MagicMock()
-sys.modules["fastapi.responses"].HTMLResponse = MagicMock()
-sys.modules["fastapi.responses"].RedirectResponse = MagicMock()
-sys.modules["fastapi.staticfiles"].StaticFiles = MagicMock()
-
-# --- pydantic stubs ---
-if "pydantic" not in sys.modules:
-    _stub_module("pydantic")
 class _FakeBaseModel:
     def __init__(self, **kw):
         for k, v in kw.items():
             setattr(self, k, v)
-sys.modules["pydantic"].BaseModel = _FakeBaseModel
-sys.modules["pydantic"].Field = lambda *a, **kw: None
 
-# --- openai stubs ---
-if "openai" not in sys.modules:
-    _stub_module("openai")
-sys.modules["openai"].OpenAI = MagicMock()
 
-# --- langgraph stubs ---
-for _n in ["langgraph", "langgraph.graph"]:
-    if _n not in sys.modules:
-        _stub_module(_n)
-
-# --- sklearn / hdbscan stubs ---
-for _n in ["sklearn", "sklearn.cluster"]:
-    if _n not in sys.modules:
-        _stub_module(_n)
-sys.modules["sklearn.cluster"].KMeans = MagicMock()
-if "hdbscan" not in sys.modules:
-    _stub_module("hdbscan")
-sys.modules["hdbscan"].HDBSCAN = MagicMock()
-
-# --- model_providers stubs ---
-for _n in [
-    "src.model_providers",
-    "src.model_providers.base",
-    "src.model_providers.factory",
-    "src.model_providers.openai_provider",
-]:
-    if _n not in sys.modules:
-        _stub_module(_n)
-_factory_mock = MagicMock()
-sys.modules["src.model_providers.base"].ModelProvider = object
-sys.modules["src.model_providers.factory"].get_model_provider = _factory_mock
-sys.modules["src.model_providers.factory"].get_chat_provider = _factory_mock
-sys.modules["src.model_providers.factory"].get_embedding_provider = _factory_mock
-sys.modules["src.model_providers"].get_model_provider = _factory_mock
-
-# --- auth stubs ---
-# Always create fresh fake modules here (never reuse/mutate a real src.auth
-# that an earlier-collected test file may have already imported) — mutating
-# the real module's classes in place would corrupt it for every other test
-# file that runs afterward in the same pytest process.
-for _n in ["src.auth", "src.auth.rbac_setup", "src.auth.roles"]:
-    _stub_module(_n)
-sys.modules["src.auth.rbac_setup"].GraphRBAC = MagicMock()
-sys.modules["src.auth.roles"].Role = MagicMock()
-sys.modules["src.auth.roles"].UserContext = MagicMock()
-sys.modules["src.auth.roles"].validate_role = MagicMock()
-
-# --- document stubs ---
-# Always create fresh fake modules here (never reuse/mutate a real
-# src.document that an earlier-collected test file may have already
-# imported) — mutating the real module's functions in place would corrupt
-# it for every other test file that runs afterward in the same pytest
-# process. Same fix as the src.auth block above.
-for _n in [
-    "src.document",
-    "src.document.versioning",
-    "src.document.light",
-    "src.document.light.parser",
-    "src.document.parser_base",
-    "src.document.parser_registry",
-    "src.document.page_vision",
-    "src.document.graph_snapshot",
-    "src.document.page_report",
-    "src.document.page_validation",
-]:
-    _stub_module(_n)
-sys.modules["src.document.parser_base"].DocumentParser = object
-sys.modules["src.document.graph_snapshot"].X1_STAGE = "x1_structural"
-sys.modules["src.document.graph_snapshot"].X2_STAGE = "x2_semantic"
-sys.modules["src.document.graph_snapshot"].write_snapshot = MagicMock()
-sys.modules["src.document.page_report"].write_page_report = MagicMock()
-sys.modules["src.document.page_validation"].check_construction_coverage = MagicMock(
-    return_value={"pages": [], "summary": {"page_count": 0, "avg_coverage": 0.0, "pages_failing": 0, "requires_reprocessing": False}}
-)
-sys.modules["src.document.versioning"].resolve_logical_id = MagicMock(return_value="doc_test")
-sys.modules["src.document.versioning"].build_revision_plan = MagicMock()
-sys.modules["src.document.versioning"].apply_revision_to_graph = MagicMock(return_value=([], []))
-sys.modules["src.document.versioning"].file_content_sha256 = MagicMock(return_value="abc123")
-sys.modules["src.document.versioning"].source_file_blob_key = MagicMock(return_value="blob/key")
-# DocumentRevisionPlan as a simple MagicMock class (exporter.py uses it only as a type annotation)
-sys.modules["src.document.versioning"].DocumentRevisionPlan = MagicMock
-
-sys.modules["src.document.light.parser"].LightPdfParser = MagicMock()
-_fake_parser_instance = MagicMock()
-sys.modules["src.document.parser_registry"].get_parser = MagicMock(return_value=_fake_parser_instance)
-sys.modules["src.document.parser_registry"].supported_extensions = MagicMock(return_value={".pdf"})
-
-# --- graph.constants / graph.driver stubs ---
-for _n in ["src.graph", "src.graph.constants", "src.graph.driver"]:
-    if _n not in sys.modules:
-        _stub_module(_n)
-sys.modules["src.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
-sys.modules["src.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
-sys.modules["src.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
-sys.modules["src.graph.driver"].get_neo4j_driver = MagicMock()
-
-# --- bridge/conversation stubs ---
-for _n in ["src.bridge", "src.conversation", "src.routing", "src.router"]:
-    if _n not in sys.modules:
-        _stub_module(_n)
-
-# --- src.ingestion.service stub ---
-# Provide a minimal IngestionJob so job_store and tests can use it
-# without pulling in the full fastapi/neo4j import chain via service.py.
-# We load the REAL models.py (no heavy deps) to get IngestionStatus.
+# Provide a minimal IngestionJob so job_store and tests can use it without
+# pulling in the full fastapi/neo4j import chain via service.py. We load the
+# REAL models.py (no heavy deps) to get IngestionStatus.
 _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
@@ -205,18 +81,159 @@ class _IngestionJob:
     child_job_ids: List[str] = field(default_factory=list)
     tenant_id: Optional[str] = None
 
-# Inject the stub service module BEFORE job_store.py is imported.
-_svc_stub = _stub_module("src.ingestion.service")
-_svc_stub.IngestionJob = _IngestionJob
-_svc_stub.IngestionManager = MagicMock()
 
-# Stub the ingestion package itself so __init__.py doesn't run,
-# but set __path__ so Python can still find sub-modules on disk.
-_ing_pkg = _stub_module("src.ingestion")
-_ing_pkg.IngestionManager = MagicMock()
-_ing_pkg.IngestionJob = _IngestionJob
-_ing_pkg.__path__ = [str(_root / "src" / "ingestion")]
-_ing_pkg.__package__ = "src.ingestion"
+def setup_module(module) -> None:
+    """Install this file's fake stand-ins for heavy/unavailable deps. Runs
+    right before this file's own tests execute (pytest's setup_module hook),
+    not at import/collection time — see the module-level comment above for
+    why that distinction matters."""
+    # --- neo4j stubs ---
+    if "neo4j" not in sys.modules:
+        _stub_module("neo4j")
+    if "neo4j.exceptions" not in sys.modules:
+        _stub_module("neo4j.exceptions")
+    sys.modules["neo4j"].GraphDatabase = MagicMock()
+    sys.modules["neo4j.exceptions"].ClientError = type("ClientError", (Exception,), {"message": "", "code": ""})
+
+    # --- fastapi stubs ---
+    if "fastapi" not in sys.modules:
+        _stub_module("fastapi")
+    if "fastapi.responses" not in sys.modules:
+        _stub_module("fastapi.responses")
+    if "fastapi.staticfiles" not in sys.modules:
+        _stub_module("fastapi.staticfiles")
+    _fa = sys.modules["fastapi"]
+    _fa.UploadFile = MagicMock()
+    _fa.File = MagicMock()
+    _fa.Form = MagicMock()
+    _fa.HTTPException = type("HTTPException", (Exception,), {"status_code": 0, "detail": ""})
+    _fa.BackgroundTasks = MagicMock()
+    _fa.FastAPI = MagicMock()
+    sys.modules["fastapi.responses"].HTMLResponse = MagicMock()
+    sys.modules["fastapi.responses"].RedirectResponse = MagicMock()
+    sys.modules["fastapi.staticfiles"].StaticFiles = MagicMock()
+
+    # --- pydantic stubs ---
+    if "pydantic" not in sys.modules:
+        _stub_module("pydantic")
+    sys.modules["pydantic"].BaseModel = _FakeBaseModel
+    sys.modules["pydantic"].Field = lambda *a, **kw: None
+
+    # --- openai stubs ---
+    if "openai" not in sys.modules:
+        _stub_module("openai")
+    sys.modules["openai"].OpenAI = MagicMock()
+
+    # --- langgraph stubs ---
+    for _n in ["langgraph", "langgraph.graph"]:
+        if _n not in sys.modules:
+            _stub_module(_n)
+
+    # --- sklearn / hdbscan stubs ---
+    for _n in ["sklearn", "sklearn.cluster"]:
+        if _n not in sys.modules:
+            _stub_module(_n)
+    sys.modules["sklearn.cluster"].KMeans = MagicMock()
+    if "hdbscan" not in sys.modules:
+        _stub_module("hdbscan")
+    sys.modules["hdbscan"].HDBSCAN = MagicMock()
+
+    # --- model_providers stubs ---
+    for _n in [
+        "src.model_providers",
+        "src.model_providers.base",
+        "src.model_providers.factory",
+        "src.model_providers.openai_provider",
+    ]:
+        if _n not in sys.modules:
+            _stub_module(_n)
+    _factory_mock = MagicMock()
+    sys.modules["src.model_providers.base"].ModelProvider = object
+    sys.modules["src.model_providers.factory"].get_model_provider = _factory_mock
+    sys.modules["src.model_providers.factory"].get_chat_provider = _factory_mock
+    sys.modules["src.model_providers.factory"].get_embedding_provider = _factory_mock
+    sys.modules["src.model_providers"].get_model_provider = _factory_mock
+
+    # --- auth stubs ---
+    # Always create fresh fake modules here (never reuse/mutate a real src.auth
+    # that an earlier-collected test file may have already imported) — mutating
+    # the real module's classes in place would corrupt it for every other test
+    # file that runs afterward in the same pytest process.
+    for _n in ["src.auth", "src.auth.rbac_setup", "src.auth.roles"]:
+        _stub_module(_n)
+    sys.modules["src.auth.rbac_setup"].GraphRBAC = MagicMock()
+    sys.modules["src.auth.roles"].Role = MagicMock()
+    sys.modules["src.auth.roles"].UserContext = MagicMock()
+    sys.modules["src.auth.roles"].validate_role = MagicMock()
+
+    # --- document stubs ---
+    # Always create fresh fake modules here (never reuse/mutate a real
+    # src.document that an earlier-collected test file may have already
+    # imported) — mutating the real module's functions in place would corrupt
+    # it for every other test file that runs afterward in the same pytest
+    # process. Same fix as the src.auth block above.
+    for _n in [
+        "src.document",
+        "src.document.versioning",
+        "src.document.light",
+        "src.document.light.parser",
+        "src.document.parser_base",
+        "src.document.parser_registry",
+        "src.document.page_vision",
+        "src.document.graph_snapshot",
+        "src.document.page_report",
+        "src.document.page_validation",
+    ]:
+        _stub_module(_n)
+    sys.modules["src.document.parser_base"].DocumentParser = object
+    sys.modules["src.document.graph_snapshot"].X1_STAGE = "x1_structural"
+    sys.modules["src.document.graph_snapshot"].X2_STAGE = "x2_semantic"
+    sys.modules["src.document.graph_snapshot"].write_snapshot = MagicMock()
+    sys.modules["src.document.page_report"].write_page_report = MagicMock()
+    sys.modules["src.document.page_validation"].check_construction_coverage = MagicMock(
+        return_value={"pages": [], "summary": {"page_count": 0, "avg_coverage": 0.0, "pages_failing": 0, "requires_reprocessing": False}}
+    )
+    sys.modules["src.document.versioning"].resolve_logical_id = MagicMock(return_value="doc_test")
+    sys.modules["src.document.versioning"].build_revision_plan = MagicMock()
+    sys.modules["src.document.versioning"].apply_revision_to_graph = MagicMock(return_value=([], []))
+    sys.modules["src.document.versioning"].file_content_sha256 = MagicMock(return_value="abc123")
+    sys.modules["src.document.versioning"].source_file_blob_key = MagicMock(return_value="blob/key")
+    # DocumentRevisionPlan as a simple MagicMock class (exporter.py uses it only as a type annotation)
+    sys.modules["src.document.versioning"].DocumentRevisionPlan = MagicMock
+
+    sys.modules["src.document.light.parser"].LightPdfParser = MagicMock()
+    _fake_parser_instance = MagicMock()
+    sys.modules["src.document.parser_registry"].get_parser = MagicMock(return_value=_fake_parser_instance)
+    sys.modules["src.document.parser_registry"].supported_extensions = MagicMock(return_value={".pdf"})
+
+    # --- graph.constants / graph.driver stubs ---
+    for _n in ["src.graph", "src.graph.constants", "src.graph.driver"]:
+        if _n not in sys.modules:
+            _stub_module(_n)
+    sys.modules["src.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
+    sys.modules["src.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
+    sys.modules["src.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
+    sys.modules["src.graph.driver"].get_neo4j_driver = MagicMock()
+
+    # --- bridge/conversation stubs ---
+    for _n in ["src.bridge", "src.conversation", "src.routing", "src.router"]:
+        if _n not in sys.modules:
+            _stub_module(_n)
+
+    # --- src.ingestion.service stub ---
+    # Inject the stub service module BEFORE job_store.py is imported.
+    _svc_stub = _stub_module("src.ingestion.service")
+    _svc_stub.IngestionJob = _IngestionJob
+    _svc_stub.IngestionManager = MagicMock()
+
+    # Stub the ingestion package itself so __init__.py doesn't run,
+    # but set __path__ so Python can still find sub-modules on disk.
+    _ing_pkg = _stub_module("src.ingestion")
+    _ing_pkg.IngestionManager = MagicMock()
+    _ing_pkg.IngestionJob = _IngestionJob
+    _ing_pkg.__path__ = [str(_root / "src" / "ingestion")]
+    _ing_pkg.__package__ = "src.ingestion"
+
 
 _STUBBED_MODULE_NAMES = (
     "neo4j", "neo4j.exceptions",

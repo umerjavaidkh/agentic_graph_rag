@@ -21,7 +21,13 @@ from ..neo4j_sanitize import sanitize_row
 from ..schema.provider import SchemaProvider
 from .generator import CypherGenerator, regenerate_for_issue
 from .repair import fix_relationship_directions, normalize_generated_cypher
-from .validator import EMPTY_RESULT_HINTS, sql_cypher_issue, unknown_label_issue
+from .validator import (
+    EMPTY_RESULT_HINTS,
+    no_such_data_subject,
+    sql_cypher_issue,
+    unknown_label_issue,
+    unknown_property_issue,
+)
 
 
 class Text2CypherPipeline:
@@ -62,12 +68,36 @@ class Text2CypherPipeline:
         if not cypher:
             return []
 
+        # The generator's one way to say "this graph does not hold that".
+        # Without it every path ends in "produce some Cypher that runs", and a
+        # question about absent data gets answered with whatever property does
+        # return numbers -- observed as an average of created_at timestamps
+        # reported to the user as an average salary.
+        absent = no_such_data_subject(cypher)
+        if absent is not None:
+            return [{
+                "id": "no_such_data",
+                "title": "Not in this dataset",
+                "text": (
+                    f"The connected data does not contain {absent}. "
+                    f"State that it is not available; do not estimate it or "
+                    f"substitute a different measure."
+                ),
+                "score": 0.0,
+                "related": [],
+            }]
+
         repair_fn = lambda c: normalize_generated_cypher(c, schema)  # noqa: E731
         cypher = repair_fn(cypher)
 
         known_labels = self._schema.known_labels()
+        known_props = self._schema.known_properties()
         def _issue(c: str) -> Optional[str]:  # noqa: E306
-            return sql_cypher_issue(c) or unknown_label_issue(c, known_labels)
+            return (
+                sql_cypher_issue(c)
+                or unknown_label_issue(c, known_labels)
+                or unknown_property_issue(c, known_props)
+            )
 
         llm_sql_retries = 0
         for _ in range(max(1, STRUCTURED_CYPHER_SQL_LLM_RETRIES) + 1):

@@ -9,6 +9,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -35,6 +37,11 @@ def _load_versioning_module():
     sys.modules["src.document.versioning"] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+@pytest.fixture
+def v():
+    return _load_versioning_module()
 
 
 def test_resolve_logical_id_from_doc_key(v):

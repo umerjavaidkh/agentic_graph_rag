@@ -8,17 +8,36 @@ from ....config.settings import MULTI_TENANCY_ENABLED
 from .tenant_injection import missing_tenant_filter_issue
 
 # Schema-agnostic hints when a query executes but returns no rows.
+# Every hint has to carry the escape clause below, and that is the whole
+# point of it. These are retry instructions for a model that has just been
+# told its query returned nothing; phrased only as "restructure until rows
+# come back", they presuppose the answer exists and pressure it into finding
+# SOME column that returns data. Observed: asked for an average salary the
+# graph has no property for, the retry returned avg(created_at) aliased as
+# `averageSalary`, and the user was told employees earn 1,786,771,191,163.
+# An empty result is a legitimate outcome -- a question about data the graph
+# does not hold has no answer, and inventing one is the worst option
+# available, because a plausible figure is indistinguishable from a real one.
+_NO_SUBSTITUTION = (
+    "If no label or property in the schema actually represents what was asked "
+    "for, the graph does not contain it: return the query unchanged rather "
+    "than measuring a DIFFERENT property. Never alias one property as another "
+    "concept (e.g. returning avg(created_at) AS averageSalary). Zero rows is a "
+    "correct answer when the data does not hold the thing being asked about."
+)
+
 EMPTY_RESULT_HINTS = (
     (
         "Query executed successfully but returned 0 rows. "
         "Verify every relationship direction matches RELATIONSHIP TYPES exactly "
         "(if schema shows (:A)-[:R]->(:B), traverse A-[:R]->B, never B-[:R]->A). "
-        "Remove unnecessary WHERE filters."
+        "Remove unnecessary WHERE filters. " + _NO_SUBSTITUTION
     ),
     (
         "Query still returned 0 rows. "
         "Rebuild the MATCH path by chaining RELATIONSHIP TYPES from source to target. "
-        "When counting unique orders/customers/entities across joins, use COUNT(DISTINCT node)."
+        "When counting unique orders/customers/entities across joins, use COUNT(DISTINCT node). "
+        + _NO_SUBSTITUTION
     ),
 )
 
@@ -39,8 +58,18 @@ SQL_CYPHER_ISSUES: list[tuple[str, str]] = [
         "Never nest MATCH inside RETURN. Use WITH and a separate MATCH stage.",
     ),
     (
-        r"\.\s*ORDER_CONTAINS\s*\.",
-        "Bind ORDER_CONTAINS as a variable: (o)-[li:ORDER_CONTAINS]->(p) and use li.quantity, li.unitPrice, li.discount.",
+        # `node.SOME_REL.prop` -- reaching through a relationship as if it
+        # were a nested field. Keyed on the SCREAMING_SNAKE convention for
+        # relationship types rather than any particular type name, so it
+        # holds for any schema. The (?-i:) scope is load-bearing: these
+        # patterns are matched with re.I, under which a plain [A-Z] also
+        # matches lowercase and this swallows every `apoc.date.format(...)`
+        # call, shadowing the apoc rule below it.
+        r"\b\w+\s*\.\s*(?-i:[A-Z][A-Z0-9_]{2,})\s*\.\s*\w+",
+        "Cypher has no nested field access through a relationship. Bind the "
+        "relationship to a variable -- (a)-[r:REL_TYPE]->(b) -- then read "
+        "r.property, or read the property from whichever node the schema "
+        "lists it under.",
     ),
     (
         r"\bAS\s+\w+\)\s+AS\s+\w+",
@@ -158,6 +187,103 @@ def unknown_label_issue(cypher: str, known_labels: set[str]) -> Optional[str]:
         f"is instead just a property on a related node type (e.g. an id or "
         f"name field), and match/group on that property directly instead of "
         f"inventing a node label for it."
+    )
+
+
+_VAR_NODE_RE = re.compile(r"\(\s*([A-Za-z_]\w*)\s*:\s*([`\w:]+)")
+_VAR_REL_RE = re.compile(r"\[\s*([A-Za-z_]\w*)\s*:\s*([`\w|]+)")
+_PROP_REF_RE = re.compile(r"\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)\b")
+
+
+_NO_SUCH_DATA_RE = re.compile(r"^\s*(?:--\s*)?NO_SUCH_DATA\s*:\s*(.+?)\s*$", re.I | re.M)
+
+
+def no_such_data_subject(cypher: str) -> Optional[str]:
+    """The subject of a NO_SUCH_DATA reply, or None for an ordinary query.
+
+    Tolerates the model prefixing it as a Cypher comment, which it does when
+    the surrounding instruction is "return only Cypher".
+    """
+    m = _NO_SUCH_DATA_RE.search(cypher or "")
+    if not m:
+        return None
+    subject = m.group(1).strip().strip("`<>").strip()
+    return subject or "the requested information"
+
+
+def unknown_property_issue(cypher: str, known_properties: dict[str, set[str]]) -> Optional[str]:
+    """
+    Catch a generated query reading a property that its variable's type does
+    not have -- the same silent-failure class as unknown_label_issue, one
+    level down, and considerably nastier.
+
+    Neo4j returns null for a missing property instead of erroring. Null then
+    propagates through aggregation as absence, so `sum(x)` over a wholly
+    wrong property is 0 and `avg(x)` is null. Crucially an aggregate ALWAYS
+    returns exactly one row, so the empty-result retry never fires: the
+    pipeline sees a successful query with data and reports a confident wrong
+    figure. Two observed cases, both from real questions:
+
+      * `MATCH (:Order)-[li:CONTAINS]->(:OrderItem)
+         RETURN sum(toFloat(li.freight))` -- `li` is the RELATIONSHIP, and
+        `freight` lives on the OrderItem node, so the total came back as
+        "zero" against a true value of 2,251,910.
+      * asking for a `salary` property no label has produced an empty first
+        result, and the empty-result retry then "fixed" it by averaging
+        `created_at` under the alias `averageSalary` -- reported to the user
+        as a salary of 1,786,771,191,163.
+
+    That second case is why this rejects rather than hints: left to retry, an
+    empty result pressures the model into finding SOME column that returns
+    data, and a fabricated answer is worse than no answer.
+
+    Only variables whose type is known and whose property set is non-empty
+    are checked, so an unrecognised binding (a WITH alias, a map projection)
+    is passed over rather than guessed at.
+    """
+    if not known_properties:
+        return None
+    # A type present in the schema with NO properties is the important case,
+    # not one to skip: `[li:CONTAINS]` where CONTAINS carries nothing means
+    # every `li.<anything>` is wrong. So membership decides whether a variable
+    # is checkable, and the property set only decides what passes -- keyed on
+    # `is not None` rather than on the set being non-empty.
+    bound: dict[str, set[str]] = {}
+    for rx, sep in ((_VAR_NODE_RE, ":"), (_VAR_REL_RE, "|")):
+        for m in rx.finditer(cypher or ""):
+            allowed: set[str] = set()
+            known = False
+            for type_name in m.group(2).replace("`", "").split(sep):
+                props = known_properties.get(type_name.strip())
+                if props is not None:
+                    known = True
+                    allowed |= props
+            if known:
+                bound.setdefault(m.group(1), set()).update(allowed)
+
+    bad: list[str] = []
+    seen: set[str] = set()
+    for m in _PROP_REF_RE.finditer(cypher or ""):
+        var, prop = m.group(1), m.group(2)
+        ref = f"{var}.{prop}"
+        if var in bound and prop not in bound[var] and ref not in seen:
+            seen.add(ref)
+            bad.append(ref)
+    if not bad:
+        return None
+    detail = "; ".join(
+        f"{ref} (available: {', '.join(sorted(bound[ref.split('.')[0]])) or 'none'})"
+        for ref in bad
+    )
+    return (
+        f"Property reference(s) {detail} -- these do not exist on that "
+        f"variable's type. Neo4j returns null rather than an error, so the "
+        f"query would report 0 or null as if it were the real answer. Check "
+        f"the schema: the property may belong to a DIFFERENT variable in the "
+        f"pattern (properties of a node cannot be read off the relationship "
+        f"that points at it, so bind the node itself). If no type in the "
+        f"schema has this property, the data does not contain it -- say so "
+        f"instead of substituting a different property."
     )
 
 

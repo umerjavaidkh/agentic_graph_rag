@@ -118,8 +118,14 @@ CASES: list[Case] = [
     # Absence: the graph has no such entity. Inventing a number here is worse
     # than refusing, because a plausible figure is indistinguishable from a
     # real one to the reader.
-    Case("absence_suppliers", "absence",
-         "How many suppliers are in the database?",
+    # The absent entity has to be one with no near-synonym in the graph.
+    # "suppliers" was tried here first and is a bad test: this graph has
+    # :Seller, and in an e-commerce dataset a seller IS a supplier, so
+    # answering 3,095 is defensible. That case measured synonym resolution
+    # while claiming to measure absence -- a failing score for correct
+    # behaviour, which is worse than no case at all.
+    Case("absence_warehouses", "absence",
+         "How many warehouses are in the database?",
          "RETURN 0 AS n", lambda r: 0, kind="absence"),
     Case("absence_employees", "absence",
          "What is the average salary of employees?",
