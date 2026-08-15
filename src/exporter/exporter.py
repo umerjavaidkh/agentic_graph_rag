@@ -376,6 +376,7 @@ class Neo4jExporter:
             "entity_types": json.dumps(node.entity_types or {}),
             # A table continued across pages is one logical unit; without
             # these a retrieved part cannot find its siblings.
+            "section_path": node.section_path,
             "unit_id": node.unit_id,
             "unit_part": node.unit_part,
             "cluster_id": node.cluster_id,
@@ -510,7 +511,7 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
 
         fieldnames = ["id", "type", "title", "text", "order",
                       "page_start", "page_end", "depth",
-                      "entities", "entity_types", "unit_id", "unit_part", "cluster_id"]
+                      "entities", "entity_types", "unit_id", "unit_part", "section_path", "cluster_id"]
 
         for label, type_nodes in buckets.items():
             fname = f"{self._safe_name(label)}s.csv"
@@ -531,6 +532,7 @@ OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 
                         "entity_types": json.dumps(n.entity_types or {}),
                         "unit_id":    n.unit_id or "",
                         "unit_part":  n.unit_part,
+                        "section_path": n.section_path or "",
                         "cluster_id": n.cluster_id if n.cluster_id is not None else "",
                     })
 
@@ -591,6 +593,7 @@ SET   n.title      = row.title,
       n.entity_types = row.entity_types,
       n.unit_id      = row.unit_id,
       n.unit_part    = toInteger(row.unit_part),
+      n.section_path = row.section_path,
       n.cluster_id = CASE row.cluster_id WHEN '' THEN null ELSE toInteger(row.cluster_id) END;
 """)
 

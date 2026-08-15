@@ -78,6 +78,10 @@ class DKGNode:
     # and what every pre-existing node has.
     unit_id: Optional[str] = None
     unit_part: int = 0
+    # Ancestor titles, root-first ("Item 7 > Results of Operations"). Lets a
+    # chunk state which part of the document it belongs to without a graph
+    # walk, so a question naming a segment can be matched against it.
+    section_path: str = ""
     cluster_id: Optional[int] = None                 # for SAME_CATEGORY
     summary:    Optional[str] = None                 # Chapter-level rollup (chapter_summary enrichment)
     visual_content: Optional[str] = None  # vision LLM: tables, charts, diagrams, shapes (Page)

@@ -165,6 +165,37 @@ def _link_continuations(nodes: list[DKGNode]) -> None:
         node.unit_id, node.unit_part = head.unit_id, parts[head.unit_id]
 
 
+def _stamp_section_paths(nodes: list[DKGNode], edges: list[DKGEdge]) -> None:
+    """Give every node the trail of ancestor titles that locates it.
+
+    A chunk knew its page and its own title but not which part of the
+    document it sat in, so nothing could tell one segment's table from
+    another's when both repeat the same row labels -- asked for
+    International Upstream's liquids production, retrieval returned a
+    sibling segment's figure, because at chunk level the two are
+    indistinguishable.
+
+    Derived from the CONTAINS edges already built, so this adds a pass over
+    existing structure rather than a second notion of hierarchy. The
+    document root is left out: every chunk shares it, so it locates nothing.
+    """
+    parent = {e.target_id: e.source_id for e in edges if e.rel_type == RelType.CONTAINS}
+    by_id = {n.id: n for n in nodes}
+    for node in nodes:
+        trail: list[str] = []
+        seen = {node.id}
+        current = parent.get(node.id)
+        while current and current not in seen:
+            seen.add(current)
+            ancestor = by_id.get(current)
+            if ancestor is None:
+                break
+            if ancestor.type != NodeType.DOCUMENT and (ancestor.title or "").strip():
+                trail.append(ancestor.title.strip())
+            current = parent.get(current)
+        node.section_path = " > ".join(reversed(trail))
+
+
 class Axis1StructuralBuilder:
     """Converts a DocumentIR into the structural (Axis 1) node/edge graph."""
 
@@ -176,6 +207,7 @@ class Axis1StructuralBuilder:
         else:
             nodes, edges = self._build_from_extracts(ir, chunks)
         _link_continuations(nodes)
+        _stamp_section_paths(nodes, edges)
         return nodes, edges
 
     # ─────────────────────────────────────────
