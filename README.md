@@ -187,6 +187,45 @@ Nodes carry the source they were loaded from, so `--clear` only removes rows tha
 
 A Northwind dump is still present at `sample_data_to_test/structured/northwind-data.cypher` (upload with `ALLOW_CYPHER_INGEST=true`), but the examples, eval and docs target Olist.
 
+## Dataset migration: Olist (in progress)
+
+The bundled structured dataset changed from Northwind to the
+[Olist Brazilian e-commerce](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
+data — **552,299 nodes, 99,441 orders**, roughly 100× the old sample. Swapping it
+exposed a class of bug that a small demo schema had been hiding, because a query
+written against the wrong field returns *a number* rather than an error.
+
+### What is better now
+
+| Was | Now |
+| --- | --- |
+| Total freight reported as **"zero"** — the generated Cypher read a node property off a relationship, and Neo4j returns null rather than erroring | **2,251,910**, the true value. Property references are validated against the live schema before execution |
+| "Average salary of employees" answered **1,786,771,191,163** — `avg(created_at)` aliased as `averageSalary` after an empty result pushed the model to find *some* column with data | States the data does not contain it. The generator has an explicit "no such data" channel, so absence is a valid outcome |
+| Document queries took **165s** against a graph this size and the UI simply never returned | **8s**. A `WHERE any(l IN labels(n) ...)` predicate reads like a label filter but leaves the planner on `AllNodesScan` |
+| "Average price of an order item" could not be answered **at all** — a clarification menu offered three metrics defined over `unitPrice × quantity × (1 - discount)`, none of which exist here | Answers **120.65**. Clarification candidates come from the live schema, and it only asks when the graph is genuinely ambiguous |
+| Choosing **Structured data** could still return "this document does not cover it" — four separate fallbacks crossed between sources | The selected source is the only one consulted |
+| Average review score looked like a flaky metric | Stable across 8/8 runs. The cause was an intermittent `MATCH (:Review) AS r` — a SQL habit Cypher rejects — not numeric drift |
+| "Days between purchase and delivery" returned **−12.1** in half of four runs, explained away as bad source data | 10 of 11 runs land on 12–12.09. Duration argument order is now stated |
+
+Deterministic structured eval went **8/12 → 11/12** over this work. Nothing in the
+structured path names a dataset's fields any more; a guard test fails the build if
+they come back.
+
+### Still in progress
+
+- **Two LLM-judge eval suites (20 cases) still target Northwind** —
+  `eval/structured_rag_suite.json` and `eval/advanced_structured_suite.json`. They have
+  not been re-pointed at Olist, so the previously reported 95/101 is stale. The
+  deterministic suite (`scripts/eval_structured.py`) does run against current data.
+- **Category names are Portuguese.** Asking for an English category (`bed_bath_table`)
+  filters `Category.name`, which holds `cama_mesa_banho`; the English value lives in
+  `name_english`. Sampled example values in the schema prompt did not fix it.
+- **Olist products are anonymised** — the source CSV has `product_name_lenght` but no
+  name column, so product-level answers can only identify a product by id and category.
+  A data limitation, not a bug.
+- The Northwind dump is retained for now, and `docs/API.md` still carries one
+  Northwind-era example URL.
+
 ## Tech stack
 
 | Layer                                       | Technology                                                                     |
@@ -207,6 +246,7 @@ A Northwind dump is still present at `sample_data_to_test/structured/northwind-d
 | Area                                                                                                                                                                                          | Status                                                                                                   |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Dual-graph RAG (structured + documents + hybrid) via explicit retrieval-mode selection                                                                                                        | ✅                                                                                                       |
+| Olist e-commerce sample replacing Northwind — 552k nodes, schema-agnostic structured path (see [Dataset migration](#dataset-migration-olist-in-progress))                    | 🚧 in progress — data loaded and retrieval migrated; two LLM-judge eval suites still target the old schema |
 | Pluggable parser / retrieval strategy registries (see [Pluggable by design](#pluggable-by-design))                                                                                            | ✅                                                                                                       |
 | Multi-provider chat/synthesis (OpenAI, Anthropic, Gemini) — embeddings always OpenAI                                                                                                          | ✅                                                                                                       |
 | Scalable ingestion (Redis + RQ workers, versioning)                                                                                                                                           | ✅                                                                                                       |
