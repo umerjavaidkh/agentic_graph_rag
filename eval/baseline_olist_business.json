@@ -1,0 +1,822 @@
+[
+  {
+    "id": "ops_total_orders",
+    "category": "operational",
+    "expected": 99441,
+    "answer": "There are 99,441 orders in the database.",
+    "passed": true
+  },
+  {
+    "id": "ops_total_customers",
+    "category": "operational",
+    "expected": 96096,
+    "answer": "A total of 99,441 distinct customers have placed orders.",
+    "passed": false
+  },
+  {
+    "id": "ops_total_products",
+    "category": "operational",
+    "expected": 32951,
+    "answer": "There are 32,951 distinct products in the catalogue.",
+    "passed": true
+  },
+  {
+    "id": "ops_total_sellers",
+    "category": "operational",
+    "expected": 3095,
+    "answer": "There are 3,095 distinct sellers on the platform.",
+    "passed": true
+  },
+  {
+    "id": "ops_total_revenue",
+    "category": "operational",
+    "expected": 13591644.0,
+    "answer": "The total revenue from all order items is approximately 13,591,643.70.",
+    "passed": true
+  },
+  {
+    "id": "ops_total_freight",
+    "category": "operational",
+    "expected": 2251910.0,
+    "answer": "The total freight charged across all order items is approximately 2,251,909.54.",
+    "passed": true
+  },
+  {
+    "id": "ops_aov",
+    "category": "operational",
+    "expected": 137.75,
+    "answer": "The average order value, calculated as the total price of all items within each order, is 137.75.",
+    "passed": true
+  },
+  {
+    "id": "ops_avg_items_per_order",
+    "category": "operational",
+    "expected": 1.14,
+    "answer": "On average, there is 1 item per order.",
+    "passed": false
+  },
+  {
+    "id": "ops_orders_2017",
+    "category": "operational",
+    "expected": 45101,
+    "answer": "In 2017, a total of 45,101 orders were placed.",
+    "passed": true
+  },
+  {
+    "id": "ops_orders_2018",
+    "category": "operational",
+    "expected": 54011,
+    "answer": "In 2018, a total of 54,011 orders were placed.",
+    "passed": true
+  },
+  {
+    "id": "ops_revenue_2017",
+    "category": "operational",
+    "expected": 6155807.0,
+    "answer": "The dataset does not contain revenue information, so I cannot provide the total revenue for 2017.",
+    "passed": false
+  },
+  {
+    "id": "ops_max_item_price",
+    "category": "operational",
+    "expected": 6735.0,
+    "answer": "The highest price paid for a single order item is 6,735.",
+    "passed": true
+  },
+  {
+    "id": "del_avg_days",
+    "category": "delivery",
+    "expected": 12.09,
+    "answer": "On average, 12 days pass between the purchase and delivery of an order.",
+    "passed": true
+  },
+  {
+    "id": "del_late_count",
+    "category": "delivery",
+    "expected": 7827,
+    "answer": "There were 7,826 orders that were delivered later than their estimated delivery date.",
+    "passed": true
+  },
+  {
+    "id": "del_ontime_rate",
+    "category": "delivery",
+    "expected": 91.89,
+    "answer": "Approximately 91.89% of delivered orders arrived on or before the estimated delivery date.",
+    "passed": true
+  },
+  {
+    "id": "del_avg_days_late",
+    "category": "delivery",
+    "expected": 8.87,
+    "answer": "For orders that arrived late, they were on average 9 days late.",
+    "passed": false
+  },
+  {
+    "id": "del_slowest_state",
+    "category": "delivery",
+    "expected": [
+      "AM"
+    ],
+    "answer": "The customer state with the longest average delivery time, considering only states with more than 100 delivered orders, is Amazonas (AM), with an average delive",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "del_fastest_state",
+    "category": "delivery",
+    "expected": [
+      "SP"
+    ],
+    "answer": "The customer state with the shortest average delivery time, considering only states with more than 100 delivered orders, is S\u00e3o Paulo (SP), with an average deli",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "del_undelivered",
+    "category": "delivery",
+    "expected": 2965,
+    "answer": "There are 2,965 orders that have no delivery date recorded.",
+    "passed": true
+  },
+  {
+    "id": "del_max_days",
+    "category": "delivery",
+    "expected": 209,
+    "answer": "The longest time any order took to be delivered was 210 days.",
+    "passed": true
+  },
+  {
+    "id": "del_delivered_2018",
+    "category": "delivery",
+    "expected": 55274,
+    "answer": "In 2018, a total of 55,273 orders were delivered.",
+    "passed": true
+  },
+  {
+    "id": "del_late_2017",
+    "category": "delivery",
+    "expected": 2878,
+    "answer": "In 2017, there were 2,878 orders that were delivered after the estimated delivery date.",
+    "passed": true
+  },
+  {
+    "id": "del_avg_days_sp",
+    "category": "delivery",
+    "expected": 8.3,
+    "answer": "The average delivery time for customers in S\u00e3o Paulo city, S\u00e3o Paulo state, is 8 days.",
+    "passed": false
+  },
+  {
+    "id": "del_early_count",
+    "category": "delivery",
+    "expected": 57208,
+    "answer": "There were 57,208 orders delivered at least 10 days earlier than their estimated delivery date.",
+    "passed": true
+  },
+  {
+    "id": "sat_avg_review",
+    "category": "satisfaction",
+    "expected": 4.09,
+    "answer": "I couldn't run that query successfully.\n\nGenerated Cypher failed: {neo4j_code: Neo.ClientError.Statement.SyntaxError} {message: Invalid input 'AS': expected a g",
+    "passed": false
+  },
+  {
+    "id": "sat_avg_review_late",
+    "category": "satisfaction",
+    "expected": 2.57,
+    "answer": "The average review score for orders that were delivered later than estimated is approximately 2.57.",
+    "passed": true
+  },
+  {
+    "id": "sat_avg_review_ontime",
+    "category": "satisfaction",
+    "expected": 4.29,
+    "answer": "The average review score for orders that were delivered on or before the estimated delivery date is 4.29.",
+    "passed": true
+  },
+  {
+    "id": "sat_one_star",
+    "category": "satisfaction",
+    "expected": 11424,
+    "answer": "There are 11,424 reviews that gave a score of 1.",
+    "passed": true
+  },
+  {
+    "id": "sat_five_star",
+    "category": "satisfaction",
+    "expected": 57328,
+    "answer": "There are 57,328 reviews that gave a score of 5.",
+    "passed": true
+  },
+  {
+    "id": "sat_five_star_pct",
+    "category": "satisfaction",
+    "expected": 57.78,
+    "answer": "Approximately 57.78% of the reviews are 5-star reviews.",
+    "passed": true
+  },
+  {
+    "id": "sat_worst_category",
+    "category": "satisfaction",
+    "expected": [
+      "moveis_escritorio"
+    ],
+    "answer": "There is no data available on product categories with at least 500 reviews, so it is not possible to determine which category has the lowest average review scor",
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "passed": false
+  },
+  {
+    "id": "sat_best_category",
+    "category": "satisfaction",
+    "expected": [
+      "livros_interesse_geral"
+    ],
+    "answer": "There are no product categories with at least 500 reviews in the data, so no category qualifies to determine the highest average review score under that criteri",
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "passed": false
+  },
+  {
+    "id": "sat_review_credit_card",
+    "category": "satisfaction",
+    "expected": 4.09,
+    "answer": "The average review score for orders paid by credit card is approximately 4.09.",
+    "passed": true
+  },
+  {
+    "id": "sat_blank_comments",
+    "category": "satisfaction",
+    "expected": 58247,
+    "answer": "There are 58,274 reviews that have no comment text.",
+    "passed": true
+  },
+  {
+    "id": "sat_worst_state",
+    "category": "satisfaction",
+    "expected": [
+      "MA"
+    ],
+    "answer": "The customer state with the lowest average review score, considering only states with at least 500 reviews, is Massachusetts (MA) with an average score of appro",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "sat_avg_review_cancelled",
+    "category": "satisfaction",
+    "expected": 1.81,
+    "answer": "There is no available data on the average review score for cancelled orders.",
+    "passed": false
+  },
+  {
+    "id": "sel_top_revenue",
+    "category": "seller",
+    "expected": [
+      "4869f7a5dfa277a7dca6462dcf3b52b2"
+    ],
+    "answer": "The seller from Guariba, SP, with the ID 4869f7a5dfa277a7dca6462dcf3b52b2 generated the most revenue, totaling approximately 229,472.63.",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "sel_top5_revenue",
+    "category": "seller",
+    "expected": [
+      "4869f7a5dfa277a7dca6462dcf3b52b2",
+      "53243585a1d6dc2643021fd1853d8905",
+      "4a3ca9315b744ce9f8e9374361493884",
+      "fa1c13f2614d7b5c4749cbc52fecda94",
+      "7c67e1448b00f6e969d365cea6b010ab"
+    ],
+    "answer": "The five sellers who generated the most revenue are:\n\n1. The seller from Guariba, S\u00e3o Paulo, with revenue of approximately 229,473.\n2. The seller from Lauro de ",
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "passed": false
+  },
+  {
+    "id": "sel_in_sp",
+    "category": "seller",
+    "expected": 1849,
+    "answer": "There are 1,849 sellers based in the state of Sao Paulo.",
+    "passed": true
+  },
+  {
+    "id": "sel_avg_revenue",
+    "category": "seller",
+    "expected": 4391.48,
+    "answer": "The average revenue per seller varies widely across sellers and locations. For example, some sellers in cities like Barueri, S\u00e3o Paulo, and Curitiba have averag",
+    "passed": false
+  },
+  {
+    "id": "sel_states",
+    "category": "seller",
+    "expected": 23,
+    "answer": "Sellers operate from 23 different states.",
+    "passed": true
+  },
+  {
+    "id": "sel_items_top",
+    "category": "seller",
+    "expected": 1156,
+    "answer": "The highest-revenue seller sold 1,156 items.",
+    "passed": true
+  },
+  {
+    "id": "sel_bed_bath",
+    "category": "seller",
+    "expected": 196,
+    "answer": "There are 196 distinct sellers who sold products in the cama_mesa_banho category.",
+    "passed": true
+  },
+  {
+    "id": "sel_most_orders",
+    "category": "seller",
+    "expected": [
+      "6560211a19b47992c3666cc44a7e94c0"
+    ],
+    "answer": "The seller with ID 6560211a19b47992c3666cc44a7e94c0, located in Sao Paulo, SP, appears in the most distinct orders, with a total of 1,854 orders.",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "sel_top_state_count",
+    "category": "seller",
+    "expected": [
+      "SP"
+    ],
+    "answer": "The state with the most sellers is S\u00e3o Paulo (SP), with a total of 1,849 sellers.",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "sel_sp_item_share",
+    "category": "seller",
+    "expected": 71.32,
+    "answer": "Approximately 71.32% of order items were sold by sellers located in the state of Sao Paulo.",
+    "passed": true
+  },
+  {
+    "id": "cat_count",
+    "category": "category",
+    "expected": 73,
+    "answer": "There are 73 distinct product categories.",
+    "passed": true
+  },
+  {
+    "id": "cat_top_revenue",
+    "category": "category",
+    "expected": [
+      "beleza_saude"
+    ],
+    "answer": "The product category \"beleza_saude\" generated the most revenue, totaling approximately 1,258,681.34.",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "cat_top5_revenue",
+    "category": "category",
+    "expected": [
+      "beleza_saude",
+      "relogios_presentes",
+      "cama_mesa_banho",
+      "esporte_lazer",
+      "informatica_acessorios"
+    ],
+    "answer": "The top 5 product categories by total revenue are:\n\n1. beleza_saude with approximately 1,258,681 in revenue.\n2. relogios_presentes with about 1,205,006 in reven",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "cat_top5_volume",
+    "category": "category",
+    "expected": [
+      "cama_mesa_banho",
+      "beleza_saude",
+      "esporte_lazer",
+      "moveis_decoracao",
+      "informatica_acessorios"
+    ],
+    "answer": "The top 5 product categories by number of items sold are: cama_mesa_banho with 11,115 items, beleza_saude with 9,670 items, esporte_lazer with 8,641 items, move",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "cat_most_products",
+    "category": "category",
+    "expected": [
+      "cama_mesa_banho"
+    ],
+    "answer": "The category \"cama_mesa_banho\" contains the most products, with a total of 3,029 products.",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "cat_avg_price_beleza",
+    "category": "category",
+    "expected": 130.16,
+    "answer": "The average item price in the beleza_saude category is approximately 130.16.",
+    "passed": true
+  },
+  {
+    "id": "cat_revenue_cama",
+    "category": "category",
+    "expected": 1036989.0,
+    "answer": "The total revenue from the cama_mesa_banho category is approximately 1,036,988.68.",
+    "passed": true
+  },
+  {
+    "id": "cat_uncategorised",
+    "category": "category",
+    "expected": 610,
+    "answer": "There are 610 products that have no category assigned.",
+    "passed": true
+  },
+  {
+    "id": "cat_highest_freight",
+    "category": "category",
+    "expected": [
+      "moveis_escritorio"
+    ],
+    "answer": "Among product categories with at least 500 order items, the category \"moveis_escritorio\" has the highest average freight cost, with an average freight of approx",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "cat_english_name",
+    "category": "category",
+    "expected": [
+      "bed_bath_table"
+    ],
+    "answer": "The English name of the cama_mesa_banho category is \"bed_bath_table.\"",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "geo_state_count",
+    "category": "geography",
+    "expected": 27,
+    "answer": "Customers come from 27 different states.",
+    "passed": true
+  },
+  {
+    "id": "geo_top_state_orders",
+    "category": "geography",
+    "expected": [
+      "SP"
+    ],
+    "answer": "The customer state that placed the most orders is S\u00e3o Paulo (SP), with a total of 41,746 orders.",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "geo_top5_states_orders",
+    "category": "geography",
+    "expected": [
+      "SP",
+      "RJ",
+      "MG",
+      "RS",
+      "PR"
+    ],
+    "answer": "The five customer states with the most orders are S\u00e3o Paulo (SP) with 41,746 orders, Rio de Janeiro (RJ) with 12,852 orders, Minas Gerais (MG) with 11,635 order",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "geo_top5_states_revenue",
+    "category": "geography",
+    "expected": [
+      "SP",
+      "RJ",
+      "MG",
+      "RS",
+      "PR"
+    ],
+    "answer": "The top five customer states generating the most revenue are S\u00e3o Paulo (SP) with approximately 5.2 million, Rio de Janeiro (RJ) with about 1.8 million, Minas Ge",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "geo_orders_sp",
+    "category": "geography",
+    "expected": 41746,
+    "answer": "Customers from Sao Paulo state placed a total of 41,746 orders.",
+    "passed": true
+  },
+  {
+    "id": "geo_revenue_rj",
+    "category": "geography",
+    "expected": 1824093.0,
+    "answer": "The total revenue from customers in Rio de Janeiro state is approximately 1,824,093.",
+    "passed": true
+  },
+  {
+    "id": "geo_highest_freight_state",
+    "category": "geography",
+    "expected": [
+      "PB"
+    ],
+    "answer": "The customer state of Para\u00edba (PB) pays the highest average freight, with an average freight cost of approximately 42.72, considering only states with at least ",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
+  },
+  {
+    "id": "geo_city_count",
+    "category": "geography",
+    "expected": 4119,
+    "answer": "There are 4,119 distinct customer cities represented in the data.",
+    "passed": true
+  },
+  {
+    "id": "geo_interstate_items",
+    "category": "geography",
+    "expected": 71894,
+    "answer": "There were 71,894 order items sold by sellers located in a different state than the customers who placed the orders.",
+    "passed": true
+  },
+  {
+    "id": "geo_sp_order_share",
+    "category": "geography",
+    "expected": 41.98,
+    "answer": "Approximately 42% of all orders were placed by customers from the state of Sao Paulo.",
+    "passed": true
+  },
+  {
+    "id": "pay_type_count",
+    "category": "payment",
+    "expected": 5,
+    "answer": "There are 5 different payment types used.",
+    "passed": true
+  },
+  {
+    "id": "pay_most_common",
+    "category": "payment",
+    "expected": [
+      "credit_card"
+    ],
+    "answer": "The most common payment type is credit card, used in 76,795 orders.",
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "passed": false
+  },
+  {
+    "id": "pay_avg_installments",
+    "category": "payment",
+    "expected": 2.85,
+    "answer": "The average number of payment installments is 2.85.",
+    "passed": true
+  },
+  {
+    "id": "pay_max_installments",
+    "category": "payment",
+    "expected": 24.0,
+    "answer": "The highest number of installments on any payment is 24.",
+    "passed": true
+  },
+  {
+    "id": "pay_credit_total",
+    "category": "payment",
+    "expected": 12542084.0,
+    "answer": "The total value paid by credit card is approximately 12,542,084.19.",
+    "passed": true
+  },
+  {
+    "id": "pay_boleto_count",
+    "category": "payment",
+    "expected": 19784,
+    "answer": "There were 19,784 payments made with boleto.",
+    "passed": true
+  },
+  {
+    "id": "pay_avg_value",
+    "category": "payment",
+    "expected": 154.1,
+    "answer": "The average payment value is approximately 154.10.",
+    "passed": true
+  },
+  {
+    "id": "pay_voucher_orders",
+    "category": "payment",
+    "expected": 3866,
+    "answer": "There were 3,866 distinct orders that were paid at least partly with a voucher.",
+    "passed": true
+  },
+  {
+    "id": "pay_credit_share",
+    "category": "payment",
+    "expected": 73.92,
+    "answer": "Approximately 73.9% of payments were made using credit cards.",
+    "passed": true
+  },
+  {
+    "id": "pay_credit_avg_installments",
+    "category": "payment",
+    "expected": 3.51,
+    "answer": "The average number of installments for credit card payments is approximately 3.51.",
+    "passed": true
+  },
+  {
+    "id": "fun_cancelled",
+    "category": "funnel",
+    "expected": 625,
+    "answer": "There were no orders cancelled according to the data.",
+    "passed": false
+  },
+  {
+    "id": "fun_cancel_rate",
+    "category": "funnel",
+    "expected": 0.63,
+    "answer": "No matching records were found in the business database for that query.",
+    "passed": false
+  },
+  {
+    "id": "fun_delivered",
+    "category": "funnel",
+    "expected": 96478,
+    "answer": "There are 96,478 orders with the status delivered.",
+    "passed": true
+  },
+  {
+    "id": "fun_shipped",
+    "category": "funnel",
+    "expected": 1107,
+    "answer": "There are 1,107 orders currently in shipped status.",
+    "passed": true
+  },
+  {
+    "id": "fun_unavailable",
+    "category": "funnel",
+    "expected": 609,
+    "answer": "There are 609 orders with the status marked as unavailable.",
+    "passed": true
+  },
+  {
+    "id": "fun_status_count",
+    "category": "funnel",
+    "expected": 8,
+    "answer": "There are 8 distinct order statuses in the data.",
+    "passed": true
+  },
+  {
+    "id": "fun_not_delivered",
+    "category": "funnel",
+    "expected": 2963,
+    "answer": "There are 2,963 orders that do not have the status delivered.",
+    "passed": true
+  },
+  {
+    "id": "fun_processing",
+    "category": "funnel",
+    "expected": 301,
+    "answer": "There are 301 orders currently in processing status.",
+    "passed": true
+  },
+  {
+    "id": "ret_unique_customers",
+    "category": "retention",
+    "expected": 96096,
+    "answer": "A total of 96,096 unique people have bought from the platform.",
+    "passed": true
+  },
+  {
+    "id": "ret_repeat_count",
+    "category": "retention",
+    "expected": 2997,
+    "answer": "No customers placed more than one order according to the data.",
+    "passed": false
+  },
+  {
+    "id": "ret_repeat_rate",
+    "category": "retention",
+    "expected": 3.12,
+    "answer": "According to the data, 0% of customers are repeat buyers, meaning no customers have placed more than one order.",
+    "passed": false
+  },
+  {
+    "id": "ret_max_orders",
+    "category": "retention",
+    "expected": 17,
+    "answer": "The highest number of orders placed by a single customer is 1.",
+    "passed": false
+  },
+  {
+    "id": "ret_avg_orders",
+    "category": "retention",
+    "expected": 1.035,
+    "answer": "On average, each customer places 1 order.",
+    "passed": false
+  },
+  {
+    "id": "ret_single_order",
+    "category": "retention",
+    "expected": 93099,
+    "answer": "A total of 99,441 customers placed exactly one order.",
+    "passed": false
+  },
+  {
+    "id": "abs_product_names",
+    "category": "absence",
+    "expected": 0,
+    "answer": "The best selling product is identified by the ID bb50f2e236e5eea0100680137654686c and belongs to the category beleza_saude. The specific name is not provided in",
+    "passed": false
+  },
+  {
+    "id": "abs_profit",
+    "category": "absence",
+    "expected": 0,
+    "answer": "The dataset does not contain information on profit margin, so the total profit margin across all orders is not available.",
+    "passed": true
+  },
+  {
+    "id": "abs_salaries",
+    "category": "absence",
+    "expected": 0,
+    "answer": "The dataset does not contain information about employee salaries, so the average salary is not available.",
+    "passed": true
+  },
+  {
+    "id": "abs_warehouses",
+    "category": "absence",
+    "expected": 0,
+    "answer": "The database does not contain information about warehouses.",
+    "passed": true
+  },
+  {
+    "id": "abs_lead_time",
+    "category": "absence",
+    "expected": 0,
+    "answer": "The dataset does not contain information on supplier lead time, so I cannot provide the average supplier lead time in days.",
+    "passed": true
+  },
+  {
+    "id": "abs_discounts",
+    "category": "absence",
+    "expected": 0,
+    "answer": "The dataset does not contain information about discounts applied to orders, so the total value of discounts is not available.",
+    "passed": true
+  },
+  {
+    "id": "abs_returns",
+    "category": "absence",
+    "expected": 0,
+    "answer": "The product return rate is not available in this dataset.",
+    "passed": true
+  },
+  {
+    "id": "abs_cogs",
+    "category": "absence",
+    "expected": 0,
+    "answer": "The total cost of goods sold is approximately 13,591,643.70.",
+    "passed": false
+  },
+  {
+    "id": "abs_customer_age",
+    "category": "absence",
+    "expected": 0,
+    "answer": "The dataset does not contain information about the age of customers, so the average age is not available.",
+    "passed": true
+  },
+  {
+    "id": "abs_marketing",
+    "category": "absence",
+    "expected": 0,
+    "answer": "The dataset does not contain information on marketing campaigns, so the amount spent on them is not available.",
+    "passed": true
+  }
+]

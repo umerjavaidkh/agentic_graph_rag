@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import signal
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -238,11 +239,23 @@ def main() -> None:
     ap.add_argument("--category", help="run only this category")
     ap.add_argument("--suite", help="path to a JSON suite (default: the built-in 12 cases)")
     ap.add_argument("--limit", type=int, help="stop after this many cases")
+    ap.add_argument("--out", help="write results here after every case, so a partial run is still usable")
+    ap.add_argument("--resume", action="store_true", help="skip cases already present in --out")
+    ap.add_argument("--case-timeout", type=int, default=180,
+                    help="seconds a single case may take before it is failed (default 180)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args()
 
     all_cases = load_suite(Path(args.suite)) if args.suite else CASES
     cases = [c for c in all_cases if not args.category or c.category == args.category]
+    # Resume: a hundred cases is twenty minutes of paid calls, so a run that
+    # died at case 33 should not repay for the first 32.
+    results: list[dict[str, Any]] = []
+    if args.out and args.resume and Path(args.out).exists():
+        results = json.loads(Path(args.out).read_text())
+        done = {r["id"] for r in results}
+        cases = [c for c in cases if c.id not in done]
+        print(f"resuming: {len(done)} already done, {len(cases)} to go", file=sys.stderr)
     if args.limit:
         cases = cases[: args.limit]
     # A real user from the RBAC graph, not an invented one: access control is
@@ -250,15 +263,36 @@ def main() -> None:
     # absence cases would "pass", because a permission denial reads exactly
     # like a refusal to invent a figure.
     ctx = UserContext(user_id="admin_001", role=Role.ADMIN, department="IT", tenant_id="default")
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError()))
 
-    results = []
+    # Progress goes to stderr per case, and partial results are flushed to
+    # --out as they arrive. A hundred cases is twenty minutes of LLM calls;
+    # printing only at the end means a run that dies partway tells you
+    # nothing at all about how far it got or what it had already found.
     with get_neo4j_driver().session() as s:
-        for c in cases:
+        for idx, c in enumerate(cases, 1):
+            # Bound each case by wall clock. Retries nest -- SDK attempts
+            # inside Cypher attempts inside multistep steps -- so a single
+            # question can legitimately consume twenty minutes and stall the
+            # whole suite. One question exceeding the budget is a result
+            # worth recording, not a reason to stop measuring the other 99.
             try:
-                results.append(run_case(s, c, ctx))
+                signal.alarm(args.case_timeout)
+                try:
+                    row = run_case(s, c, ctx)
+                finally:
+                    signal.alarm(0)
+            except TimeoutError:
+                row = {"id": c.id, "category": c.category, "passed": False,
+                       "error": f"timed out after {args.case_timeout}s"}
             except Exception as exc:  # a broken case must not hide the rest
-                results.append({"id": c.id, "category": c.category, "passed": False,
-                                "error": str(exc)[:160]})
+                row = {"id": c.id, "category": c.category, "passed": False,
+                       "error": str(exc)[:160]}
+            results.append(row)
+            mark = "PASS" if row.get("passed") else "FAIL"
+            print(f"[{idx}/{len(cases)}] {mark} {c.id}", file=sys.stderr, flush=True)
+            if args.out:
+                Path(args.out).write_text(json.dumps(results, indent=2, default=str))
 
     if args.json:
         print(json.dumps(results, indent=2, default=str))

@@ -148,6 +148,13 @@ PDF_ENABLE_PDFPLUMBER = os.environ.get("PDF_ENABLE_PDFPLUMBER", "true").lower() 
 PDF_LOW_TEXT_CHARS = int(os.environ.get("PDF_LOW_TEXT_CHARS", "120"))
 # Per-page cap for pdfplumber fallback (find_tables/layout can hang on some PDFs).
 PDF_PLUMBER_PAGE_TIMEOUT_SEC = int(os.environ.get("PDF_PLUMBER_PAGE_TIMEOUT_SEC", "25"))
+
+# Wall-clock cap on a single chat/completion call. The vendor SDKs default to
+# 600s with retries on top, so one stalled request blocks a caller for up to
+# half an hour with nothing in the logs -- which is exactly what stalled a
+# 100-case eval run at case 33 and looked like a hang with no cause.
+LLM_REQUEST_TIMEOUT_SEC = float(os.environ.get("LLM_REQUEST_TIMEOUT_SEC", "90"))
+LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "2"))
 PDF_ENABLE_OCR = os.environ.get("PDF_ENABLE_OCR", "false").lower() in ("1", "true", "yes")
 PDF_OCR_BACKEND = os.environ.get("PDF_OCR_BACKEND", "none").lower()
 PDF_OCR_DPI = int(os.environ.get("PDF_OCR_DPI", "200"))
