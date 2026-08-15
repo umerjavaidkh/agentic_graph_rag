@@ -132,6 +132,28 @@ CASES: list[Case] = [
          "RETURN 0 AS n", lambda r: 0, kind="absence"),
 ]
 
+def load_suite(path: Path) -> list[Case]:
+    """Read cases from a JSON suite.
+
+    The 12 cases below are written as Python so they can carry a lambda. A
+    hundred business questions are data, not code, and `expect` there names
+    the field to read instead -- a single value for scalar cases, a collected
+    column for list cases. Same runner and same scoring either way, so a
+    suite cannot quietly grade itself differently.
+    """
+    suite = json.loads(path.read_text())
+    cases: list[Case] = []
+    for c in suite.get("cases", []):
+        field = c.get("expect", "n")
+        kind = c.get("kind", "scalar")
+        if kind == "list":
+            extract = (lambda f: lambda rows: [r[f] for r in rows])(field)
+        else:
+            extract = (lambda f: lambda rows: rows[0][f] if rows else None)(field)
+        cases.append(Case(c["id"], c["category"], c["question"], c["cypher"], extract, kind))
+    return cases
+
+
 _NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 # A permission denial is not an answer. Without this the absence cases pass
 # on a broken run, hiding that nothing was actually evaluated.
@@ -214,10 +236,15 @@ def run_case(session, case: Case, ctx: UserContext) -> dict[str, Any]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--category", help="run only this category")
+    ap.add_argument("--suite", help="path to a JSON suite (default: the built-in 12 cases)")
+    ap.add_argument("--limit", type=int, help="stop after this many cases")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args()
 
-    cases = [c for c in CASES if not args.category or c.category == args.category]
+    all_cases = load_suite(Path(args.suite)) if args.suite else CASES
+    cases = [c for c in all_cases if not args.category or c.category == args.category]
+    if args.limit:
+        cases = cases[: args.limit]
     # A real user from the RBAC graph, not an invented one: access control is
     # graph-backed, so an unknown id is denied and EVERY case fails -- and the
     # absence cases would "pass", because a permission denial reads exactly
