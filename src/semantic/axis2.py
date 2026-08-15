@@ -61,6 +61,21 @@ from ..models import DKGNode, DKGEdge, EdgeConfidenceTier, NodeType, RelType
 # CONFIG
 # ─────────────────────────────────────────
 SIMILARITY_THRESHOLD   = 0.75   # cosine sim for SEMANTICALLY_SIMILAR
+# Same idea for SAME_CATEGORY, on a different vector space so a different
+# value: those vectors are idf-weighted ENTITY co-occurrence, not embeddings,
+# and cosine there runs lower for genuinely related sections.
+#
+# Membership in a cluster was the ONLY test -- inside a cluster every node
+# linked to its top-k neighbours no matter how similar they actually were,
+# while SEMANTICALLY_SIMILAR had a floor all along. That is the whole gap
+# between them in the sampled judge audit: SEMANTICALLY_SIMILAR 77.3% vs
+# SAME_CATEGORY 7.7%.
+#
+# Measured on a real 10-K's own clusters before choosing: a cohesive cluster
+# ran 0.685-1.0 pairwise, a middling one 0.29-0.85, and a loose one reached
+# down to 0.032 -- unrelated sections that still got an edge. This floor sits
+# above that noise while leaving the cohesive clusters intact.
+SAME_CATEGORY_MIN_SIMILARITY = 0.35
 CONTRADICTION_THRESH   = 0.85   # only run LLM on very similar pairs
 # SAME_CATEGORY has no per-pair score (cluster co-membership alone doesn't
 # confirm two specific members are strongly related) — AMBIGUOUS, flat score.
@@ -1337,6 +1352,10 @@ class Axis2Builder:
             clusters.setdefault(node.cluster_id, []).append(idx)
 
         cap = AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
+        min_similarity = (
+            SAME_CATEGORY_MIN_SIMILARITY if signal == "entity_cooccurrence"
+            else SIMILARITY_THRESHOLD
+        )
         seen: set[Tuple[int, int]] = set()
 
         for cluster_id, member_idx in clusters.items():
@@ -1345,7 +1364,12 @@ class Axis2Builder:
             sub = unit_vecs[member_idx]
             sub_sim = sub @ sub.T
             np.fill_diagonal(sub_sim, -1.0)
-            for li, lj, _score in _topk_edge_pairs(sub_sim, cap):
+            # The floor depends on WHICH space these vectors live in:
+            # idf-weighted entity co-occurrence runs lower for genuinely
+            # related sections than embeddings do, so reusing one number for
+            # both would be far too strict in one space and far too loose in
+            # the other.
+            for li, lj, _score in _topk_edge_pairs(sub_sim, cap, min_similarity):
                 gi, gj = member_idx[li], member_idx[lj]
                 pair = (gi, gj) if gi < gj else (gj, gi)
                 if pair in seen:

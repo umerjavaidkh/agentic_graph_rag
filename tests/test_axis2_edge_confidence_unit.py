@@ -93,9 +93,18 @@ def test_shares_entity_edges_need_no_change_inherit_extracted():
 
 
 def test_same_category_edges_get_ambiguous_with_flat_score():
-    a = _embedded_node("a", [1.0, 0.0, 0.0])
-    b = _embedded_node("b", [0.0, 1.0, 0.0])
-    c = _embedded_node("c", [0.0, 0.0, 1.0])
+    # Genuinely similar vectors, not the three orthogonal ones this used to
+    # build: at pairwise cosine 0.0 those nodes are as unrelated as vectors
+    # get, and they only produced edges because cluster membership was the
+    # ONLY test -- inside a cluster every node linked to its top-k neighbours
+    # regardless of similarity. That is what made SAME_CATEGORY score 7.7%
+    # against SEMANTICALLY_SIMILAR's 77.3% in the sampled judge audit, and a
+    # similarity floor now applies here too. This test is about the
+    # confidence tier carried by such an edge, so it needs nodes that should
+    # legitimately be linked at all.
+    a = _embedded_node("a", [1.0, 0.05, 0.0])
+    b = _embedded_node("b", [0.98, 0.10, 0.0])
+    c = _embedded_node("c", [0.96, 0.15, 0.0])
 
     builder = _builder()
     _, edges = builder._build_category_edges([a, b, c])
