@@ -183,17 +183,18 @@ def resolve_mode_override(retrieval_mode: Optional[str]) -> str:
     key = (retrieval_mode or "").strip().lower()
     return MODE_TO_TOOL.get(key, MODE_TO_TOOL[DEFAULT_RETRIEVAL_MODE])
 
-# Analytics vocabulary only -- no domain nouns. The entity names that
-# indicate a structured question come from the LIVE schema instead (see
-# _schema_noun_pattern): this list previously hardcoded Northwind's
-# products/orders/customers/suppliers/categories, which meant swapping the
-# loaded dataset silently changed which questions routed correctly --
-# "suppliers" kept matching after Northwind was gone, while an e-commerce
-# graph's "sellers", "payments" and "reviews" matched nothing at all.
+# Domain-generic business nouns plus analytics vocabulary. Kept as a floor
+# rather than replaced by the live schema (see _schema_noun_pattern, which
+# ADDS to this): the schema lookup needs a reachable database, so making it
+# the only source of domain nouns silently changed routing wherever one is
+# absent -- verified by two routing tests, where "Show me the products table"
+# stopped matching at all and fell through to document search.
 _DATA_ROUTE = re.compile(
-    r"\b(?:sales|revenue|profit|sold|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|"
-    r"cypher|neo4j|how\s+many|count\s+of|"
-    r"aggregate|schema|monthly|timeline|trend|"
+    r"\b(?:products?|orders?|customers?|suppliers?|categories?|category|sales|"
+    r"revenue|profit|sold|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|"
+    r"cypher|neo4j|how\s+many\s+(?:orders?|products?|customers?|suppliers?|units?)|"
+    r"count\s+of\s+(?:orders?|products?|customers?|suppliers?)|"
+    r"belong\s+to\s+(?:the\s+)?\w+\s+categor|aggregate|schema|monthly|timeline|trend|"
     r"volume|chronological|"
     r"structured\s+(?:data|graph|query)|graph\s+(?:data|query|analytics)|"
     r"analytics|metrics?|tabular|database\s+query|query\s+(?:the\s+)?(?:graph|database))\b",
