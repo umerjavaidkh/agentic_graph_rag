@@ -61,6 +61,14 @@ NUMBERS AND DATES:
 - Aggregations and rankings ("most", "highest", "top"): MATCH the full path,
   WITH groupKey, the aggregate AS metric, then RETURN groupKey, metric
   ORDER BY metric DESC LIMIT {n}
+- Duration argument order: duration.inDays(earlier, later) and
+  duration.between(earlier, later) take the EARLIER instant first. Reversing
+  them returns a negative elapsed time, which is never the answer to "how
+  long between X and Y" -- if your result would be negative, the arguments
+  are the wrong way round, not the data
+- Do not truncate per row before aggregating. toInteger(...) inside an
+  average discards each row's fraction and biases the mean downward; average
+  the raw values and round the final result instead
 - For dates that include a time, parse via substring(toString(prop), 0, 10)
   before date()
 - For month or day bucketing use substring(toString(prop), 0, 7) for YYYY-MM
