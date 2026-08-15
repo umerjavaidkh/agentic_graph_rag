@@ -20,6 +20,13 @@ from .telemetry import clear_telemetry, get_telemetry, start_telemetry
 
 _rbac: GraphRBAC | None = None
 
+# Set by ask() when the caller named a retrieval mode instead of letting the
+# router pick. query_data() is reached through the MCP handler registry, whose
+# signature is fixed, so this travels out-of-band rather than as an argument.
+_MODE_LOCKED: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "retrieval_mode_locked", default=False
+)
+
 # Shared across query_hybrid calls rather than created fresh per request —
 # same reasoning as FullHybridStrategy's pool (retrieval/unstructured/
 # strategies/full_hybrid.py).
@@ -34,6 +41,7 @@ def _rbac_check() -> GraphRBAC:
 from .conversation import get_turn, resolve_follow_up, save_turn
 from .routing import (
     TOOL_TO_AGENT,
+    enforce_mode,
     is_structured_data_question,
     make_structured_access_denied_result,
     resolve_mode_override,
@@ -120,7 +128,19 @@ def query_data(question: str, user_context: Optional[UserContext] = None, thread
     result = structured_agent.invoke(state)
 
     fallback_used = False
-    if result.get("low_confidence"):
+    # An RBAC denial arrives flagged low_confidence, but it is not a weak
+    # answer -- it is "you may not ask this". Falling back to documents turns
+    # it into "this document does not cover it", which describes the corpus
+    # instead of the missing permission and leaves no way to tell the two
+    # apart. Everything else still falls back: a genuinely weak structured
+    # answer may well be in the documents.
+    # Never reroute away from a mode the caller chose explicitly, and never
+    # dress an RBAC denial up as a document answer: both replace what was
+    # asked for with "this document does not cover it", which names the wrong
+    # reason. A router-picked structured answer that came out weak may still
+    # be better served by documents, so that case still falls back.
+    denied = result.get("strategy") == "access_denied"
+    if result.get("low_confidence") and not denied and not _MODE_LOCKED.get():
         fallback = try_document_fallback(resolved["question"], user_context)
         if fallback is not None:
             fallback_used = True
@@ -271,6 +291,7 @@ def ask(
 
     try:
         forced_tool = resolve_mode_override(retrieval_mode)
+        _MODE_LOCKED.set(forced_tool is not None)
         if tel is not None:
             tel.route["retrieval_mode"] = TOOL_TO_AGENT.get(forced_tool, forced_tool)
         tool_name, _resolved = resolve_query_tool(
@@ -300,7 +321,15 @@ def ask(
                 result="denied",
                 reason="rbac_denied",
             )
-            fallback = try_document_fallback(question, ctx)
+            # ...but only when the ROUTER chose structured. If the user picked
+            # it explicitly, quietly answering from documents misreports what
+            # happened: the reply reads "this document does not cover it",
+            # which describes the corpus rather than the permission that was
+            # actually missing, and gives no hint that access is the problem.
+            # Observed with the UI's default user, who has no structured
+            # access: every question asked on the Structured tab came back as
+            # a document non-answer.
+            fallback = None if forced_tool else try_document_fallback(question, ctx)
             if fallback is not None:
                 presentation = build_presentation(
                     question=question,
@@ -357,6 +386,7 @@ def ask(
             user_context=user_context,
             thread_id=thread_id,
         )
+        result = enforce_mode(result, forced_tool)
         record_audit_event(
             event_type=AuditEventType.QUERY,
             user_id=ctx.user_id,

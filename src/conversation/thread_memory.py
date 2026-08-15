@@ -169,30 +169,31 @@ def resolve_follow_up(question: str, prior: Optional[dict[str, Any]]) -> dict[st
             orig = pending.get("original_question") or base["question"]
             # Keep rewrite simple and explicit; avoid stuffing definitions into the question
             # because it can confuse Text-to-Cypher generation.
-            if kind == "structured_order_price":
+            if kind == "structured_metric_choice":
                 cid = (choice.get("id") or "").strip()
 
-                # Try to preserve the user's country filter in a robust way.
-                # Example: "avg order price for Germany" -> country_phrase="Germany"
-                country_phrase = None
-                m = re.search(r"\bfor\s+([a-zA-Z][a-zA-Z\s\.\-]{1,60})\??\s*$", orig, re.I)
-                if m:
-                    country_phrase = m.group(1).strip()
-                if not country_phrase:
-                    m2 = re.search(r"\bin\s+([a-zA-Z][a-zA-Z\s\.\-]{1,60})\??\s*$", orig, re.I)
-                    if m2:
-                        country_phrase = m2.group(1).strip()
+                # Preserve a trailing "for X" / "in X" qualifier. Not assumed
+                # to be a country -- it is whatever the user scoped by.
+                where = ""
+                for pattern in (
+                    r"\bfor\s+([a-zA-Z][a-zA-Z\s\.\-]{1,60})\??\s*$",
+                    r"\bin\s+([a-zA-Z][a-zA-Z\s\.\-]{1,60})\??\s*$",
+                ):
+                    m = re.search(pattern, orig, re.I)
+                    if m:
+                        where = f" for {m.group(1).strip()}"
+                        break
 
-                where = f" for {country_phrase}" if country_phrase else ""
-
-                if cid == "order_total":
-                    rewritten = f"Calculate the average order total{where}. Define order total as sum of line items per order (unitPrice × quantity × (1 - discount))."
-                elif cid == "freight":
-                    rewritten = f"Calculate the average freight (shipping cost) per order{where}."
-                elif cid == "unit_price":
-                    rewritten = f"Calculate the average line-item unit price{where} (avg of ORDER_CONTAINS.unitPrice for matching orders)."
-                else:
-                    rewritten = f"Clarify and answer the original question{where}: {orig}"
+                # The option id IS the field ("Label.property"), picked from
+                # the live schema, so the rewrite names it directly. The old
+                # branches spelled out formulas over unitPrice/quantity/
+                # discount -- fields that do not exist in every graph, which
+                # made the answer uncomputable whenever they were absent.
+                rewritten = (
+                    f"Calculate the average of {cid}{where}."
+                    if "." in cid
+                    else f"Clarify and answer the original question{where}: {orig}"
+                )
                 return {
                     **base,
                     "question": rewritten,

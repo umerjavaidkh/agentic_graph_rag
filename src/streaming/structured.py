@@ -76,7 +76,17 @@ def iter_structured_stream(
     *,
     user_context: Optional[UserContext],
     resolved_question: str,
+    mode_locked: bool = False,
 ) -> Iterator[str]:
+    """Stream a structured answer.
+
+    `mode_locked` means the caller asked for structured data specifically
+    rather than the router guessing it. Every reroute to documents below is
+    then suppressed: silently answering from the other source contradicts an
+    explicit choice, and the reply that comes back ("this document does not
+    cover it") describes the wrong corpus, so the reader cannot tell that
+    their question was answered from somewhere they did not ask about.
+    """
     state: dict[str, Any] = {"question": resolved_question}
     if user_context is not None:
         state["user_context"] = user_context
@@ -108,7 +118,7 @@ def iter_structured_stream(
         # Zero rows for a non-aggregate query — try documents before
         # answering flatly (same root cause as the graph.py non-streaming
         # fix: a named entity may only exist in ingested documents).
-        if not _COUNT_WORDS.search(question or ""):
+        if not mode_locked and not _COUNT_WORDS.search(question or ""):
             fallback = _try_document_fallback_stream(question, user_context)
             if fallback is not None:
                 buffered, rest = fallback
@@ -129,16 +139,12 @@ def iter_structured_stream(
 
     denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
     if denied:
-        # RBAC denial resolved deep inside the retrieval layer, not the
-        # streaming orchestrator's own top-level pre-gate — same fallback:
-        # the question may be answerable from documents regardless.
-        fallback = _try_document_fallback_stream(question, user_context)
-        if fallback is not None:
-            buffered, rest = fallback
-            yield stream_event(type="status", phase="reroute", agent="unstructured", reason="structured_access_denied")
-            yield from buffered
-            yield from rest
-            return
+        # RBAC denial resolved deep inside the retrieval layer rather than by
+        # the streaming orchestrator's top-level pre-gate. This used to fall
+        # back to documents on the grounds that the question might be
+        # answerable there anyway -- but the reply then reads "this document
+        # does not cover it", which reports the wrong reason and hides that
+        # the account simply lacks structured access. Say what happened.
         answer = (denied.get("text") or "Access denied for structured data.").strip()
         yield stream_event(type="done", agent="structured", answer=answer, sources=[], strategy=strategy)
         return
@@ -168,10 +174,13 @@ def iter_structured_stream(
         question, chunks, provider=provider, model=STRUCTURED_MODEL
     )
 
-    if low_confidence:
+    if low_confidence and not mode_locked:
         # Known before any structured tokens are streamed — safe to try
         # documents now and switch streams entirely if they're usable,
         # rather than streaming a possibly-wrong structured answer first.
+        # Skipped when the mode is locked: this reroute is what turned an
+        # explicit "Structured data" request into "this document does not
+        # cover it", discarding a structured answer the user had asked for.
         fallback = _try_document_fallback_stream(question, user_context)
         if fallback is not None:
             buffered, rest = fallback

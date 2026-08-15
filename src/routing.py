@@ -20,11 +20,7 @@ from .config.settings import (
     ROUTING_MODEL,
     estimate_route_max_tokens,
 )
-from .graph.constants import (
-    DOC_REVISION_LABEL,
-    DOCUMENT_LOGICAL_LABEL,
-    INDEXED_NODE_CYPHER,
-)
+from .graph.constants import NON_BUSINESS_LABELS
 from .model_providers.factory import get_chat_provider
 from .telemetry import get_telemetry, pipeline_step
 
@@ -33,10 +29,12 @@ logger = logging.getLogger(__name__)
 # Node labels that belong to the ingested-document tree, not the structured
 # business graph — excluded when summarizing "what's in the structured graph"
 # for router prompts, so that summary doesn't just list Document/Section/Page.
-_DOCUMENT_GRAPH_LABELS = set(INDEXED_NODE_CYPHER.split("|")) | {
-    DOCUMENT_LOGICAL_LABEL,
-    DOC_REVISION_LABEL,
-}
+_DOCUMENT_GRAPH_LABELS = NON_BUSINESS_LABELS
+
+# RBAC and plumbing labels. Real nodes, but not business entities anyone
+# asks questions about -- advertising them invites the router to try
+# answering "how many users" from the access-control graph.
+_INTERNAL_LABELS = NON_BUSINESS_LABELS
 
 _structured_entities_cache: Optional[str] = None
 
@@ -59,8 +57,22 @@ def structured_entity_summary() -> str:
 
         driver = get_neo4j_driver()
         with driver.session() as session:
-            rows = session.run("CALL db.labels() YIELD label RETURN label ORDER BY label")
-            labels = [r["label"] for r in rows if r["label"] not in _DOCUMENT_GRAPH_LABELS]
+            # Labels that actually have nodes, not db.labels(): Neo4j keeps a
+            # label in the schema after its last node is deleted, so a
+            # retired dataset goes on advertising itself. Verified live --
+            # after Northwind was cleared, db.labels() still returned
+            # Supplier and Address, which told the router LLM the graph could
+            # answer questions about suppliers and made "how many suppliers"
+            # route to a table that no longer exists.
+            rows = session.run(
+                "MATCH (n) UNWIND labels(n) AS label "
+                "RETURN DISTINCT label ORDER BY label"
+            )
+            labels = [
+                r["label"] for r in rows
+                if r["label"] not in _DOCUMENT_GRAPH_LABELS
+                and r["label"] not in _INTERNAL_LABELS
+            ]
         _structured_entities_cache = ", ".join(labels) if labels else "structured graph data"
     except Exception as exc:
         logger.debug("structured_entity_summary: schema lookup failed: %s", exc)
@@ -164,6 +176,12 @@ def resolve_mode_override(retrieval_mode: Optional[str]) -> str:
     key = (retrieval_mode or "").strip().lower()
     return MODE_TO_TOOL.get(key, MODE_TO_TOOL[DEFAULT_RETRIEVAL_MODE])
 
+# Domain-generic business nouns plus analytics vocabulary. Kept as a floor
+# rather than replaced by the live schema (see _schema_noun_pattern, which
+# ADDS to this): the schema lookup needs a reachable database, so making it
+# the only source of domain nouns silently changed routing wherever one is
+# absent -- verified by two routing tests, where "Show me the products table"
+# stopped matching at all and fell through to document search.
 _DATA_ROUTE = re.compile(
     r"\b(?:products?|orders?|customers?|suppliers?|categories?|category|sales|"
     r"revenue|profit|sold|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|"
@@ -177,9 +195,40 @@ _DATA_ROUTE = re.compile(
 )
 
 
+def _schema_noun_pattern() -> Optional[re.Pattern]:
+    """The live graph's own entity names as a match pattern, or None when the
+    schema is unavailable.
+
+    Reuses the same label list structured_entity_summary() already fetches, so
+    a question naming any entity actually present ("sellers", "reviews",
+    "payments") routes to structured retrieval, and one naming an entity that
+    is NOT present does not. Plural forms are accepted because people ask
+    "how many sellers", not "how many seller".
+    """
+    summary = structured_entity_summary()
+    labels = [l.strip() for l in summary.split(",") if l.strip()]
+    if not labels or summary == "structured graph data":
+        return None
+    alts = "|".join(sorted((re.escape(l.lower()) + r"s?" for l in labels), key=len, reverse=True))
+    try:
+        return re.compile(rf"\b(?:{alts})\b", re.I)
+    except re.error:  # a label with regex-hostile characters
+        return None
+
+
 def is_structured_data_question(question: str) -> bool:
-    """Likely a structured graph / analytics query — not ingested PDF documents."""
-    return bool(_DATA_ROUTE.search(question or ""))
+    """Likely a structured graph / analytics query — not ingested PDF documents.
+
+    Two independent signals: domain-agnostic analytics vocabulary, and the
+    live graph's own entity names. Naming an entity that actually exists is
+    the stronger signal, and it is the one that adapts when the loaded schema
+    changes — which a fixed noun list cannot do.
+    """
+    text = question or ""
+    if _DATA_ROUTE.search(text):
+        return True
+    nouns = _schema_noun_pattern()
+    return bool(nouns and nouns.search(text))
 
 
 def is_misrouted_structured_question(question: str) -> bool:
@@ -470,4 +519,47 @@ def make_structured_access_denied_result(
         "_route_tool": routed_tool,
         "_route_method": "structured_access_denied",
         "_access_level": user_context.role.value if user_context else None,
+    }
+
+
+def enforce_mode(result: dict, forced_tool: Optional[str]) -> dict:
+    """Hold the caller to the source they asked for.
+
+    Several layers below this can reroute between structured and documents --
+    a weak answer, zero rows, an RBAC denial -- and each has a decent local
+    reason. None of them is visible from the outside: the reply just arrives
+    from the other source, saying "this document does not cover it" for a
+    question that was asked of the business data. Guarding each site
+    individually kept missing one, so the boundary is enforced once, here,
+    where the requested mode and the delivered answer are both in hand.
+
+    Only applies when a mode was named. With no mode the router is meant to
+    choose, and every fallback below stays exactly as it was.
+    """
+    if not forced_tool:
+        return result
+    wanted = TOOL_TO_AGENT.get(forced_tool, forced_tool)
+    if result.get("agent") == wanted:
+        return result
+    if wanted == "structured":
+        answer = (
+            "That could not be answered from the structured data. "
+            "It was not answered from your documents either, because "
+            "\"Structured data\" was the selected source -- switch to "
+            "Documents to search those instead."
+        )
+    else:
+        answer = (
+            "That could not be answered from your documents. "
+            "\"Documents\" was the selected source, so the structured data "
+            "was not searched -- switch to Structured data to query it."
+        )
+    return {
+        **result,
+        "answer": answer,
+        "agent": wanted,
+        "sources": [],
+        "low_confidence": True,
+        "confidence_note": f"no answer available from the selected source ({wanted})",
+        "presentation": {"kind": "plain", "blocks": [{"type": "markdown", "content": answer}]},
     }

@@ -18,13 +18,13 @@ Constraints:
 - Each step must have a clear purpose and produce a small result for the next step (ids/keys/aggregates).
 - VERY IMPORTANT: Each step's `cypher` must be a complete, standalone Cypher query starting from MATCH/UNWIND. Do NOT write partial pipelines that assume previous step variables are still in scope.
 - Later steps must consume earlier step outputs via parameters. The executor will automatically pass previous step rows as parameters named `$step1_rows`, `$step2_rows`, etc (list of maps).
-- Prefer `UNWIND $step1_rows AS row` then use `row.customerID`, `row.country`, etc.
-- In Cypher, every expression in `WITH` must be aliased with `AS` (e.g. `WITH p.productName AS productName`, not `WITH ..., p.productName`).
-- In every `RETURN`, always alias fields to simple names (no dots), e.g. `RETURN row.country AS country, row.customerID AS customerID`.
-- If a step returns rows used by later steps, it MUST return the key fields needed for joins (e.g. customerID, country) explicitly.
-- If the question defines a metric formula in text (e.g. revenue = unitPrice×quantity×(1-discount)), you MUST use that exact definition using line-item relationship properties (e.g. `(o)-[li:ORDER_CONTAINS]->(p)` with `li.unitPrice`, `li.quantity`, `li.discount`). Do NOT substitute `o.freight`.
-- Steps may also use derived list params like `$customerIDs` ONLY if a prior step returns `customerID` (the executor will collect and pass them).
-- If the user defines a metric formula in the question (e.g. revenue = unitPrice×quantity×(1-discount)), you MUST use that definition (do not substitute freight/shipping cost).
+- Prefer `UNWIND $step1_rows AS row` then read the aliases that step returned, e.g. `row.<alias>`.
+- In Cypher, every expression in `WITH` must be aliased with `AS` (e.g. `WITH n.<property> AS <alias>`, not a bare `n.<property>`).
+- In every `RETURN`, always alias fields to simple names (no dots), e.g. `RETURN row.<property> AS <alias>`.
+- If a step returns rows used by later steps, it MUST explicitly return the key fields those later steps join on.
+- If the question defines a metric formula in text, you MUST use that exact definition, reading each property from whichever node or relationship the schema lists it under. Bind a relationship to a variable when the property belongs to the relationship. Never substitute a different property for one the formula names.
+- Steps may use a derived list param like `$<alias>s` ONLY if a prior step returns `<alias>` (the executor collects and passes them).
+- If the user defines a metric formula in the question, you MUST use that definition and never substitute a different property for one it names
 
 CRITICAL — FILTER INHERITANCE (most common mistake):
 - Steps do NOT inherit filters from earlier steps. If the question specifies any global filter (a year or date range like 1997, a status, a region, a category, etc.), then EVERY step that re-MATCHes the graph MUST repeat ALL of those filters in its own WHERE clause. Silently dropping a filter (e.g. computing all-time revenue when the question said "in 1997") is a critical error.
@@ -38,7 +38,7 @@ DERIVED METRICS:
 - "average order value" = total revenue / number of DISTINCT orders for that entity. Do NOT use `avg(lineItemRevenue)` (that averages line items, not orders).
 
 ENTITY NAMES IN THE FINAL STEP (most common multistep mistake):
-- Whichever step's rows are the final ranked/grouped result the user will see MUST include each entity's human-readable name property from the schema (e.g. companyName, productName, categoryName — whatever the schema shows for that label), not just its ID. A row like {{supplierID: "12", totalRevenue: 66007.99}} is wrong even if step1 never carried the name forward — RETURN in that same step must join back to the entity by ID to fetch its name, e.g. `MATCH (s:Supplier {{supplierID: row.supplierID}}) RETURN row.supplierID AS supplierID, s.companyName AS supplierName, row.totalRevenue AS totalRevenue`.
+- Whichever step's rows are the final ranked/grouped result the user will see MUST include each entity's human-readable property from the schema (a name, title or label column) ALONGSIDE its id — never instead of the id, and never the id alone. Ids are unreadable; dropping them makes two rows indistinguishable. If an earlier step carried only the id forward, that final step must join back to the entity by id to fetch the readable column. If the schema has no readable column for that label, return the id.
 - This applies per label, using whatever name-like property the schema actually has for it — do not assume a specific property name across entities.
 
 JSON schema you must follow exactly:

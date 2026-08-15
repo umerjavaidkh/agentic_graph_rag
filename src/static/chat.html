@@ -822,6 +822,29 @@
       .shell{ height: auto; max-height: none; min-height: calc(100vh - 40px); }
       .chat{ min-height: 70vh; }
     }
+    /* Which source answers the question is the single most consequential
+       choice on this page -- a documents question sent to the SQL path
+       returns a confident wrong answer, not an error. It sat in a sidebar
+       dropdown where it was easy to not notice, so it lives here instead,
+       always visible above the transcript. */
+    .source-tabs{
+      display:flex; gap:6px; padding:10px 14px 0;
+      border-bottom:1px solid var(--border);
+    }
+    .source-tab{
+      flex:1; display:flex; flex-direction:column; gap:2px;
+      padding:9px 12px; border:1px solid transparent; border-bottom:none;
+      border-radius:9px 9px 0 0; background:transparent; cursor:pointer;
+      font:inherit; font-weight:600; font-size:.85rem; text-align:left;
+      color:var(--text-secondary); transition:background .15s, color .15s;
+    }
+    .source-tab:hover{ background:var(--accent-soft); color:var(--text); }
+    .source-tab.is-active{
+      background:var(--accent-soft); color:var(--text);
+      border-color:var(--border-strong);
+      box-shadow:inset 0 2px 0 var(--accent);
+    }
+    .source-tab-sub{ font-weight:400; font-size:.72rem; opacity:.72; }
   </style>
 </head>
 <body>
@@ -850,13 +873,12 @@
           <label>Department</label>
           <input id="department" type="text" placeholder="Optional" />
 
-          <label>Retrieval</label>
-          <select id="retrieval_mode" title="Which retrieval path answers the query">
-            <option value="unstructured">Documents only</option>
-            <option value="structured">Structured data only</option>
-            <option value="hybrid">Hybrid (both)</option>
-          </select>
         </div>
+
+        <!-- Set by the tabs above the transcript. Kept as an input so the
+             send paths keep reading one value rather than each knowing how
+             the source is rendered. -->
+        <input id="retrieval_mode" type="hidden" value="unstructured" />
 
         <label class="stream-toggle">
           <input id="use_stream" type="checkbox" checked />
@@ -882,6 +904,18 @@
           <span class="brand">Assistant</span>
           <span class="badge status-ready" id="status">Ready</span>
         </h2>
+      </div>
+      <div class="source-tabs" role="tablist" aria-label="What to ask about">
+        <button class="source-tab is-active" role="tab" data-mode="unstructured"
+                aria-selected="true" type="button">
+          Documents
+          <span class="source-tab-sub">PDFs, reports, policies</span>
+        </button>
+        <button class="source-tab" role="tab" data-mode="structured"
+                aria-selected="false" type="button">
+          Structured data
+          <span class="source-tab-sub">tables, orders, customers</span>
+        </button>
       </div>
       <div id="err" class="error" style="display:none;"></div>
       <div id="chat_body" class="chat-body"></div>
@@ -1122,7 +1156,7 @@
       card.className = 'welcome-card';
       card.innerHTML = `
         <h3>What can I help you find?</h3>
-        <p>Search policy documents, query Northwind sales data, or explore the knowledge graph with cited sources.</p>
+        <p>Search policy documents, query your structured business data, or explore the knowledge graph with cited sources.</p>
         <div class="welcome-examples">
           <button type="button" class="example-chip" data-q="Top 5 products by sales revenue">Top products by revenue</button>
           <button type="button" class="example-chip" data-q="Show order volumes by month over time">Orders by month</button>
@@ -2099,6 +2133,27 @@
         e.preventDefault();
         send();
       }
+    });
+
+    // Switching source clears nothing: the transcript is a record of what
+    // was asked, and the tab only decides where the NEXT question goes.
+    const modeInput = document.getElementById('retrieval_mode');
+    const PLACEHOLDERS = {
+      unstructured: 'Ask about your documents — policies, reports, filings…',
+      structured: 'Ask about your data — orders, revenue, customers, totals…',
+    };
+    document.querySelectorAll('.source-tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const mode = tab.dataset.mode;
+        if (modeInput.value === mode) return;
+        modeInput.value = mode;
+        document.querySelectorAll('.source-tab').forEach((t) => {
+          const on = t === tab;
+          t.classList.toggle('is-active', on);
+          t.setAttribute('aria-selected', String(on));
+        });
+        document.getElementById('q').placeholder = PLACEHOLDERS[mode];
+      });
     });
 
     document.getElementById('new_chat').addEventListener('click', async () => {

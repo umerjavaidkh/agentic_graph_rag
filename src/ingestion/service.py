@@ -707,7 +707,7 @@ class IngestionManager:
         """
         Execute a user-provided Cypher file against Neo4j.
 
-        Intended for loading arbitrary schemas/datasets (e.g. Northwind).
+        Intended for loading arbitrary schemas/datasets.
 
         NOT covered by the automatic tenant-stamping guarantee that
         DKGNode/DKGEdge ingestion gets: arbitrary uploaded CREATE/MERGE

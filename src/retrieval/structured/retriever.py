@@ -112,7 +112,7 @@ class StructuredRetriever:
     ) -> dict:
         ctx = user_context or self.user_context
         with pipeline_step("structured.retrieve", limit=limit):
-            clarification = needs_clarification(query)
+            clarification = needs_clarification(query, self._schema.numeric_properties())
             if clarification:
                 return clarification
 
