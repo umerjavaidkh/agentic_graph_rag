@@ -234,6 +234,23 @@ def fix_extra_paren_as_alias(cypher: str) -> str:
     return re.sub(r"\bAS\s+(\w+)\)\s+AS\s+", r"AS \1 AS ", cypher, flags=re.I)
 
 
+def fix_pattern_alias(cypher: str) -> str:
+    """`MATCH (:Label) AS r` -> `MATCH (r:Label)`.
+
+    A SQL habit -- `FROM reviews AS r` -- that Cypher rejects outright: the
+    variable belongs inside the pattern. Worth repairing deterministically
+    rather than regenerating, because it is a pure syntax slip with exactly
+    one correct reading, and the LLM round-trip it replaces sometimes ran out
+    of attempts and returned an error to the user instead of an answer.
+    """
+    return re.sub(
+        r"\bMATCH\s*\(\s*:\s*([A-Za-z_]\w*)\s*\)\s+AS\s+([A-Za-z_]\w*)",
+        r"MATCH (\2:\1)",
+        cypher or "",
+        flags=re.I,
+    )
+
+
 def fix_relationship_property_access(cypher: str) -> str:
     """Rewrite `node.REL_TYPE.field` to `var.field` when REL_TYPE is bound.
 
@@ -255,6 +272,7 @@ def normalize_generated_cypher(cypher: str, schema: str) -> str:
     if not fixed:
         return fixed
     fixed = fix_extra_paren_as_alias(fixed)
+    fixed = fix_pattern_alias(fixed)
     fixed = fix_with_missing_aliases(fixed)
     fixed = fix_relationship_property_access(fixed)
     fixed = fix_relationship_directions(fixed, schema)

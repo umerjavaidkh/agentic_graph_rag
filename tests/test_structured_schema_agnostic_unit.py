@@ -94,3 +94,22 @@ def test_no_dataset_specific_field_names(path: Path):
         "dataset-specific field names in structured code/prompts:\n  "
         + "\n  ".join(offenders)
     )
+
+
+def test_pattern_alias_repair():
+    """`MATCH (:Label) AS r` is a SQL habit Cypher rejects outright.
+
+    Observed intermittently on "average review score": 5 runs in 6 returned
+    4.09, the sixth generated this and failed outright, which read as a flaky
+    metric rather than a syntax slip. Repaired deterministically because there
+    is exactly one correct reading, and the regeneration it replaces sometimes
+    ran out of attempts and returned an error instead of an answer.
+    """
+    from src.retrieval.structured.cypher.repair import fix_pattern_alias
+
+    assert fix_pattern_alias("MATCH (:Review) AS r RETURN avg(r.score)") == (
+        "MATCH (r:Review) RETURN avg(r.score)"
+    )
+    # Valid Cypher must survive untouched.
+    valid = "MATCH (r:Review) RETURN avg(r.score) AS s"
+    assert fix_pattern_alias(valid) == valid
