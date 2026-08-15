@@ -94,6 +94,12 @@
     .quality-score .qs-badge.pass { background: #16a34a; }
     .quality-score .qs-badge.fail { background: #dc2626; }
     .quality-score .qs-examples { margin-top: 0.4rem; font-size: 0.72rem; color: #7f1d1d; }
+    /* The dimension breakdown wraps and is the widest row, so it gets its own
+       alignment rather than being squeezed by the flex row's space-between. */
+    .quality-score .qs-row .v > span { white-space: nowrap; }
+    .quality-score .qs-worst { color: #b91c1c; font-weight: 700; }
+    .quality-score .qs-ci { color: #64748b; font-size: 0.7rem; font-weight: 400; margin-left: 0.35rem; }
+    .quality-score .qs-note { margin-top: 0.35rem; font-size: 0.7rem; color: #92400e; }
     .quality-score .qs-examples li { margin-bottom: 0.15rem; word-break: break-word; }
 
     /* Searchable document combobox -- a flat <select> stops being usable
@@ -434,15 +440,45 @@
       const passClass = report.passes_gate ? 'pass' : 'fail';
       const badge = (ok) => `<span class="qs-badge ${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</span>`;
       let html = `<div class="quality-score ${passClass}">`;
+      const pct = (x) => `${(x * 100).toFixed(1)}%`;
+      // The score is the WORST dimension, so a bare percentage says a
+      // document failed without saying what failed. Break it down, weakest
+      // first, or the number sends you looking in the wrong place — a 10-K
+      // reporting 59.1% is 99.6% correct on structure and 59.1% on titles.
+      const breakdown = (obj, label) => {
+        const entries = Object.entries(obj || {});
+        if (!entries.length) return '';
+        entries.sort((a, b) => a[1] - b[1]);
+        return `<div class="qs-row"><span class="k">${label}</span><span class="v">` +
+          entries.map(([k, v], i) =>
+            `<span class="${i === 0 ? 'qs-worst' : ''}">${k} ${pct(v)}</span>`
+          ).join(' · ') + `</span></div>`;
+      };
+      // A sampled precision is an interval, not a point: two n=15 runs over an
+      // identical graph returned 63% and 80%, and both were read as real.
+      const ci = (pair) => pair
+        ? ` <span class="qs-ci">95% CI ${pct(pair[0])}–${pct(pair[1])}</span>` : '';
       if (a1) {
-        html += `<div class="qs-row"><span class="k">Axis-1 (${a1.method})</span><span class="v">${(a1.score * 100).toFixed(1)}%${badge(a1.score >= 0.9)}</span></div>`;
-        html += `<div class="qs-row"><span class="k">Matched</span><span class="v">${a1.matched}/${a1.total_ground_truth}</span></div>`;
+        html += `<div class="qs-row"><span class="k">Axis-1 (${a1.method})</span><span class="v">${pct(a1.score)}${badge(a1.score >= 0.9)}</span></div>`;
+        html += breakdown(a1.dimensions, 'Dimensions (worst first)');
+        html += `<div class="qs-row"><span class="k">Checks passed</span><span class="v">${a1.matched}/${a1.total_ground_truth}</span></div>`;
       }
       if (a2) {
-        html += `<div class="qs-row"><span class="k">Axis-2 (idea-linking)</span><span class="v">${(a2.score * 100).toFixed(1)}%${badge(a2.score >= 0.9)}</span></div>`;
-        html += `<div class="qs-row"><span class="k">Edge precision</span><span class="v">${a2.edge_precision ?? '—'}</span></div>`;
-        html += `<div class="qs-row"><span class="k">Entity grounding</span><span class="v">${a2.entity_grounding_precision ?? '—'}</span></div>`;
+        html += `<div class="qs-row"><span class="k">Axis-2 (idea-linking)</span><span class="v">${pct(a2.score)}${badge(a2.score >= 0.9)}</span></div>`;
+        html += `<div class="qs-row"><span class="k">Edge precision</span><span class="v">${a2.edge_precision ?? '—'}${ci(a2.edge_precision_ci)}</span></div>`;
+        // Each type carries its own sample count — a rate without its
+        // denominator is unreadable, and these denominators are small.
+        const byType = Object.fromEntries(
+          Object.entries(a2.edge_precision_by_type || {}).map(([k, v]) => [
+            `${k} (n=${v.sampled})`, v.precision,
+          ])
+        );
+        html += breakdown(byType, 'By relationship type');
+        html += `<div class="qs-row"><span class="k">Entity grounding</span><span class="v">${a2.entity_grounding_precision ?? '—'}${ci(a2.entity_grounding_ci)}</span></div>`;
         html += `<div class="qs-row"><span class="k">Sampled</span><span class="v">${a2.sampled_edges} edges, ${a2.sampled_entities} entities</span></div>`;
+        if (a2.sampled_edges && a2.sampled_edges < 50) {
+          html += `<div class="qs-note">Small sample — the interval above is wide. Raise the sample size before reading a change as real.</div>`;
+        }
         if (a2.invalid_examples && a2.invalid_examples.length) {
           html += `<div class="qs-examples">Flagged as not meaningfully connected:<ul>` +
             a2.invalid_examples.slice(0, 3).map(ex => `<li>${ex}</li>`).join('') + `</ul></div>`;

@@ -63,7 +63,8 @@ def _print_report(report: dict) -> None:
         by_type = a2.get("edge_precision_by_type") or {}
         if by_type:
             print("      edge precision by type: " + "  ".join(
-                f"{rel}={value:.1%}" for rel, value in sorted(by_type.items(), key=lambda kv: kv[1])
+                f"{rel}={v['precision']:.1%} (n={v['sampled']})"
+                for rel, v in sorted(by_type.items(), key=lambda kv: kv[1]["precision"])
             ))
         # An interval, not just a point: a sampled run is not a measurement,
         # and two runs whose intervals overlap have not shown a difference.

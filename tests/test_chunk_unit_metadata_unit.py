@@ -109,3 +109,21 @@ def test_cyclic_containment_terminates():
     nodes = [_node("a", "A"), _node("b", "B")]
     _stamp_section_paths(nodes, [_contains("a", "b"), _contains("b", "a")])
     assert all(isinstance(n.section_path, str) for n in nodes)
+
+
+def test_page_node_continuation_is_found_in_body_text():
+    """Page nodes are titled positionally ("Page 41 (PDF 48)"), so a table
+    continued across pages carried its marker only in the body — the
+    motivating case, which title-only matching missed entirely while Region
+    nodes (Box 9) linked fine."""
+    def page(node_id: str, title: str, text: str) -> DKGNode:
+        return DKGNode(id=node_id, type=NodeType.PAGE, title=title, text=text, order=0)
+
+    nodes = [
+        page("p47", "Page 40 (PDF 47)", "Table A3. Use of Go.Data in WHO European Region.\nrows"),
+        page("p48", "Page 41 (PDF 48)", "Table A3. Use of Go.Data in WHO European Region. (Suite)\nrows"),
+        page("p49", "Page 42 (PDF 49)", "Table A4. Use of Go.Data in PAHO regions.\nrows"),
+    ]
+    _link_continuations(nodes)
+    assert [n.unit_id for n in nodes] == ["p47", "p47", None]
+    assert [n.unit_part for n in nodes] == [1, 2, 0]

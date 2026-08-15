@@ -593,8 +593,14 @@ def score_axis2_idea_linking(
         sampled_edges=len(edges_sample),
         sampled_entities=len(entities_sample),
         invalid_examples=invalid_examples,
+        # Precision AND the count behind it. A per-type rate without its
+        # denominator is unreadable: after a fix cut SAME_CATEGORY from ~25%
+        # of the edge population to ~6%, its "0.0%" came from about three
+        # sampled edges and said nothing at all, while looking like a
+        # catastrophic regression from 7.7%.
         edge_precision_by_type={
-            rel: ok / total for rel, (ok, total) in sorted(per_type.items()) if total
+            rel: {"precision": round(ok / total, 4), "sampled": total}
+            for rel, (ok, total) in sorted(per_type.items()) if total
         },
         edge_precision_ci=_wilson_interval(edge_valid, len(edges_sample)),
         entity_grounding_ci=_wilson_interval(entity_valid, len(entities_sample)),
