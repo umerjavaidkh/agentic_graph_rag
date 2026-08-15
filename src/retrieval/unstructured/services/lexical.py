@@ -10,7 +10,7 @@ import math
 import re
 from typing import Optional
 
-from ....graph.constants import DOCUMENT_ROOT_CYPHER
+from ....graph.constants import DOCUMENT_ROOT_CYPHER, INDEXED_NODE_CYPHER
 from ....graph.tenancy import tenant_filter
 from ....storage.hydrator import get_hydrator
 from ..constants import _TEXT_NODE_LABELS
@@ -286,27 +286,25 @@ class LexicalService:
         this without changing. Returns only the siblings; the hit itself is
         already in the candidate set.
 
-        BOTH matches carry a label filter, and that is not cosmetic. An
-        unlabelled MATCH scans every node in the database -- and because
-        Neo4j indexes are per-label, even `hit.id IN $ids` cannot use the id
-        index without one, so finding eight ids read all 550k nodes. Invisible
-        against a few thousand demo rows; once a large structured dataset
-        shared the graph, document questions stopped returning at all and the
-        request simply never completed. Fixing only one of the two matches
-        was not enough, which is why they are called out together here.
+        The labels are in the MATCH PATTERN, not a WHERE predicate, and the
+        difference is 155 seconds. `WHERE any(l IN labels(n) WHERE l IN $x)`
+        reads as a label filter but is an ordinary predicate: the planner
+        still starts from AllNodesScan and filters afterwards, so it cannot
+        use the id index either. Measured on a graph sharing 550k structured
+        nodes, this one call took 155.3s of a 165.2s query -- and an earlier
+        attempt that "added label filters" as WHERE predicates changed
+        nothing at all, which is why the pattern form is spelled out here.
         """
         ids = [i for i in item_ids if i]
         if not ids:
             return []
         rows = session.run(
             f"""
-            MATCH (hit)
-            WHERE any(l IN labels(hit) WHERE l IN $labels)
-              AND hit.id IN $ids
+            MATCH (hit:{INDEXED_NODE_CYPHER})
+            WHERE hit.id IN $ids
               AND coalesce(hit.unit_id, '') <> ''
-            MATCH (part)
-            WHERE any(l IN labels(part) WHERE l IN $labels)
-              AND part.unit_id = hit.unit_id
+            MATCH (part:{INDEXED_NODE_CYPHER})
+            WHERE part.unit_id = hit.unit_id
               AND part.revision_id = hit.revision_id
               AND part.id <> hit.id
               AND {tenant_filter("part")}
@@ -321,7 +319,6 @@ class LexicalService:
             LIMIT 12
             """,
             ids=ids,
-            labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
         )
         hydrator = get_hydrator()
