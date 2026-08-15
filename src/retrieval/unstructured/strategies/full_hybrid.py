@@ -369,6 +369,20 @@ class FullHybridStrategy:
                 items, keyword_hits, limit=max(1, int(fetch_limit))
             )
 
+        # Last: a hit that is one part of a multi-page unit brings the rest
+        # with it. Done here, after every pin, so it applies to whatever
+        # actually survived rather than to one strategy's candidates -- and
+        # so no retrieval query has to carry unit metadata itself.
+        siblings = self._neo4j_session_call(
+            self._lexical.expand_unit_siblings,
+            [i.get("id") for i in items if i.get("id")],
+            tenant_id=tenant_id,
+        )
+        if siblings:
+            items = self._ranking._merge_retrieval_chunks(items, siblings)[
+                : max(1, int(fetch_limit)) + len(siblings)
+            ]
+
         response = self._formatter.format(query, items, ctx=ctx)
         if mode_hint == "graph_rag_lexical":
             response["mode"] = "graph_rag_lexical"

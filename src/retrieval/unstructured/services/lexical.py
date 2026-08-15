@@ -269,6 +269,64 @@ class LexicalService:
             })
         return items
 
+    def expand_unit_siblings(
+        self, session, item_ids: list[str], tenant_id: str = ""
+    ) -> list[dict]:
+        """The other parts of any multi-chunk unit the hits belong to.
+
+        A table continued across pages is recorded at ingestion as one unit
+        (see Axis1StructuralBuilder._link_continuations). Retrieval still
+        matched a single page of it, so a question about the whole table was
+        answered from whichever part happened to rank -- a count over a
+        three-page table came back from one page, with nothing to say the
+        rest existed.
+
+        Looked up BY HIT ID rather than by reading unit_id off the hits, so
+        no retrieval query has to select the column and every strategy gets
+        this without changing. Returns only the siblings; the hit itself is
+        already in the candidate set.
+        """
+        ids = [i for i in item_ids if i]
+        if not ids:
+            return []
+        rows = session.run(
+            f"""
+            MATCH (hit) WHERE hit.id IN $ids
+              AND coalesce(hit.unit_id, '') <> ''
+            MATCH (part)
+            WHERE part.unit_id = hit.unit_id
+              AND part.revision_id = hit.revision_id
+              AND part.id <> hit.id
+              AND {tenant_filter("part")}
+            RETURN DISTINCT
+              coalesce(part.id, '') AS id,
+              coalesce(part.title, '') AS title,
+              part.blob_key_text AS blob_key_text,
+              coalesce(part.search_text, '') AS search_text,
+              part.page_start AS page_start,
+              coalesce(part.unit_part, 0) AS unit_part
+            ORDER BY unit_part
+            LIMIT 12
+            """,
+            ids=ids,
+            tenant_id=tenant_id,
+        )
+        hydrator = get_hydrator()
+        return [
+            {
+                "id": r["id"],
+                "title": r.get("title") or r["id"],
+                "text": hydrator.hydrate(r.get("blob_key_text"), r.get("search_text") or ""),
+                "page_start": r.get("page_start"),
+                # Ranked with the hit that pulled it in: a continuation is
+                # only here because its sibling earned a place.
+                "score": 9.0,
+                "related": ["via:unit_continuation"],
+            }
+            for r in rows
+            if r.get("id")
+        ]
+
     def quantity_evidence_retrieve(
         self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
     ) -> list[dict]:

@@ -24,6 +24,7 @@ if str(_root) not in sys.path:
 
 from src.document.patterns import (
     clean_heading_text,
+    continuation_base_title,
     number_depth,
     parent_number,
     parse_numbered_title,
@@ -161,3 +162,25 @@ def test_wrapped_title_collapses_to_one_line():
 def test_single_line_heading_ending_in_a_number_is_untouched():
     assert clean_heading_text("Box 9") == "Box 9"
     assert clean_heading_text("4.5 ENVIRONMENTAL PROTECTION") == "4.5 ENVIRONMENTAL PROTECTION"
+
+
+# ── continuation markers ("<title> (continued)") ────────────────────────────
+# A table spanning pages was several unrelated chunks, so a count over Table
+# A3 (pages 47-49) was answered from one page with no sign the rest existed.
+
+
+def test_continuation_marker_yields_the_base_title():
+    for marker in ("(Suite)", "(continued)", "(cont'd)", "continued"):
+        assert continuation_base_title(f"Table A3. Regions {marker}") == "Table A3. Regions"
+
+
+def test_title_without_a_marker_is_not_a_continuation():
+    assert continuation_base_title("Table A3. Regions") is None
+
+
+def test_trailing_period_alone_is_not_a_continuation():
+    """Punctuation is only trimmed once a marker is found — trimming
+    unconditionally made every title ending in a period a continuation of
+    itself, which silently linked unrelated chunks."""
+    assert continuation_base_title("Table A4. Something Else.") is None
+    assert continuation_base_title("Introduction.") is None

@@ -32,6 +32,7 @@ from ..document.page_numbers import enrich_page_nodes
 from ..document.patterns import (
     REFERENCE_PATTERN,
     clean_heading_text,
+    continuation_base_title,
     is_standalone_number,
     number_depth,
     parent_number,
@@ -137,6 +138,64 @@ def _page_buckets_from_chunks(chunks: list[Chunk]) -> dict[int, list[str]]:
     return buckets
 
 
+def _link_continuations(nodes: list[DKGNode]) -> None:
+    """Tie "<title> (continued)" chunks back to the chunk they continue, so a
+    table spanning pages is one addressable unit instead of several unrelated
+    ones (see continuation_base_title for the failure this fixes).
+
+    Walks in document order and links a continuation to the most recent node
+    carrying its base title. The base-title match is what makes this safe: a
+    marker alone would weld together any two chunks ending in "continued",
+    whereas this only links where the document itself repeated the title.
+    """
+    heads: dict[str, DKGNode] = {}
+    parts: dict[str, int] = {}
+    for node in nodes:
+        base = continuation_base_title(node.title)
+        if base is None:
+            heads[slug(node.title)] = node
+            continue
+        head = heads.get(slug(base))
+        if head is None:
+            continue
+        if not head.unit_id:
+            head.unit_id, head.unit_part = head.id, 1
+            parts[head.id] = 1
+        parts[head.unit_id] += 1
+        node.unit_id, node.unit_part = head.unit_id, parts[head.unit_id]
+
+
+def _stamp_section_paths(nodes: list[DKGNode], edges: list[DKGEdge]) -> None:
+    """Give every node the trail of ancestor titles that locates it.
+
+    A chunk knew its page and its own title but not which part of the
+    document it sat in, so nothing could tell one segment's table from
+    another's when both repeat the same row labels -- asked for
+    International Upstream's liquids production, retrieval returned a
+    sibling segment's figure, because at chunk level the two are
+    indistinguishable.
+
+    Derived from the CONTAINS edges already built, so this adds a pass over
+    existing structure rather than a second notion of hierarchy. The
+    document root is left out: every chunk shares it, so it locates nothing.
+    """
+    parent = {e.target_id: e.source_id for e in edges if e.rel_type == RelType.CONTAINS}
+    by_id = {n.id: n for n in nodes}
+    for node in nodes:
+        trail: list[str] = []
+        seen = {node.id}
+        current = parent.get(node.id)
+        while current and current not in seen:
+            seen.add(current)
+            ancestor = by_id.get(current)
+            if ancestor is None:
+                break
+            if ancestor.type != NodeType.DOCUMENT and (ancestor.title or "").strip():
+                trail.append(ancestor.title.strip())
+            current = parent.get(current)
+        node.section_path = " > ".join(reversed(trail))
+
+
 class Axis1StructuralBuilder:
     """Converts a DocumentIR into the structural (Axis 1) node/edge graph."""
 
@@ -144,8 +203,12 @@ class Axis1StructuralBuilder:
         self, ir: DocumentIR, chunks: list[Chunk]
     ) -> tuple[list[DKGNode], list[DKGEdge]]:
         if ir.toc is not None:
-            return self._build_from_toc(ir, chunks)
-        return self._build_from_extracts(ir, chunks)
+            nodes, edges = self._build_from_toc(ir, chunks)
+        else:
+            nodes, edges = self._build_from_extracts(ir, chunks)
+        _link_continuations(nodes)
+        _stamp_section_paths(nodes, edges)
+        return nodes, edges
 
     # ─────────────────────────────────────────
     # TOC-driven construction

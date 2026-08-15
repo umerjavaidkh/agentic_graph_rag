@@ -91,6 +91,55 @@ def score_page_text_as_toc(text: str) -> float:
     return min(1.0, score)
 
 
+TOC_PAGE_SCORE_FLOOR = 0.42
+
+
+def stitch_toc_run(
+    scored_pages: list[tuple[dict, float]], near: Optional[int] = None
+) -> Optional[dict]:
+    """The whole table of contents, not just its best-scoring page.
+
+    A TOC routinely runs over two or three pages, and only one page could
+    ever be returned before this -- so a question about the contents of a
+    document silently got a third of the answer, with nothing to indicate
+    the rest existed.
+
+    Pages above the floor that are ADJACENT to the best one are joined, and
+    the walk stops at the first gap. Contiguity is what separates one TOC
+    from another: a chapter-wise TOC deeper in the book is a different run,
+    and merging it into the document-level one would misrepresent both. When
+    several runs exist the FIRST is returned -- that is the document-level
+    TOC -- unless `near` points at one, and the run's earliest page is
+    reported as its location.
+    """
+    by_key = {
+        int(page.get("sort_key") or 0): page
+        for page, score in scored_pages
+        if score > TOC_PAGE_SCORE_FLOOR
+    }
+    if not by_key:
+        return None
+
+    runs: list[list[int]] = []
+    for key in sorted(by_key):
+        if runs and key == runs[-1][-1] + 1:
+            runs[-1].append(key)
+        else:
+            runs.append([key])
+
+    # Unscoped questions get the document-level TOC, which is the first run.
+    # A chapter's own TOC is only returned when the question points at it
+    # (`near`), because picking a deeper one for a general question would
+    # answer a question nobody asked.
+    run = min(runs, key=lambda r: abs(r[0] - near)) if near is not None else runs[0]
+    first = by_key[run[0]]
+    return {
+        **first,
+        "text": "\n\n".join((by_key[k].get("text") or "").strip() for k in run),
+        "page_count": len(run),
+    }
+
+
 def format_toc_chunk(
     *,
     body: str,

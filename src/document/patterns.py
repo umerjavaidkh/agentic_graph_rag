@@ -62,6 +62,37 @@ def parent_number(num_str: str) -> str | None:
     return f"{prefix}{'.'.join(parts[:-1])}"
 
 
+_CONTINUATION_MARKER = re.compile(
+    r"[\(\[]?\s*(?:continued|cont'?d\.?|suite|continuation)\s*[\)\]]?[\s.]*$",
+    re.I,
+)
+
+
+def continuation_base_title(title: str) -> str | None:
+    """The title this one continues ("Table A3. ... (Suite)" -> "Table A3.
+    ..."), or None when it is not a continuation.
+
+    A table running over several pages repeats its title with a marker on
+    each later page. Nothing recorded that relationship, so each page was an
+    independent chunk: asked how many institutions Table A3 listed -- a table
+    spanning three pages -- retrieval answered from one page and reported a
+    count with no sign it had seen a third of the table.
+
+    Requiring the marker AND a matching base title (the caller's job) is what
+    keeps this safe. A marker alone would weld together any two chunks that
+    happen to end in "continued"; matching the base title means the document
+    itself asserted the relationship.
+    """
+    text = (title or "").strip()
+    without_marker = _CONTINUATION_MARKER.sub("", text).strip()
+    if without_marker == text:
+        return None  # no marker: not a continuation, whatever else it ends in
+    # Trailing punctuation is only trimmed once a marker HAS been found --
+    # trimming unconditionally made every title ending in a period look like
+    # a continuation of itself.
+    return without_marker.rstrip(".,;:-–— ").strip() or None
+
+
 _PAGE_FURNITURE_LINE = re.compile(r"^\d{1,4}(?:\s*/\s*\d{1,4})?$")
 
 

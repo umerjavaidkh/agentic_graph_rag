@@ -23,6 +23,7 @@ from ..toc_retrieval import (
     format_toc_chunk,
     include_in_outline_fallback,
     score_page_text_as_toc,
+    stitch_toc_run,
     section_title_is_toc,
 )
 
@@ -120,6 +121,13 @@ class TocStrategy:
                 session, doc_id, pdf_page=pdf_page, doc_page=doc_page, tenant_id=tenant_id
             )
             if page_hit and (page_hit.get("text") or "").strip():
+                # A reference locates the TOC; it does not bound it. Stitch
+                # outward from the referenced page so pointing at page 40 of
+                # a chapter TOC returns that whole TOC, not page 40 of it.
+                run = self._toc_find_toc_pages(
+                    session, doc_id, tenant_id, near=page_hit.get("pdf_page")
+                )
+                page_hit = run or page_hit
                 return [
                     format_toc_chunk(
                         body=(page_hit["text"] or "").strip(),
@@ -130,7 +138,7 @@ class TocStrategy:
                     )
                 ], doc_id, doc_title
 
-        page_hit = self._toc_find_best_page(session, doc_id, tenant_id)
+        page_hit = self._toc_find_toc_pages(session, doc_id, tenant_id)
         if page_hit:
             return [
                 format_toc_chunk(
@@ -194,8 +202,9 @@ class TocStrategy:
         ).single()
         return dict(row) if row else None
 
-    def _toc_find_best_page(
-        self, session: Any, doc_id: Optional[str], tenant_id: str = ""
+    def _toc_find_toc_pages(
+        self, session: Any, doc_id: Optional[str], tenant_id: str = "",
+        near: Optional[int] = None,
     ) -> Optional[dict]:
         rows = session.run(
             f"""
@@ -204,28 +213,30 @@ class TocStrategy:
               AND {lifecycle_active("p")}
               AND {tenant_filter("p")}
               AND trim(coalesce(p.search_text, '')) <> ''
+              // Early pages catch the document-level TOC; the "contents"
+              // match reaches a chapter-wise TOC deeper in a book, which the
+              // early-page window alone could never see -- that is why a
+              // multi-TOC document always returned its first TOC.
+              AND (
+                coalesce(p.pdf_page, p.order, 9999) <= 40
+                OR toLower(coalesce(p.search_text, '')) CONTAINS 'contents'
+              )
             RETURN
               coalesce(p.search_text, '') AS text,
               p.pdf_page AS pdf_page,
               p.document_page AS document_page,
               coalesce(p.pdf_page, p.order, 9999) AS sort_key
             ORDER BY sort_key
-            LIMIT 40
+            LIMIT 120
             """,
             doc_id=doc_id,
             tenant_id=tenant_id,
         )
-        best: Optional[dict] = None
-        best_score = 0.42
-        for r in rows:
-            text = (r.get("text") or "").strip()
-            if not text:
-                continue
-            s = score_page_text_as_toc(text)
-            if s > best_score:
-                best_score = s
-                best = dict(r)
-        return best
+        return stitch_toc_run(
+            [(dict(r), score_page_text_as_toc((r.get("text") or "").strip()))
+             for r in rows if (r.get("text") or "").strip()],
+            near=near,
+        )
 
     def _toc_find_section(
         self, session: Any, doc_id: Optional[str], tenant_id: str = ""

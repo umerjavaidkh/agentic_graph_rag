@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 from src.retrieval.unstructured.toc_retrieval import (
     include_in_outline_fallback,
     score_page_text_as_toc,
+    stitch_toc_run,
     section_title_is_toc,
 )
 
@@ -127,3 +128,55 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ── multi-page and multi-TOC selection ──────────────────────────────────────
+# Only one page could ever be returned, so a TOC spanning three pages gave a
+# third of the answer with nothing to say the rest existed; and because the
+# scan was limited to the earliest pages, a book with chapter-wise TOCs always
+# returned the first one.
+
+
+def _page(key: int, text: str, score: float = 0.9) -> tuple[dict, float]:
+    return ({"sort_key": key, "text": text, "pdf_page": key}, score)
+
+
+def _body(key: int) -> tuple[dict, float]:
+    return ({"sort_key": key, "text": "ordinary prose", "pdf_page": key}, 0.1)
+
+
+def test_multi_page_toc_is_returned_whole():
+    hit = stitch_toc_run([_page(4, "A"), _page(5, "B"), _page(6, "C"), _body(7)])
+    assert hit["page_count"] == 3
+    assert ["A", "B", "C"] == [ln for ln in hit["text"].split("\n") if ln]
+
+
+def test_run_stops_at_the_first_gap():
+    """A later chapter TOC is a different run, not more of this one."""
+    hit = stitch_toc_run([_page(4, "MAIN"), _body(5), _page(40, "CH1")])
+    assert hit["text"] == "MAIN"
+    assert hit["page_count"] == 1
+
+
+def test_unscoped_question_gets_the_document_level_toc():
+    hit = stitch_toc_run([_page(4, "MAIN"), _body(5), _page(40, "CH1"), _page(41, "CH1b")])
+    assert hit["text"] == "MAIN"
+    assert hit["pdf_page"] == 4
+
+
+def test_reference_selects_that_chapters_toc_whole():
+    """The user points at a chapter TOC; they get all of it, not one page."""
+    hit = stitch_toc_run(
+        [_page(4, "MAIN"), _body(5), _page(40, "CH1"), _page(41, "CH1b")], near=40
+    )
+    assert hit["page_count"] == 2
+    assert "CH1" in hit["text"] and "CH1b" in hit["text"]
+
+
+def test_location_reported_is_the_start_of_the_run():
+    hit = stitch_toc_run([_page(4, "A"), _page(5, "B")], near=5)
+    assert hit["pdf_page"] == 4
+
+
+def test_no_page_clears_the_floor():
+    assert stitch_toc_run([_body(1), _body(2)]) is None
