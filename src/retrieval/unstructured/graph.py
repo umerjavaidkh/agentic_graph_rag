@@ -67,13 +67,18 @@ def _build_fast_unstructured_answer(chunks: list[dict]) -> str:
 
 
 def _fix_misrouted_structured_answer(answer: str, question: str) -> str:
-    """LLM sometimes mis-applies the Northwind redirect on document questions."""
+    """LLM sometimes mis-applies the structured-data redirect on document
+    questions."""
     if not _STRUCTURED_MISROUTE.search(answer or ""):
         return (answer or "").strip()
     if not has_document_cue(question):
         return (answer or "").strip()
     return (
-        "This is a document question (ingested PDF content), not the Northwind business database. "
+        # Names no dataset: this text reaches the user, and the structured
+        # graph is whatever schema happens to be loaded (it was Northwind,
+        # it is now an e-commerce dataset, it will be a customer's own).
+        # Naming one made the reply wrong for every other deployment.
+        "This is a document question (ingested PDF content), not the structured business database. "
         "I searched the ingested document sections but could not find the exact figure or detail you asked for. "
         "Try rephrasing with a section number or page reference if you have one."
     )

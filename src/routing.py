@@ -38,6 +38,11 @@ _DOCUMENT_GRAPH_LABELS = set(INDEXED_NODE_CYPHER.split("|")) | {
     DOC_REVISION_LABEL,
 }
 
+# RBAC and plumbing labels. Real nodes, but not business entities anyone
+# asks questions about -- advertising them invites the router to try
+# answering "how many users" from the access-control graph.
+_INTERNAL_LABELS = frozenset({"User", "Role", "Tenant", "DocRevision", "DocumentLogical", "Chunk"})
+
 _structured_entities_cache: Optional[str] = None
 
 
@@ -59,8 +64,22 @@ def structured_entity_summary() -> str:
 
         driver = get_neo4j_driver()
         with driver.session() as session:
-            rows = session.run("CALL db.labels() YIELD label RETURN label ORDER BY label")
-            labels = [r["label"] for r in rows if r["label"] not in _DOCUMENT_GRAPH_LABELS]
+            # Labels that actually have nodes, not db.labels(): Neo4j keeps a
+            # label in the schema after its last node is deleted, so a
+            # retired dataset goes on advertising itself. Verified live --
+            # after Northwind was cleared, db.labels() still returned
+            # Supplier and Address, which told the router LLM the graph could
+            # answer questions about suppliers and made "how many suppliers"
+            # route to a table that no longer exists.
+            rows = session.run(
+                "MATCH (n) UNWIND labels(n) AS label "
+                "RETURN DISTINCT label ORDER BY label"
+            )
+            labels = [
+                r["label"] for r in rows
+                if r["label"] not in _DOCUMENT_GRAPH_LABELS
+                and r["label"] not in _INTERNAL_LABELS
+            ]
         _structured_entities_cache = ", ".join(labels) if labels else "structured graph data"
     except Exception as exc:
         logger.debug("structured_entity_summary: schema lookup failed: %s", exc)
@@ -164,12 +183,17 @@ def resolve_mode_override(retrieval_mode: Optional[str]) -> str:
     key = (retrieval_mode or "").strip().lower()
     return MODE_TO_TOOL.get(key, MODE_TO_TOOL[DEFAULT_RETRIEVAL_MODE])
 
+# Analytics vocabulary only -- no domain nouns. The entity names that
+# indicate a structured question come from the LIVE schema instead (see
+# _schema_noun_pattern): this list previously hardcoded Northwind's
+# products/orders/customers/suppliers/categories, which meant swapping the
+# loaded dataset silently changed which questions routed correctly --
+# "suppliers" kept matching after Northwind was gone, while an e-commerce
+# graph's "sellers", "payments" and "reviews" matched nothing at all.
 _DATA_ROUTE = re.compile(
-    r"\b(?:products?|orders?|customers?|suppliers?|categories?|category|sales|"
-    r"revenue|profit|sold|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|"
-    r"cypher|neo4j|how\s+many\s+(?:orders?|products?|customers?|suppliers?|units?)|"
-    r"count\s+of\s+(?:orders?|products?|customers?|suppliers?)|"
-    r"belong\s+to\s+(?:the\s+)?\w+\s+categor|aggregate|schema|monthly|timeline|trend|"
+    r"\b(?:sales|revenue|profit|sold|top\s+\d+|best(?:\s+selling)?|most\s+(?:sold|popular)|"
+    r"cypher|neo4j|how\s+many|count\s+of|"
+    r"aggregate|schema|monthly|timeline|trend|"
     r"volume|chronological|"
     r"structured\s+(?:data|graph|query)|graph\s+(?:data|query|analytics)|"
     r"analytics|metrics?|tabular|database\s+query|query\s+(?:the\s+)?(?:graph|database))\b",
@@ -177,9 +201,40 @@ _DATA_ROUTE = re.compile(
 )
 
 
+def _schema_noun_pattern() -> Optional[re.Pattern]:
+    """The live graph's own entity names as a match pattern, or None when the
+    schema is unavailable.
+
+    Reuses the same label list structured_entity_summary() already fetches, so
+    a question naming any entity actually present ("sellers", "reviews",
+    "payments") routes to structured retrieval, and one naming an entity that
+    is NOT present does not. Plural forms are accepted because people ask
+    "how many sellers", not "how many seller".
+    """
+    summary = structured_entity_summary()
+    labels = [l.strip() for l in summary.split(",") if l.strip()]
+    if not labels or summary == "structured graph data":
+        return None
+    alts = "|".join(sorted((re.escape(l.lower()) + r"s?" for l in labels), key=len, reverse=True))
+    try:
+        return re.compile(rf"\b(?:{alts})\b", re.I)
+    except re.error:  # a label with regex-hostile characters
+        return None
+
+
 def is_structured_data_question(question: str) -> bool:
-    """Likely a structured graph / analytics query — not ingested PDF documents."""
-    return bool(_DATA_ROUTE.search(question or ""))
+    """Likely a structured graph / analytics query — not ingested PDF documents.
+
+    Two independent signals: domain-agnostic analytics vocabulary, and the
+    live graph's own entity names. Naming an entity that actually exists is
+    the stronger signal, and it is the one that adapts when the loaded schema
+    changes — which a fixed noun list cannot do.
+    """
+    text = question or ""
+    if _DATA_ROUTE.search(text):
+        return True
+    nouns = _schema_noun_pattern()
+    return bool(nouns and nouns.search(text))
 
 
 def is_misrouted_structured_question(question: str) -> bool:
