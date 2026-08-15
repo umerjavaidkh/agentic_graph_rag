@@ -1,0 +1,4 @@
+# Review comments contain CRLF *inside quoted fields* -- that is data, not line
+# endings. Leaving git to normalise it would rewrite the contents of those
+# fields, so these files are checked in and out byte-for-byte.
+*.csv -text

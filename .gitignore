@@ -53,3 +53,11 @@ sample_data_to_test/unstructured/textbooks/
 
 # Local screenshots/scratch images (README uses docs/images/)
 images/
+
+# Session / trace artifacts from local debugging runs. These accumulated in the
+# repo root untracked; nothing in the project reads them.
+agentic_rag_trace.json
+agentic_rag_session.jsonl
+agentic_graph_rag_trace.zip
+pytest_passed.txt
+*.patch

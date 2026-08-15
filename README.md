@@ -170,11 +170,18 @@ Try it in `/chat` with the dev sidebar (`master` branch, no sign-in required):
 Load the sample data:
 
 - **Documents** — drag a PDF from `sample_data_to_test/unstructured/` onto `/upload`.
-- **Structured** — the [Olist Brazilian e-commerce dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce) (~100k orders, 550k nodes):
+- **Structured** — a 4,000-order Olist e-commerce sample is **bundled in the repo**, so
+  there is no download and no Kaggle account needed:
 
   ```bash
-  python scripts/load_olist.py --source /path/to/olist-csv-dir --load
+  python scripts/load_olist.py --source sample_data_to_test/structured/olist-sample
   ```
+
+  For the full ~100k-order dataset (550k nodes), download it from
+  [Kaggle](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce) and point
+  `--source` at the unzipped directory. The sample is a referentially complete slice —
+  see [ATTRIBUTION.md](sample_data_to_test/structured/olist-sample/ATTRIBUTION.md) for
+  how it was cut and for its licence, which is **CC BY-NC-SA, not MIT like the code**.
 
 - **Your own tables** — CSV directory, Excel workbook, or SQLite file. Prints the schema and relationships it inferred and stops, so you can check the plan before anything is written:
 
@@ -226,6 +233,47 @@ they come back.
 - The Northwind dump is retained for now, and `docs/API.md` still carries one
   Northwind-era example URL.
 
+## How it scales
+
+Stated from the code rather than intent, because the two get confused easily.
+
+**Neo4j holds structure, not bulk.** `Neo4jExporter._node_to_param_dict` deliberately
+omits the full `text` body; nodes keep `search_text` (chunk-bounded, for lexical
+matching) plus `blob_key_text` / `vector_id` pointers. `_dual_write_chunk` writes the
+body to the blob store and the embedding to the vector store, and `Hydrator` fetches
+text back on the read path. Graph size therefore tracks **node and edge count**, not
+corpus bytes.
+
+**Axis-2 edge count is linear, not quadratic.** `_topk_edge_pairs` caps each node's
+degree via `_cap_edges_by_degree` (`AXIS2_MAX_SIMILARITY_EDGES_PER_NODE`, default 20),
+so edges grow as O(nodes × k). An earlier build used a flat similarity threshold with
+no per-node cap, which is what let a 7,165-node document emit 2.17M edges; that is
+fixed, and the cap is what makes corpus growth safe.
+
+**Axis-2 and chapter summaries run per document.** `GraphConstructionService` builds
+Axis-2 over one document's node list per ingestion job, so a corpus of N documents is N
+independent bounded builds — embarrassingly parallel, linear in N. The similarity matrix
+is O(n²) *within* a document, so the size that matters is the largest single document,
+not the size of the corpus.
+
+**Chapter summaries instead of community detection.** Ingested documents already carry
+author-provided structure, so `ChapterSummaryBuilder` summarises each Chapter from its
+own sections rather than discovering communities with Leiden — one bounded LLM call per
+chapter, no extra graph-algorithm dependency.
+
+### Known limits
+
+- **Both graphs share one Neo4j instance.** Business nodes and the document tree are
+  peers, and they interfere: loading 550k business nodes made an unlabelled document
+  query scan the whole store (155s, since fixed), and the structured metric picker had
+  to be taught to ignore document labels or it offered `Chapter.order` as a meaning of
+  "order" (`NON_BUSINESS_LABELS`).
+- **No cross-document semantic edges.** Because Axis-2 is per document, similarity links
+  and summaries never span documents. Corpus-level questions ("what themes recur across
+  these 500 filings") are not served by the graph today.
+- **Per-document ingestion cost.** Embeddings and NER run per document; throughput and
+  provider quotas, not graph size, are the practical ceiling on a large corpus.
+
 ## Tech stack
 
 | Layer                                       | Technology                                                                     |
@@ -260,7 +308,7 @@ they come back.
 | Chapter-level rollup summaries for broad "what does this document/chapter discuss" questions                                                                                                  | ✅                                                                                                       |
 | Deterministic structured eval — 12 cases across fact / aggregate / ranking / multihop / temporal / absence, ground truth computed from the graph by hand-written Cypher (`scripts/eval_structured.py`) | ✅ 11/12 — no LLM judge, so it costs nothing to run; the open case is documented in the script |
 | LLM-judge eval suites — 4 suites, 101 cases (structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ⚠️ last measured 95/101 against the Northwind sample; the two structured suites still target that schema and have not been re-pointed at Olist, so those numbers are stale |
-| Storage split — lean Neo4j (structure + pointers only), full text in MinIO, embeddings in Qdrant, `Hydrator` seam on the read path                                                            | 🚧 in progress, merging                                                                                  |
+| Storage split — lean Neo4j (structure, `search_text` and pointers only), full text in a blob store, embeddings in a vector store, `Hydrator` seam on the read path        | ✅ write-side strip and dual-write are in place and tested; `BLOB_STORE_BACKEND` / `VECTOR_STORE_BACKEND` still default to `local` / `memory`, so MinIO + Qdrant are opt-in |
 | Axis-2 semantic-edge precision (target ≥90% via sampled LLM-judge)                                                                                                                            | 🚧 in progress — structural graph (Axis-1) already scores ~99-100%, semantic linking is the open gap     |
 | 1000-document corpus validation, then a tagged release                                                                                                                                        | 🚧 in progress                                                                                           |
 | CI (tests on push/PR)                                                                                                                                                                         | 🚧 in progress                                                                                           |
