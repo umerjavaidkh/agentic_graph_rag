@@ -22,7 +22,12 @@ _root = Path(__file__).resolve().parents[1]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from src.document.patterns import number_depth, parent_number, parse_numbered_title
+from src.document.patterns import (
+    clean_heading_text,
+    number_depth,
+    parent_number,
+    parse_numbered_title,
+)
 
 
 # ── Dot-numbered scheme (regression -- must stay unchanged) ──────────────
@@ -94,3 +99,65 @@ def test_non_item_text_starting_with_a_number_word_is_not_matched():
     num, title = parse_numbered_title("3D printing is transforming manufacturing")
     assert num is None
     assert title == "3D printing is transforming manufacturing"
+
+
+# ── numbered-heading false positives on table rows ──────────────────────────
+# NUMBERED_HEADING accepts anything after a leading number, so a table's first
+# data cell was read as a section number and the rest of the row as its title.
+# Verified live on a 264-page 10-K: rows like "24 % 14,703 33 % 2,632" became
+# Section nodes whose title was the row text.
+
+
+def test_numeric_table_row_is_not_a_numbered_heading():
+    assert parse_numbered_title("24 % 14,703 33 % 2,632 16 % 2,779") == (
+        None,
+        "24 % 14,703 33 % 2,632 16 % 2,779",
+    )
+
+
+def test_row_of_bare_figures_is_not_a_numbered_heading():
+    assert parse_numbered_title("1,865 1,739 1,771")[0] is None
+    assert parse_numbered_title("12 5,416 5,494")[0] is None
+
+
+def test_real_numbered_headings_still_parse():
+    assert parse_numbered_title("4.5 ENVIRONMENTAL PROTECTION") == ("4.5", "ENVIRONMENTAL PROTECTION")
+    assert parse_numbered_title("1. Introduction") == ("1", "Introduction")
+    assert parse_numbered_title("2.3.1 OpenWHO") == ("2.3.1", "OpenWHO")
+
+
+def test_heading_containing_numbers_still_parses():
+    """Only essentially-numeric rows are rejected — a title that merely
+    contains figures is still a title."""
+    num, title = parse_numbered_title("4 Revenue in 2024 and 2025")
+    assert num == "4" and title == "Revenue in 2024 and 2025"
+
+
+# ── TOC/running-header page numbers leaking into titles ─────────────────────
+# TOC entries and running headers arrive with the page number on its own
+# trailing line, so it became part of the section title and made the title
+# multi-line. Measured on the rag_document fixture: Axis-1 titles 0.56 -> 0.93.
+
+
+def test_trailing_page_number_is_dropped():
+    assert clean_heading_text("MISSION STATEMENT\n2") == "MISSION STATEMENT"
+    assert clean_heading_text("CORPORATE COMPLIANCE POLICY 2025\n2 / 12") == (
+        "CORPORATE COMPLIANCE POLICY 2025"
+    )
+
+
+def test_leading_number_is_kept_as_the_section_number():
+    """Stripping from the front would throw away real structure — the common
+    two-line heading layout puts the number first."""
+    assert parse_numbered_title(
+        clean_heading_text("1\nCorporate COMPLIANCE at STRATEC\n4")
+    ) == ("1", "Corporate COMPLIANCE at STRATEC")
+
+
+def test_wrapped_title_collapses_to_one_line():
+    assert "\n" not in clean_heading_text("3\nKEY ELEMENTS\nUNDERSTANDING\n5")
+
+
+def test_single_line_heading_ending_in_a_number_is_untouched():
+    assert clean_heading_text("Box 9") == "Box 9"
+    assert clean_heading_text("4.5 ENVIRONMENTAL PROTECTION") == "4.5 ENVIRONMENTAL PROTECTION"
