@@ -62,6 +62,31 @@ def parent_number(num_str: str) -> str | None:
     return f"{prefix}{'.'.join(parts[:-1])}"
 
 
+_PAGE_FURNITURE_LINE = re.compile(r"^\d{1,4}(?:\s*/\s*\d{1,4})?$")
+
+
+def clean_heading_text(text: str) -> str:
+    """A heading block reduced to one line, with its trailing page number
+    dropped.
+
+    Table-of-contents entries and running headers arrive with the page number
+    on its own trailing line, and headings wrap: "MISSION STATEMENT / 2",
+    "CORPORATE COMPLIANCE POLICY 2025 / 2 / 12", "1 / Corporate COMPLIANCE at
+    STRATEC / 4". Left alone that page number becomes part of the section
+    title, and the newlines make the title multi-line -- which a heading never
+    is.
+
+    Only TRAILING numeric lines are dropped, never leading ones: a leading
+    number is the section number ("1 / Corporate COMPLIANCE at STRATEC" ->
+    number 1), and the common two-line heading layout puts the number first,
+    so stripping from the front would throw away real structure.
+    """
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    while len(lines) > 1 and _PAGE_FURNITURE_LINE.match(lines[-1]):
+        lines.pop()
+    return " ".join(lines)
+
+
 def _is_titlelike(candidate: str) -> bool:
     """Whether the text following a leading number reads as a title at all.
 

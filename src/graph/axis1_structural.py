@@ -31,6 +31,7 @@ from ..document.light.parser import _TABLE_OR_FIGURE
 from ..document.page_numbers import enrich_page_nodes
 from ..document.patterns import (
     REFERENCE_PATTERN,
+    clean_heading_text,
     is_standalone_number,
     number_depth,
     parent_number,
@@ -423,7 +424,7 @@ class Axis1StructuralBuilder:
             if is_heading:
                 finalize_section()
 
-                section_number, title = parse_numbered_title(text)
+                section_number, title = parse_numbered_title(clean_heading_text(text))
                 is_chapter = bool(section_number and number_depth(section_number) == 1)
                 level = structural_level(is_chapter, title, section_number)
 
