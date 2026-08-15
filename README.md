@@ -15,7 +15,7 @@
 | Loses document structure           | Hierarchy: Document → Chapter → Section → Page → Region     |
 | Guesses when context is missing    | Eval suite covers anti-hallucination and empty-result cases |
 
-The same user session can ask _"Top 5 products by revenue in 1997"_ (structured) and _"Which network deployed fellows to Greece and Kosovo?"_ (unstructured, multi-hop) — you pick `structured`/`unstructured`/`hybrid` per query (dropdown in the UI, `retrieval_mode` in the API), RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
+The same user session can ask _"Top 5 product categories by revenue"_ (structured) and _"Which network deployed fellows to Greece and Kosovo?"_ (unstructured, multi-hop) — you pick the source per query (**Documents** / **Structured data** tabs in the UI, `retrieval_mode` in the API), RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
 
 ![Two axes over one corpus: pages linked in reading order around the ring (Axis 1 — PRECEDES / FOLLOWS), and semantic edges cutting across the middle to connect related pages that are nowhere near each other in the document (Axis 2)](docs/images/Gemini_Generated_Image_y27bnoy27bnoy27b.png)
 
@@ -27,7 +27,7 @@ The same user session can ask _"Top 5 products by revenue in 1997"_ (structured)
 
 Agentic GraphRAG keeps **structured business data** and **unstructured documents** in the same graph database, with an explicit retrieval-mode switch — structured, unstructured, or hybrid — instead of an LLM guessing which one you meant. SQL-grade analytics _and_ multi-hop reasoning over PDFs/DOCX, without separate vector DBs, ETL pipelines, or ad-hoc orchestration glue, and without a misrouted question silently producing the wrong kind of answer.
 
-It brings **your own** Neo4j schema and **your own** documents: the query router reads the live graph schema at runtime rather than hardcoding a demo domain, so it isn't tied to the bundled Northwind + Go.Data sample data used below.
+It brings **your own** Neo4j schema and **your own** documents: the query router reads the live graph schema at runtime rather than hardcoding a demo domain, so it isn't tied to the bundled Olist + Go.Data sample data used below.
 
 Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, Anthropic (Claude), or Gemini** — pick with `MODEL_PROVIDER`; embeddings always use OpenAI. **Cost-effective by default, not just at ingestion**: chat/synthesis defaults to a low-cost model too (`gpt-4o-mini` on the default `openai` provider, `gemini-2.5-flash` on `gemini`) — not a frontier-tier model — so running the full pipeline end to end (ingest **and** chat) doesn't require frontier-model spend. Swap to a stronger model per-provider any time via `CHAT_MODEL` if you want it.
 
@@ -39,7 +39,7 @@ Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, A
 <tr>
 <td width="50%">
 
-**One chat, both retrieval modes.** The same session answers a structured Northwind query (`text2cypher` → live table) and an unstructured 10-K question (hybrid graph RAG → cited answer with a clickable source), each turn tagged with exactly which strategy, tool, and access level produced it.
+**One chat, both retrieval modes.** The same session answers a structured e-commerce query (`text2cypher` → live table) and an unstructured 10-K question (hybrid graph RAG → cited answer with a clickable source), each turn tagged with exactly which strategy, tool, and access level produced it.
 
 ![Agentic GraphRAG chat — structured and unstructured retrieval in one session](docs/images/chat_demo.png)
 
@@ -129,7 +129,9 @@ flowchart TB
   H --> UI
 ```
 
-The mode is set explicitly per query — by the caller (UI dropdown or API's `retrieval_mode` field), not inferred by an LLM — so a question can't silently get routed to the wrong knowledge source.
+The mode is set explicitly per query — by the caller (the **Documents** / **Structured data** tabs in the UI, or the API's `retrieval_mode` field), not inferred by an LLM — so a question can't silently get routed to the wrong knowledge source.
+
+The selected source is also the *only* source consulted. Structured and document retrieval each used to fall back to the other on a weak or empty result, which meant a question asked of the business data could come back as "this document does not cover it" — naming the wrong corpus, with no sign the other source had been searched. That crossover is now blocked (`routing.enforce_mode`).
 
 **Neo4j is a lean skeleton, not the content store.** For unstructured documents, Neo4j holds structure only — nodes (Document → Chapter → Section → Page → Region), `CONTAINS`/`PRECEDES` edges, titles, page numbers, entities, and a capped `search_text` snippet per node for lexical/graph matching. The **full page/section text lives in MinIO**, and **embeddings live in Qdrant** — Neo4j never stores either directly. Retrieval still runs entirely as Neo4j graph queries (vector seed lookup, full-text, graph expansion); only the final step — handing text to the LLM as context — goes through a `Hydrator` seam that resolves a node's blob pointer back to its full text (with a bounded in-process cache for repeat lookups within a query). This keeps the graph small and fast to query at scale while text/vectors live in stores built for them.
 
@@ -160,12 +162,30 @@ Try it in `/chat` with the dev sidebar (`master` branch, no sign-in required):
 
 | Track                                      | User ID          | Role                 | Try asking                                                |
 | ------------------------------------------ | ---------------- | -------------------- | --------------------------------------------------------- |
-| Structured (needs Northwind sample loaded) | `regular_001`    | `regular_office`     | _Top 5 products by sales revenue in 1997?_                |
+| Structured (needs Olist sample loaded)     | `regular_001`    | `regular_office`     | _What are the top 5 product categories by total revenue?_ |
 | Unstructured (needs a PDF ingested)        | `public_001`     | `public`             | _List the table of contents from the document._           |
 | Hybrid                                     | `compliance_001` | `compliance_officer` | _Show compliance incidents and summarize related policy._ |
 | Ingestion                                  | `admin_001`      | `admin`              | use `/upload`                                             |
 
-Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstructured/`, or upload `sample_data_to_test/structured/northwind-data.cypher` with `ALLOW_CYPHER_INGEST=true`).
+Load the sample data:
+
+- **Documents** — drag a PDF from `sample_data_to_test/unstructured/` onto `/upload`.
+- **Structured** — the [Olist Brazilian e-commerce dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce) (~100k orders, 550k nodes):
+
+  ```bash
+  python scripts/load_olist.py --source /path/to/olist-csv-dir --load
+  ```
+
+- **Your own tables** — CSV directory, Excel workbook, or SQLite file. Prints the schema and relationships it inferred and stops, so you can check the plan before anything is written:
+
+  ```bash
+  python scripts/load_tabular.py --source ./my-data      # dry run
+  python scripts/load_tabular.py --source ./my-data --load
+  ```
+
+Nodes carry the source they were loaded from, so `--clear` only removes rows that loader wrote and leaves other datasets in the same graph alone.
+
+A Northwind dump is still present at `sample_data_to_test/structured/northwind-data.cypher` (upload with `ALLOW_CYPHER_INGEST=true`), but the examples, eval and docs target Olist.
 
 ## Tech stack
 
@@ -198,7 +218,8 @@ Load the sample data via `/upload` (drag a PDF from `sample_data_to_test/unstruc
 | Google OIDC auth, RBAC, per-user thread isolation                                                                                                                                             | ✅ (`release/v1.0`)                                                                                      |
 | Streaming answers with charts, retrieval feedback loop                                                                                                                                        | ✅                                                                                                       |
 | Chapter-level rollup summaries for broad "what does this document/chapter discuss" questions                                                                                                  | ✅                                                                                                       |
-| Regression eval suite — 4 suites, 101 cases (Northwind structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ✅ 95/101 — remaining 6 are documented, known gaps (`notes` field in `eval/*.json`), not silent failures |
+| Deterministic structured eval — 12 cases across fact / aggregate / ranking / multihop / temporal / absence, ground truth computed from the graph by hand-written Cypher (`scripts/eval_structured.py`) | ✅ 11/12 — no LLM judge, so it costs nothing to run; the open case is documented in the script |
+| LLM-judge eval suites — 4 suites, 101 cases (structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ⚠️ last measured 95/101 against the Northwind sample; the two structured suites still target that schema and have not been re-pointed at Olist, so those numbers are stale |
 | Storage split — lean Neo4j (structure + pointers only), full text in MinIO, embeddings in Qdrant, `Hydrator` seam on the read path                                                            | 🚧 in progress, merging                                                                                  |
 | Axis-2 semantic-edge precision (target ≥90% via sampled LLM-judge)                                                                                                                            | 🚧 in progress — structural graph (Axis-1) already scores ~99-100%, semantic linking is the open gap     |
 | 1000-document corpus validation, then a tagged release                                                                                                                                        | 🚧 in progress                                                                                           |
