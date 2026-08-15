@@ -60,6 +60,10 @@ _BOX_LABEL = re.compile(
 # on a 10-K certification page each became a spurious Section titled after
 # the officer, an entity mention misread as document structure.
 _SIGNATURE_LINE_RE = re.compile(r"^/s/\s")
+# "Page 41 (PDF 48)" -- a positional title the builder generates itself,
+# carrying no content, so a continuation marker in the body is invisible to
+# any title-based check.
+_POSITIONAL_TITLE_RE = re.compile(r"^Page\s+\S+\s+\(PDF\s+\d+\)$", re.I)
 
 
 def _build_region_tags(
@@ -148,12 +152,31 @@ def _link_continuations(nodes: list[DKGNode]) -> None:
     marker alone would weld together any two chunks ending in "continued",
     whereas this only links where the document itself repeated the title.
     """
+    def _heading_of(node: DKGNode) -> str:
+        """The node's own heading -- its title, or the first line of its text
+        when the title is positional.
+
+        Page nodes are titled "Page 41 (PDF 48)", never from content, so a
+        table continued across pages carried its "(Suite)" marker only in the
+        body text and no continuation was ever detected -- the motivating
+        case for this whole feature. Region nodes (a Box, a detected table)
+        do take their title from the first line, which is why those linked
+        and pages did not.
+        """
+        title = (node.title or "").strip()
+        if title and not _POSITIONAL_TITLE_RE.match(title):
+            return title
+        return (node.text or node.search_text or "").strip().splitlines()[0].strip() if (
+            node.text or node.search_text
+        ) else title
+
     heads: dict[str, DKGNode] = {}
     parts: dict[str, int] = {}
     for node in nodes:
-        base = continuation_base_title(node.title)
+        heading = _heading_of(node)
+        base = continuation_base_title(heading)
         if base is None:
-            heads[slug(node.title)] = node
+            heads[slug(heading)] = node
             continue
         head = heads.get(slug(base))
         if head is None:
