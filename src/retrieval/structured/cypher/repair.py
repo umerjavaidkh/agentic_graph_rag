@@ -234,20 +234,19 @@ def fix_extra_paren_as_alias(cypher: str) -> str:
     return re.sub(r"\bAS\s+(\w+)\)\s+AS\s+", r"AS \1 AS ", cypher, flags=re.I)
 
 
-def fix_order_contains_property_access(cypher: str) -> str:
+def fix_relationship_property_access(cypher: str) -> str:
+    """Rewrite `node.REL_TYPE.field` to `var.field` when REL_TYPE is bound.
+
+    Cypher has no nested field access through a relationship, so this is
+    always a mistake. Keyed on the SCREAMING_SNAKE naming convention and on
+    what the query itself binds, rather than on one relationship name: the
+    previous version only recognised ORDER_CONTAINS bound as `li`, so the
+    same error under any other schema went unrepaired.
     """
-    Replace `node.ORDER_CONTAINS.field` with `li.field` when a ORDER_CONTAINS rel is bound as li.
-    """
-    if not re.search(r"\.ORDER_CONTAINS\.", cypher, re.I):
-        return cypher
-    if not re.search(r"\[li\s*:\s*ORDER_CONTAINS\]", cypher, re.I):
-        return cypher
-    return re.sub(
-        r"\b\w+\.ORDER_CONTAINS\.(\w+)\b",
-        r"li.\1",
-        cypher,
-        flags=re.I,
-    )
+    out = cypher or ""
+    for var, rel in re.findall(r"\[\s*(\w+)\s*:\s*([A-Z][A-Z0-9_]*)\s*\]", out):
+        out = re.sub(rf"\b\w+\.{re.escape(rel)}\.(\w+)\b", rf"{var}.\1", out)
+    return out
 
 
 def normalize_generated_cypher(cypher: str, schema: str) -> str:
@@ -257,7 +256,7 @@ def normalize_generated_cypher(cypher: str, schema: str) -> str:
         return fixed
     fixed = fix_extra_paren_as_alias(fixed)
     fixed = fix_with_missing_aliases(fixed)
-    fixed = fix_order_contains_property_access(fixed)
+    fixed = fix_relationship_property_access(fixed)
     fixed = fix_relationship_directions(fixed, schema)
     fixed = repair_schema_paths(fixed, schema)
     if MULTI_TENANCY_ENABLED:

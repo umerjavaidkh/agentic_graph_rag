@@ -102,7 +102,7 @@ _QUESTION_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 
 _WITH_MISSING_ALIAS_MSG = (
     "Cypher syntax: every expression in WITH must be aliased using AS "
-    "(e.g. `WITH p.productName AS productName`)."
+    "(e.g. `WITH n.<property> AS <alias>`)."
 )
 
 
@@ -306,6 +306,6 @@ def dropped_year_filter_issue(cypher: str, query: str) -> Optional[str]:
     return (
         f"This step re-matches the graph but is missing the date filter for {yrs} "
         f"that the question requires. Every step that traverses the graph MUST repeat "
-        f"the {yrs} filter (e.g. WHERE o.orderDate STARTS WITH '{first}'), or instead "
+        f"the {yrs} filter (e.g. WHERE <node>.<dateProperty> STARTS WITH '{first}'), or instead "
         f"UNWIND the prior step's already-filtered rows. Add the missing {yrs} filter."
     )

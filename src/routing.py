@@ -20,11 +20,7 @@ from .config.settings import (
     ROUTING_MODEL,
     estimate_route_max_tokens,
 )
-from .graph.constants import (
-    DOC_REVISION_LABEL,
-    DOCUMENT_LOGICAL_LABEL,
-    INDEXED_NODE_CYPHER,
-)
+from .graph.constants import NON_BUSINESS_LABELS
 from .model_providers.factory import get_chat_provider
 from .telemetry import get_telemetry, pipeline_step
 
@@ -33,15 +29,12 @@ logger = logging.getLogger(__name__)
 # Node labels that belong to the ingested-document tree, not the structured
 # business graph — excluded when summarizing "what's in the structured graph"
 # for router prompts, so that summary doesn't just list Document/Section/Page.
-_DOCUMENT_GRAPH_LABELS = set(INDEXED_NODE_CYPHER.split("|")) | {
-    DOCUMENT_LOGICAL_LABEL,
-    DOC_REVISION_LABEL,
-}
+_DOCUMENT_GRAPH_LABELS = NON_BUSINESS_LABELS
 
 # RBAC and plumbing labels. Real nodes, but not business entities anyone
 # asks questions about -- advertising them invites the router to try
 # answering "how many users" from the access-control graph.
-_INTERNAL_LABELS = frozenset({"User", "Role", "Tenant", "DocRevision", "DocumentLogical", "Chunk"})
+_INTERNAL_LABELS = NON_BUSINESS_LABELS
 
 _structured_entities_cache: Optional[str] = None
 

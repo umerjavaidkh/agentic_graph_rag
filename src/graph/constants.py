@@ -12,3 +12,15 @@ INDEXED_NODE_CYPHER = f"{DOCUMENT_ROOT_CYPHER}|Chapter|Section|Page|Region|Conce
 
 DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
 DOC_REVISION_LABEL = "DocRevision"
+
+
+# Labels that are never business entities: the document tree, plus RBAC and
+# plumbing nodes. Excluded wherever the question is "what does the STRUCTURED
+# graph hold" -- router summaries, and the metric candidates offered when a
+# question is ambiguous. Without this, a graph holding both documents and
+# business data offers `Chapter.order` as a candidate meaning of "order".
+NON_BUSINESS_LABELS = frozenset(
+    set(INDEXED_NODE_CYPHER.split("|"))
+    | {DOCUMENT_LOGICAL_LABEL, DOC_REVISION_LABEL}
+    | {"User", "Role", "Tenant", "Chunk"}
+)

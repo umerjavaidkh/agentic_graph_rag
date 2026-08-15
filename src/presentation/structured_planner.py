@@ -1,5 +1,5 @@
 """
-Build presentation blocks for structured Neo4j queries (Northwind, analytics, top-N, etc.).
+Build presentation blocks for structured Neo4j queries (analytics, top-N, etc.).
 """
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ _ANALYTICS = re.compile(
     r"products?|orders?|customers?)\b",
     re.I,
 )
+# Matched as SUFFIXES against whatever columns the query returned, so
+# `productName`, `company_name` and `category_label` all resolve without any
+# of them being listed. The previous version enumerated one schema's column
+# names, so every other dataset fell through to an opaque id.
 _LABEL_PRIORITY = (
     "month",
-    "productName",
-    "companyName",
-    "categoryName",
-    "customerName",
     "name",
     "title",
     "label",
@@ -42,10 +42,10 @@ _VALUE_PRIORITY = (
     "orders",
     "value",
 )
-_SKIP_VALUE_KEYS = re.compile(
-    r"(^|_)(id|uuid|key)$|productid|customerid|orderid|employeeid|supplierid|categoryid",
-    re.I,
-)
+# Identifiers are never the metric being charted. Suffix-based, so
+# `productId`, `customer_id` and `order_key` are all skipped without naming
+# any particular entity.
+_SKIP_VALUE_KEYS = re.compile(r"(^|_)?(id|uuid|key)$", re.I)
 
 
 def is_structured_analytics_query(question: str) -> bool:
@@ -101,8 +101,8 @@ def _pick_columns(rows: list[dict]) -> tuple[Optional[str], Optional[str], list[
 
     label_key = None
     for pref in _LABEL_PRIORITY:
-        if pref in stringish:
-            label_key = pref
+        label_key = next((k for k in stringish if k.lower().endswith(pref)), None)
+        if label_key:
             break
     if not label_key and stringish:
         label_key = stringish[0]

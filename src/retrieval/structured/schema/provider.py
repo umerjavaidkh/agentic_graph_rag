@@ -5,6 +5,8 @@ from typing import Optional
 
 from neo4j import Driver
 
+from ....graph.constants import NON_BUSINESS_LABELS
+
 
 def _parse_node_type_labels(node_type: str) -> list[str]:
     """"`:Order`" -> ["Order"]; "`:Label1`:`Label2`" (multi-label nodes) -> both."""
@@ -18,6 +20,9 @@ def _parse_node_type_labels(node_type: str) -> list[str]:
 
 # Enough to show the shape of a value, few enough to keep the prompt small
 # and to avoid pasting a whole free-text column into it.
+# As reported by db.schema.nodeTypeProperties().
+_NUMERIC_TYPES = frozenset({"Long", "Double", "Integer", "Float"})
+
 _EXAMPLES_PER_PROPERTY = 3
 _ROWS_SAMPLED_PER_LABEL = 25
 _MAX_VALUE_CHARS = 40
@@ -75,6 +80,7 @@ class SchemaProvider:
         self._cache: Optional[str] = None
         self._labels_cache: Optional[set[str]] = None
         self._props_cache: Optional[dict[str, set[str]]] = None
+        self._numeric_cache: Optional[set[tuple[str, str]]] = None
 
     def known_labels(self) -> set[str]:
         """Every node label actually present in the graph -- used to catch a
@@ -102,6 +108,16 @@ class SchemaProvider:
             self.fetch()
         return self._props_cache or {}
 
+    def numeric_properties(self) -> set[tuple[str, str]]:
+        """(label, property) pairs whose values are numeric.
+
+        Used to decide whether a question about an aggregate is genuinely
+        ambiguous in THIS graph, rather than assuming a fixed set of metrics.
+        """
+        if self._numeric_cache is None:
+            self.fetch()
+        return self._numeric_cache or set()
+
     def fetch(self) -> str:
         if self._cache is not None and self._labels_cache is not None:
             return self._cache
@@ -117,12 +133,21 @@ class SchemaProvider:
             nodes = [f"{r['nodeType']} {{{', '.join(r['properties'])}}}" for r in rows]
             labels: set[str] = set()
             props: dict[str, set[str]] = {}
+            numeric: set[tuple[str, str]] = set()
             for r in rows:
                 names = {p.split(":", 1)[0].strip() for p in r["properties"]}
+                numeric_names = {
+                    p.split(":", 1)[0].strip()
+                    for p in r["properties"]
+                    if p.split(":", 1)[-1].strip() in _NUMERIC_TYPES
+                }
                 for label in _parse_node_type_labels(r["nodeType"]):
                     labels.add(label)
                     props.setdefault(label, set()).update(names)
+                    if label not in NON_BUSINESS_LABELS:
+                        numeric.update((label, n) for n in numeric_names)
             self._labels_cache = labels
+            self._numeric_cache = numeric
 
             patterns_result = session.run(
                 """
@@ -168,3 +193,4 @@ class SchemaProvider:
         self._cache = None
         self._labels_cache = None
         self._props_cache = None
+        self._numeric_cache = None
