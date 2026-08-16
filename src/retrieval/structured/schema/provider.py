@@ -27,6 +27,81 @@ _EXAMPLES_PER_PROPERTY = 3
 _ROWS_SAMPLED_PER_LABEL = 25
 _MAX_VALUE_CHARS = 40
 
+# A property with few enough distinct values is an enum, and for an enum the
+# COMPLETE set belongs in the prompt rather than a sample. Sampling rows only
+# ever surfaces common values: order status 'canceled' is 0.6% of rows, so a
+# 25-row sample essentially never contains it, and a question about cancelled
+# orders was answered "there were no orders cancelled" from a filter matching
+# the British spelling against American data. 80 covers a status list, a
+# payment-type list, a country's states and a category list without
+# meaningfully enlarging the prompt.
+_ENUM_MAX_VALUES = 80
+# Cardinality needs a scan per label. Skipping the largest labels keeps
+# introspection bounded on a big graph; those are id-like columns anyway.
+_MAX_NODES_FOR_CARDINALITY = 2_000_000
+
+
+def _value_sets(session, labels: list[str], props: dict[str, set[str]]) -> list[str]:
+    """Complete value lists for enum-like properties, cardinality for the rest.
+
+    Two things the model cannot get from a sample. First, the full set of an
+    enum, so it filters on a value that exists rather than the wording the
+    question happened to use. Second, how many distinct values a property has
+    relative to the node count -- which is the only way to tell an identifier
+    from a grouping key. Olist gives every order a fresh `customer_id`, so
+    counting distinct customer_id returns the order count, and every
+    retention question answers "nobody bought twice". `unique_id` having
+    fewer distinct values than there are nodes is exactly that signal.
+
+    One scan per label: all the counts come from a single aggregate.
+    """
+    lines: list[str] = []
+    for label in labels:
+        # The document tree shares this database but is never the subject of a
+        # structured question, and enumerating its values tripled the prompt.
+        if label in NON_BUSINESS_LABELS:
+            continue
+        names = sorted(props.get(label, set()))
+        if not names:
+            continue
+        try:
+            total = session.run("MATCH (n:`%s`) RETURN count(n) AS c" % label).single()["c"]
+            if not total or total > _MAX_NODES_FOR_CARDINALITY:
+                continue
+            counts = ", ".join(
+                "count(DISTINCT n.`%s`) AS `%s`" % (n, n) for n in names
+            )
+            row = session.run("MATCH (n:`%s`) RETURN %s" % (label, counts)).single()
+        except Exception:
+            continue
+        for name in names:
+            d = row[name]
+            if d is None or d == 0:
+                continue
+            if d <= _ENUM_MAX_VALUES:
+                try:
+                    vals = [
+                        r["v"] for r in session.run(
+                            "MATCH (n:`%s`) WHERE n.`%s` IS NOT NULL "
+                            "RETURN DISTINCT n.`%s` AS v ORDER BY v" % (label, name, name)
+                        )
+                    ]
+                except Exception:
+                    continue
+                shown = ", ".join(repr(v)[:40] for v in vals)
+                lines.append(":%s.%s — all %d values: %s" % (label, name, d, shown))
+            elif d < total:
+                lines.append(
+                    ":%s.%s — %s distinct across %s nodes (repeats, so it groups)"
+                    % (label, name, format(d, ","), format(total, ","))
+                )
+            else:
+                lines.append(
+                    ":%s.%s — %s distinct across %s nodes (unique per node, an identifier)"
+                    % (label, name, format(d, ","), format(total, ","))
+                )
+    return lines
+
 
 def _sample_values(session, labels: list[str]) -> list[str]:
     """A few real string values per property, for the prompt.
@@ -175,6 +250,7 @@ class SchemaProvider:
                 rel_lines = ["(relationship properties unavailable)"]
 
             examples = _sample_values(session, sorted(labels))
+            value_sets = _value_sets(session, sorted(labels), props)
         self._props_cache = props
 
         schema = (
@@ -185,6 +261,10 @@ class SchemaProvider:
             "value in the question resembles one of these, filter on THAT property,\n"
             "not on a same-named property holding a different vocabulary):\n"
             + "\n".join(examples)
+            + ("\n\nVALUE SETS AND CARDINALITY (complete lists where a property is an\n"
+               "enum; for the rest, how many distinct values exist -- a property with\n"
+               "fewer distinct values than nodes repeats, so it groups rather than\n"
+               "identifies):\n" + "\n".join(value_sets) if value_sets else "")
         )
         self._cache = schema
         return schema

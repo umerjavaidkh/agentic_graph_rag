@@ -196,8 +196,15 @@ def list_scores(expected: list[str], answer: str) -> tuple[float, float, float]:
     categories in a different order has still answered the question. Ordering
     is a separate concern and would need its own case.
     """
-    low = (answer or "").lower()
-    found = [e for e in expected if e.lower() in low]
+    # Compare with separators flattened: the system writes "credit card"
+    # where the data stores "credit_card", and scoring that as a miss marks a
+    # correct answer wrong -- which is worse than a missed bug, because it
+    # sends you looking for a defect that is not there.
+    def _flat(t: str) -> str:
+        return re.sub(r"[\s_\-]+", " ", (t or "").lower())
+
+    low = _flat(answer)
+    found = [e for e in expected if _flat(str(e)) in low]
     # Precision needs a denominator of what the answer CLAIMED. Counting
     # comma/newline-separated fragments over-counts prose, so this uses the
     # expected-set size as the claim size -- precision and recall coincide
@@ -217,6 +224,10 @@ def run_case(session, case: Case, ctx: UserContext) -> dict[str, Any]:
     row: dict[str, Any] = {
         "id": case.id, "category": case.category, "expected": expected,
         "answer": answer[:160],
+        # The generated query, so a failure can be diagnosed from the saved
+        # results instead of being re-run -- re-running costs money and, since
+        # generation varies between runs, may not reproduce the failure at all.
+        "cypher": " ".join((((result or {}).get("sources") or [{}])[0].get("cypher") or "").split())[:400],
     }
     if _DENIED.search(answer):
         row.update(passed=False, error="access denied — check the eval user's RBAC role")

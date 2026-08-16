@@ -243,12 +243,42 @@ def fix_pattern_alias(cypher: str) -> str:
     one correct reading, and the LLM round-trip it replaces sometimes ran out
     of attempts and returned an error to the user instead of an answer.
     """
-    return re.sub(
+    out = cypher or ""
+
+    # `MATCH (:Label) AS r` -> `MATCH (r:Label)`: the alias becomes the binding.
+    out = re.sub(
         r"\bMATCH\s*\(\s*:\s*([A-Za-z_]\w*)\s*\)\s+AS\s+([A-Za-z_]\w*)",
-        r"MATCH (\2:\1)",
-        cypher or "",
-        flags=re.I,
+        r"MATCH (\2:\1)", out, flags=re.I,
     )
+
+    # An alias after a whole path -- `MATCH (a)-[:R]->(:Label) AS r` -- binds
+    # the trailing node, which is the only reading that leaves the rest of the
+    # query meaningful.
+    out = re.sub(
+        r"(\bMATCH\s+.*?)\(\s*:\s*([A-Za-z_]\w*)\s*\)\s+AS\s+([A-Za-z_]\w*)",
+        r"\1(\3:\2)", out, flags=re.I,
+    )
+
+    # `MATCH (r:Label) AS x` -> `MATCH (r:Label)`, and every later `x.` becomes
+    # `r.`. Dropping the alias alone would leave the RETURN clause referring to
+    # a variable that no longer exists -- trading a syntax error for a
+    # different one.
+    def _rebind(m: re.Match[str]) -> str:
+        return m.group(1)
+
+    pattern = re.compile(
+        r"(\bMATCH\s*\(\s*([A-Za-z_]\w*)\s*:\s*[A-Za-z_]\w*[^)]*\))\s+AS\s+([A-Za-z_]\w*)",
+        re.I,
+    )
+    while True:
+        m = pattern.search(out)
+        if not m:
+            break
+        var, alias = m.group(2), m.group(3)
+        out = out[: m.start()] + m.group(1) + out[m.end():]
+        if alias != var:
+            out = re.sub(r"\b%s\." % re.escape(alias), "%s." % var, out)
+    return out
 
 
 def fix_relationship_property_access(cypher: str) -> str:

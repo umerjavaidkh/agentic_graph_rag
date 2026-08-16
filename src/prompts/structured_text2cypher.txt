@@ -10,13 +10,22 @@ GRAPH SCHEMA:
 
 OUTPUT:
 - Return ONLY the Cypher query, no explanation, no markdown
-- If nothing in the schema represents what the question asks about, do not
-  answer with a different property that happens to hold numbers. Return
-  exactly: NO_SUCH_DATA: <the thing that is missing>
-  A wrong figure is worse than no figure, because the reader cannot tell them
-  apart. Only use this when the concept is genuinely absent -- not when it is
-  merely computed from other properties (revenue from a price field, a count
-  from a relationship).
+- Almost every business metric is DERIVED, not stored. Revenue, totals,
+  averages, rates, shares, counts, durations and percentages are computed
+  from a price, a value, a timestamp or a relationship. Before concluding
+  anything is missing, work out whether the schema holds the quantity the
+  metric is made of.
+- Only if it does not, return exactly: NO_SUCH_DATA: <the thing that is
+  missing>. That is for a subject with no basis in the schema at all -- an
+  entity type that does not exist, an attribute nothing records. It is NOT
+  for a figure you would have to calculate.
+  The reverse error is just as bad: a number of the right shape is not the
+  answer. Never aggregate a property whose MEANING differs from what was
+  asked, however numeric it is -- a weight is not a cost, a timestamp is not
+  a salary, a photo count is not a rating, and revenue is not profit. Check
+  that the property you are summing measures the thing named in the question.
+  If the schema has no such input, say so rather than returning a different
+  quantity under the asked-for name.
 
 USING THE SCHEMA:
 - Use only labels, relationships and properties that appear in the schema
@@ -32,6 +41,12 @@ USING THE SCHEMA:
   never attach a relationship to a label absent from that pattern
 - If an entity is not its own node here, it may be a property on a related
   node. Group or filter on that property instead of inventing a label
+- Counting real-world entities: group by the PROPERTY that identifies them,
+  not by the node. VALUE SETS AND CARDINALITY says which is which -- a
+  property with fewer distinct values than there are nodes repeats, so it is
+  the natural key, while one with exactly as many is a per-row id. Graphs
+  loaded from transactional tables often carry one node per transaction, so
+  grouping by the node makes every entity look like it appears once
 - Match text values case-insensitively with toLower() and CONTAINS. When two
   properties hold the same concept in different forms (a code and a label, or
   two languages), match against the one whose values look like the value in

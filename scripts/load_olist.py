@@ -62,7 +62,7 @@ STRUCTURED_LABELS = [
 LEGACY_LABELS = ["Supplier", "Address"]
 
 CONSTRAINTS = [
-    "CREATE CONSTRAINT olist_customer IF NOT EXISTS FOR (n:Customer) REQUIRE n.customer_id IS UNIQUE",
+    "CREATE CONSTRAINT olist_customer IF NOT EXISTS FOR (n:Customer) REQUIRE n.unique_id IS UNIQUE",
     "CREATE CONSTRAINT olist_order    IF NOT EXISTS FOR (n:Order)    REQUIRE n.order_id IS UNIQUE",
     "CREATE CONSTRAINT olist_item     IF NOT EXISTS FOR (n:OrderItem) REQUIRE n.item_key IS UNIQUE",
     "CREATE CONSTRAINT olist_product  IF NOT EXISTS FOR (n:Product)  REQUIRE n.product_id IS UNIQUE",
@@ -144,9 +144,24 @@ def main() -> None:
              "UNWIND $rows AS r MERGE (c:Category {name: r.name}) SET c.name_english = r.en",
              lambda r: {"name": r["product_category_name"], "en": r["product_category_name_english"]})
 
+        # Keyed on unique_id, the PERSON -- not customer_id, which Olist
+        # reissues for every order. Modelling a node per customer_id makes the
+        # graph say there are 99,441 customers who each bought exactly once,
+        # so "how many customers", "repeat purchase rate" and "orders per
+        # customer" are all wrong and none of them look wrong. The real
+        # figures are 96,096 people and a 3.12% repeat rate.
+        # customer_id is kept as order_ref so orders can still be joined.
+        # customer_id -> unique_id, so orders can be attached to the person.
+        # Held in memory rather than resolved in Cypher: the alternative is a
+        # second lookup node per order purely to bridge the two ids.
+        person_of = {
+            r["customer_id"]: r["customer_unique_id"]
+            for r in rows(src / "olist_customers_dataset.csv")
+        }
+
         load(s, "customers", src / "olist_customers_dataset.csv",
-             """UNWIND $rows AS r MERGE (c:Customer {customer_id: r.id})
-                SET c.unique_id = r.uid, c.zip_prefix = r.zip, c.city = r.city, c.state = r.state""",
+             """UNWIND $rows AS r MERGE (c:Customer {unique_id: r.uid})
+                SET c.order_ref = r.id, c.zip_prefix = r.zip, c.city = r.city, c.state = r.state""",
              lambda r: {"id": r["customer_id"], "uid": r["customer_unique_id"],
                         "zip": r["customer_zip_code_prefix"], "city": r["customer_city"],
                         "state": r["customer_state"]})
@@ -173,8 +188,8 @@ def main() -> None:
                                           ELSE datetime(replace(r.delivered, ' ', 'T')) END,
                     o.estimated_delivery = CASE WHEN r.estimated = '' THEN null
                                                 ELSE datetime(replace(r.estimated, ' ', 'T')) END
-                WITH o, r MATCH (c:Customer {customer_id: r.customer}) MERGE (c)-[:PLACED]->(o)""",
-             lambda r: {"id": r["order_id"], "customer": r["customer_id"], "status": r["order_status"],
+                WITH o, r MATCH (c:Customer {unique_id: r.customer}) MERGE (c)-[:PLACED]->(o)""",
+             lambda r: {"id": r["order_id"], "customer": person_of.get(r["customer_id"]), "status": r["order_status"],
                         "purchased": r["order_purchase_timestamp"],
                         "delivered": r["order_delivered_customer_date"],
                         "estimated": r["order_estimated_delivery_date"]})
