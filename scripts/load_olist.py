@@ -61,8 +61,20 @@ STRUCTURED_LABELS = [
 # reads the live label list.
 LEGACY_LABELS = ["Supplier", "Address"]
 
+# Constraints that no longer match the model. `CREATE CONSTRAINT <name> IF NOT
+# EXISTS` keys on the NAME, not the property, so re-pointing a key while
+# keeping the name silently leaves the old constraint in place and creates no
+# index for the new one. Moving Customer from customer_id to unique_id that way
+# left every MERGE doing a full label scan -- a load that had taken about a
+# minute was still running after twenty. Dropped explicitly, and the names
+# below now carry the property so the same edit cannot go unnoticed again.
+STALE_CONSTRAINTS = [
+    "DROP CONSTRAINT olist_customer IF EXISTS",
+    "DROP CONSTRAINT Customer_customerID IF EXISTS",
+]
+
 CONSTRAINTS = [
-    "CREATE CONSTRAINT olist_customer IF NOT EXISTS FOR (n:Customer) REQUIRE n.unique_id IS UNIQUE",
+    "CREATE CONSTRAINT olist_customer_unique_id IF NOT EXISTS FOR (n:Customer) REQUIRE n.unique_id IS UNIQUE",
     "CREATE CONSTRAINT olist_order    IF NOT EXISTS FOR (n:Order)    REQUIRE n.order_id IS UNIQUE",
     "CREATE CONSTRAINT olist_item     IF NOT EXISTS FOR (n:OrderItem) REQUIRE n.item_key IS UNIQUE",
     "CREATE CONSTRAINT olist_product  IF NOT EXISTS FOR (n:Product)  REQUIRE n.product_id IS UNIQUE",
@@ -136,6 +148,8 @@ def main() -> None:
                         break
             print("  cleared existing structured graph")
 
+        for c in STALE_CONSTRAINTS:
+            s.run(c)
         for c in CONSTRAINTS:
             s.run(c)
 
@@ -150,7 +164,11 @@ def main() -> None:
         # so "how many customers", "repeat purchase rate" and "orders per
         # customer" are all wrong and none of them look wrong. The real
         # figures are 96,096 people and a 3.12% repeat rate.
-        # customer_id is kept as order_ref so orders can still be joined.
+        # customer_id is deliberately NOT stored. A person has many of them,
+        # so the node could only hold one arbitrary value -- and a property
+        # that looks like an order reference but is not made a repeat-rate
+        # query count DISTINCT order_ref per person, which is always 1, and
+        # report that nobody buys twice. Orders join through PLACED.
         # customer_id -> unique_id, so orders can be attached to the person.
         # Held in memory rather than resolved in Cypher: the alternative is a
         # second lookup node per order purely to bridge the two ids.
@@ -161,7 +179,7 @@ def main() -> None:
 
         load(s, "customers", src / "olist_customers_dataset.csv",
              """UNWIND $rows AS r MERGE (c:Customer {unique_id: r.uid})
-                SET c.order_ref = r.id, c.zip_prefix = r.zip, c.city = r.city, c.state = r.state""",
+                SET c.zip_prefix = r.zip, c.city = r.city, c.state = r.state""",
              lambda r: {"id": r["customer_id"], "uid": r["customer_unique_id"],
                         "zip": r["customer_zip_code_prefix"], "city": r["customer_city"],
                         "state": r["customer_state"]})

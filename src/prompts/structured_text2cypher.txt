@@ -69,7 +69,10 @@ CYPHER SYNTAX:
 
 NUMBERS AND DATES:
 - Wrap numeric fields with toFloat() or toInteger() before arithmetic, since
-  imported columns are often stored as strings
+  imported columns are often stored as strings. This applies to NUMBERS only:
+  a property typed DateTime is already a temporal value, and converting one
+  through toInteger()/epochMillis is a type error, not a safety measure --
+  pass it straight to duration.inDays() or compare it directly
 - Revenue and totals: sum the monetary property the schema actually has,
   multiplying by a quantity property only when one exists
 - Use COUNT(DISTINCT node) when counting entities that repeat across joins

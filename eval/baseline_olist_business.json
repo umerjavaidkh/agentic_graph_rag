@@ -4,27 +4,31 @@
     "category": "operational",
     "expected": 99441,
     "answer": "There are 99,441 orders in the database.",
+    "cypher": "MATCH (o:Order) RETURN count(DISTINCT o) AS order_count",
     "passed": true
   },
   {
     "id": "ops_total_customers",
     "category": "operational",
     "expected": 96096,
-    "answer": "A total of 99,441 distinct customers have placed orders.",
-    "passed": false
+    "answer": "A total of 96,096 distinct customers have placed orders.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(:Order) RETURN COUNT(DISTINCT c.unique_id) AS distinct_customers_placed_orders",
+    "passed": true
   },
   {
     "id": "ops_total_products",
     "category": "operational",
     "expected": 32951,
     "answer": "There are 32,951 distinct products in the catalogue.",
+    "cypher": "MATCH (p:Product) RETURN count(DISTINCT p.product_id) AS product_count",
     "passed": true
   },
   {
     "id": "ops_total_sellers",
     "category": "operational",
     "expected": 3095,
-    "answer": "There are 3,095 distinct sellers on the platform.",
+    "answer": "There are 3,095 sellers on the platform.",
+    "cypher": "MATCH (s:Seller) RETURN COUNT(DISTINCT s.seller_id) AS seller_count",
     "passed": true
   },
   {
@@ -32,20 +36,23 @@
     "category": "operational",
     "expected": 13591644.0,
     "answer": "The total revenue from all order items is approximately 13,591,643.70.",
+    "cypher": "MATCH (:Order)-[:CONTAINS]->(oi:OrderItem) RETURN sum(toFloat(oi.price)) AS total_revenue",
     "passed": true
   },
   {
     "id": "ops_total_freight",
     "category": "operational",
     "expected": 2251910.0,
-    "answer": "The total freight charged across all order items is approximately 2,251,909.54.",
+    "answer": "The total freight charged across all order items is 2,251,909.54.",
+    "cypher": "MATCH (:Order)-[:CONTAINS]->(oi:OrderItem) RETURN sum(toFloat(oi.freight)) AS total_freight",
     "passed": true
   },
   {
     "id": "ops_aov",
     "category": "operational",
     "expected": 137.75,
-    "answer": "The average order value, calculated as the total price of all items within each order, is 137.75.",
+    "answer": "The average order value, calculated by summing the prices of all items in each order, is 137.75.",
+    "cypher": "MATCH (o:Order)-[:CONTAINS]->(oi:OrderItem) WITH o.order_id AS orderId, sum(toFloat(oi.price)) AS orderTotal RETURN round(avg(orderTotal), 2) AS average_order_value",
     "passed": true
   },
   {
@@ -53,6 +60,7 @@
     "category": "operational",
     "expected": 1.14,
     "answer": "On average, there is 1 item per order.",
+    "cypher": "MATCH (o:Order)-[:CONTAINS]->(oi:OrderItem) WITH o, count(oi) AS itemsPerOrder RETURN round(avg(itemsPerOrder)) AS average_items_per_order",
     "passed": false
   },
   {
@@ -60,6 +68,7 @@
     "category": "operational",
     "expected": 45101,
     "answer": "In 2017, a total of 45,101 orders were placed.",
+    "cypher": "MATCH (o:Order) WHERE o.purchased_at >= datetime('2017-01-01T00:00:00') AND o.purchased_at < datetime('2018-01-01T00:00:00') RETURN count(DISTINCT o.order_id) AS orders_placed_2017",
     "passed": true
   },
   {
@@ -67,48 +76,55 @@
     "category": "operational",
     "expected": 54011,
     "answer": "In 2018, a total of 54,011 orders were placed.",
+    "cypher": "MATCH (o:Order) WHERE o.purchased_at >= datetime('2018-01-01T00:00:00') AND o.purchased_at < datetime('2019-01-01T00:00:00') RETURN count(DISTINCT o.order_id) AS orders_placed_2018",
     "passed": true
   },
   {
     "id": "ops_revenue_2017",
     "category": "operational",
     "expected": 6155807.0,
-    "answer": "The dataset does not contain revenue information, so I cannot provide the total revenue for 2017.",
-    "passed": false
+    "answer": "The total revenue in 2017 was 6,155,807.0.",
+    "cypher": "MATCH (:Order)-[:CONTAINS]->(oi:OrderItem) WHERE oi.price IS NOT NULL AND substring(toString(oi.price),0,1) <> '' // ensure price exists WITH oi MATCH (o:Order)-[:CONTAINS]->(oi) WHERE o.purchased_at >= datetime('2017-01-01T00:00:00') AND o.purchased_at < datetime('2018-01-01T00:00:00') RETURN round(sum(toFloat(oi.price))) AS total_revenue_2017",
+    "passed": true
   },
   {
     "id": "ops_max_item_price",
     "category": "operational",
     "expected": 6735.0,
-    "answer": "The highest price paid for a single order item is 6,735.",
+    "answer": "The highest price paid for a single order item is 6,735.0.",
+    "cypher": "MATCH (oi:OrderItem) RETURN max(toFloat(oi.price)) AS highest_price_paid_for_single_order_item",
     "passed": true
   },
   {
     "id": "del_avg_days",
     "category": "delivery",
     "expected": 12.09,
-    "answer": "On average, 12 days pass between the purchase and delivery of an order.",
-    "passed": true
+    "answer": "I couldn't run that query successfully.\n\nGenerated Cypher failed: {neo4j_code: Neo.ClientError.Statement.TypeError} {message: Invalid input for function 'toInte",
+    "cypher": "MATCH (o:Order) WHERE o.purchased_at IS NOT NULL AND o.delivered_at IS NOT NULL WITH o, datetime({epochMillis: toInteger(o.purchased_at)}) AS purchasedDate WITH avg(duration.inDays(purchasedDate, o.delivered_at).days) AS avgDays RETURN round(avgDays) AS average_days_passed_between_purchase_and_delivery",
+    "passed": false
   },
   {
     "id": "del_late_count",
     "category": "delivery",
     "expected": 7827,
     "answer": "There were 7,826 orders that were delivered later than their estimated delivery date.",
+    "cypher": "MATCH (o:Order) WHERE o.status = 'delivered' AND o.delivered_at > o.estimated_delivery RETURN count(DISTINCT o) AS orders_delivered_late",
     "passed": true
   },
   {
     "id": "del_ontime_rate",
     "category": "delivery",
     "expected": 91.89,
-    "answer": "Approximately 91.89% of delivered orders arrived on or before the estimated delivery date.",
+    "answer": "About 91.89% of delivered orders arrived on or before their estimated delivery date.",
+    "cypher": "MATCH (o:Order) WHERE toLower(o.status) = 'delivered' AND o.delivered_at IS NOT NULL AND o.estimated_delivery IS NOT NULL WITH COUNT(o) AS totalDelivered, COUNT(CASE WHEN o.delivered_at <= o.estimated_delivery THEN 1 END) AS onTimeDelivered RETURN CASE WHEN totalDelivered = 0 THEN 0 ELSE toFloat(onTimeDelivered) / toFloat(totalDelivered) * 100 END AS percentageOnTimeDelivered",
     "passed": true
   },
   {
     "id": "del_avg_days_late",
     "category": "delivery",
     "expected": 8.87,
-    "answer": "For orders that arrived late, they were on average 9 days late.",
+    "answer": "On average, orders that arrived late were 9 days late.",
+    "cypher": "MATCH (o:Order) WHERE o.status = 'delivered' AND o.delivered_at > o.estimated_delivery WITH duration.inDays(o.estimated_delivery, o.delivered_at) AS daysLate RETURN round(avg(daysLate.days)) AS average_days_late",
     "passed": false
   },
   {
@@ -117,7 +133,8 @@
     "expected": [
       "AM"
     ],
-    "answer": "The customer state with the longest average delivery time, considering only states with more than 100 delivered orders, is Amazonas (AM), with an average delive",
+    "answer": "The customer state with the longest average delivery time, considering only states with more than 100 delivered orders, is Amazonas (AM) with an average deliver",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WHERE toLower(o.status) = 'delivered' AND o.delivered_at IS NOT NULL AND o.purchased_at IS NOT NULL WITH c.state AS state, duration.inDays(o.purchased_at, o.delivered_at).days AS delivery_days, o WITH state, avg(toFloat(delivery_days)) AS avg_delivery_days, count(o) AS delivered_orders_count WHERE delivered_orders_count > 100 RETURN state, avg_delivery_days ",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -129,7 +146,8 @@
     "expected": [
       "SP"
     ],
-    "answer": "The customer state with the shortest average delivery time, considering only states with more than 100 delivered orders, is S\u00e3o Paulo (SP), with an average deli",
+    "answer": "The customer state with the shortest average delivery time, considering only states with more than 100 delivered orders, is S\u00e3o Paulo (SP) with an average deliv",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WHERE o.status = 'delivered' AND o.delivered_at IS NOT NULL AND o.purchased_at IS NOT NULL WITH c.state AS state, o, duration.inDays(o.purchased_at, o.delivered_at) AS deliveryDuration WITH state, avg(toFloat(deliveryDuration.days) + toFloat(deliveryDuration.hours)/24.0 + toFloat(deliveryDuration.minutes)/1440.0) AS avgDeliveryTime, count(o) AS deliveredOrde",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -140,13 +158,15 @@
     "category": "delivery",
     "expected": 2965,
     "answer": "There are 2,965 orders that have no delivery date recorded.",
+    "cypher": "MATCH (o:Order) WHERE o.delivered_at IS NULL RETURN count(DISTINCT o) AS orders_without_delivery_date",
     "passed": true
   },
   {
     "id": "del_max_days",
     "category": "delivery",
     "expected": 209,
-    "answer": "The longest time any order took to be delivered was 210 days.",
+    "answer": "The longest time any order took to be delivered was 209 days.",
+    "cypher": "MATCH (o:Order) WHERE o.delivered_at IS NOT NULL AND o.purchased_at IS NOT NULL WITH duration.inDays(o.purchased_at, o.delivered_at).days AS deliveryDays RETURN MAX(deliveryDays) AS longest_delivery_days",
     "passed": true
   },
   {
@@ -154,48 +174,55 @@
     "category": "delivery",
     "expected": 55274,
     "answer": "In 2018, a total of 55,273 orders were delivered.",
+    "cypher": "MATCH (o:Order) WHERE o.status = 'delivered' AND date(o.delivered_at) >= date('2018-01-01') AND date(o.delivered_at) < date('2019-01-01') RETURN count(DISTINCT o.order_id) AS delivered_orders_2018",
     "passed": true
   },
   {
     "id": "del_late_2017",
     "category": "delivery",
     "expected": 2878,
-    "answer": "In 2017, there were 2,878 orders that were delivered after the estimated delivery date.",
+    "answer": "In 2017, there were 2,878 orders that were delivered later than the estimated delivery date.",
+    "cypher": "MATCH (o:Order) WHERE o.purchased_at >= datetime('2017-01-01T00:00:00') AND o.purchased_at < datetime('2018-01-01T00:00:00') AND o.delivered_at > o.estimated_delivery RETURN count(DISTINCT o) AS orders_delivered_late_2017",
     "passed": true
   },
   {
     "id": "del_avg_days_sp",
     "category": "delivery",
     "expected": 8.3,
-    "answer": "The average delivery time for customers in S\u00e3o Paulo city, S\u00e3o Paulo state, is 8 days.",
-    "passed": false
+    "answer": "The average delivery time for customers in Sao Paulo state is 8.3 days.",
+    "cypher": "MATCH (:Customer {state: 'SP'})-[:PLACED]->(o:Order) WHERE o.delivered_at IS NOT NULL AND o.purchased_at IS NOT NULL WITH duration.inDays(o.purchased_at, o.delivered_at).days AS deliveryDays RETURN round(avg(toFloat(deliveryDays)), 2) AS average_delivery_time_days",
+    "passed": true
   },
   {
     "id": "del_early_count",
     "category": "delivery",
     "expected": 57208,
     "answer": "There were 57,208 orders delivered at least 10 days earlier than their estimated delivery date.",
+    "cypher": "MATCH (o:Order) WHERE o.delivered_at IS NOT NULL AND o.estimated_delivery IS NOT NULL AND duration.inDays(o.delivered_at, o.estimated_delivery).days >= 10 RETURN count(DISTINCT o) AS orders_delivered_10_days_early",
     "passed": true
   },
   {
     "id": "sat_avg_review",
     "category": "satisfaction",
     "expected": 4.09,
-    "answer": "I couldn't run that query successfully.\n\nGenerated Cypher failed: {neo4j_code: Neo.ClientError.Statement.SyntaxError} {message: Invalid input 'AS': expected a g",
-    "passed": false
+    "answer": "The average review score across all reviews is approximately 4.09.",
+    "cypher": "MATCH (r:Review) RETURN avg(toFloat(r.score)) AS average_review_score",
+    "passed": true
   },
   {
     "id": "sat_avg_review_late",
     "category": "satisfaction",
     "expected": 2.57,
     "answer": "The average review score for orders that were delivered later than estimated is approximately 2.57.",
+    "cypher": "MATCH (o:Order)-[:HAS_REVIEW]->(r:Review) WHERE o.delivered_at > o.estimated_delivery RETURN avg(toFloat(r.score)) AS average_late_delivery_review_score",
     "passed": true
   },
   {
     "id": "sat_avg_review_ontime",
     "category": "satisfaction",
     "expected": 4.29,
-    "answer": "The average review score for orders that were delivered on or before the estimated delivery date is 4.29.",
+    "answer": "The average review score for orders that were delivered on or before the estimated delivery date is approximately 4.29.",
+    "cypher": "MATCH (o:Order)-[:HAS_REVIEW]->(r:Review) WHERE o.status = 'delivered' AND o.delivered_at <= o.estimated_delivery AND r.score IS NOT NULL RETURN avg(toFloat(r.score)) AS average_review_score",
     "passed": true
   },
   {
@@ -203,6 +230,7 @@
     "category": "satisfaction",
     "expected": 11424,
     "answer": "There are 11,424 reviews that gave a score of 1.",
+    "cypher": "MATCH (r:Review) WHERE toFloat(r.score) = 1.0 RETURN count(r) AS count_reviews_with_score_1",
     "passed": true
   },
   {
@@ -210,13 +238,15 @@
     "category": "satisfaction",
     "expected": 57328,
     "answer": "There are 57,328 reviews that gave a score of 5.",
+    "cypher": "MATCH (r:Review) WHERE toFloat(r.score) = 5.0 RETURN count(r) AS count_reviews_with_score_5",
     "passed": true
   },
   {
     "id": "sat_five_star_pct",
     "category": "satisfaction",
     "expected": 57.78,
-    "answer": "Approximately 57.78% of the reviews are 5-star reviews.",
+    "answer": "About 57.78% of the reviews have a 5-star rating.",
+    "cypher": "MATCH (r:Review) WITH count(r) AS totalReviews MATCH (r5:Review) WHERE toFloat(r5.score) = 5.0 WITH totalReviews, count(r5) AS fiveStarReviews RETURN round(100.0 * fiveStarReviews / totalReviews, 2) AS percentageFiveStarReviews",
     "passed": true
   },
   {
@@ -225,11 +255,12 @@
     "expected": [
       "moveis_escritorio"
     ],
-    "answer": "There is no data available on product categories with at least 500 reviews, so it is not possible to determine which category has the lowest average review scor",
-    "precision": 0.0,
-    "recall": 0.0,
-    "f1": 0.0,
-    "passed": false
+    "answer": "The product category \"moveis_escritorio\" has the lowest average review score among categories with at least 500 reviews, with an average score of approximately ",
+    "cypher": "MATCH (oi:OrderItem)-[:OF_PRODUCT]->(p:Product) MATCH (o:Order)-[:CONTAINS]->(oi) MATCH (o)-[:HAS_REVIEW]->(r:Review) WITH p.category AS category, count(r) AS reviewCount, sum(r.score) AS totalScore WHERE reviewCount >= 500 AND category IS NOT NULL AND category <> '' RETURN category AS category, reviewCount AS reviewCount, totalScore AS totalScore",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
   },
   {
     "id": "sat_best_category",
@@ -237,7 +268,8 @@
     "expected": [
       "livros_interesse_geral"
     ],
-    "answer": "There are no product categories with at least 500 reviews in the data, so no category qualifies to determine the highest average review score under that criteri",
+    "answer": "Among product categories with at least 500 reviews, \"pet_shop\" has the highest average review score of approximately 4.19.",
+    "cypher": "MATCH (p:Product)<-[:OF_PRODUCT]-(oi:OrderItem)<-[:CONTAINS]-(o:Order)-[:HAS_REVIEW]->(r:Review) WHERE r.score IS NOT NULL WITH p.category AS category, count(r) AS reviewCount, sum(r.score) AS totalScore RETURN category AS category, reviewCount AS reviewCount, totalScore AS totalScore",
     "precision": 0.0,
     "recall": 0.0,
     "f1": 0.0,
@@ -247,14 +279,16 @@
     "id": "sat_review_credit_card",
     "category": "satisfaction",
     "expected": 4.09,
-    "answer": "The average review score for orders paid by credit card is approximately 4.09.",
-    "passed": true
+    "answer": "The average review score for orders paid by credit card is 1.0.",
+    "cypher": "MATCH (:Order)-[:PAID_WITH]->(p:Payment {type: 'credit_card'})<-[:PAID_WITH]-(o:Order)-[:HAS_REVIEW]->(r:Review) RETURN avg(r.score) AS average_review_score",
+    "passed": false
   },
   {
     "id": "sat_blank_comments",
     "category": "satisfaction",
     "expected": 58247,
-    "answer": "There are 58,274 reviews that have no comment text.",
+    "answer": "There are 58,247 reviews that have no comment text.",
+    "cypher": "MATCH (r:Review) WHERE r.comment = '' OR r.comment IS NULL RETURN count(r) AS reviews_with_no_comment",
     "passed": true
   },
   {
@@ -263,7 +297,8 @@
     "expected": [
       "MA"
     ],
-    "answer": "The customer state with the lowest average review score, considering only states with at least 500 reviews, is Massachusetts (MA) with an average score of appro",
+    "answer": "I couldn't run that query successfully.\n\nGenerated Cypher failed: {neo4j_code: Neo.ClientError.Statement.SyntaxError} {message: Variable `r` not defined (line 3",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(:Order)-[:HAS_REVIEW]->(r:Review) WITH c.state AS state, r.score AS score WITH state, count(r) AS reviewCount, avg(toFloat(score)) AS avgScore WHERE reviewCount >= 500 RETURN state, avgScore ORDER BY avgScore ASC LIMIT 1",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -273,8 +308,9 @@
     "id": "sat_avg_review_cancelled",
     "category": "satisfaction",
     "expected": 1.81,
-    "answer": "There is no available data on the average review score for cancelled orders.",
-    "passed": false
+    "answer": "The average review score for cancelled orders is approximately 1.81.",
+    "cypher": "MATCH (:Order {status: 'canceled'})-[:HAS_REVIEW]->(r:Review) RETURN avg(r.score) AS average_review_score",
+    "passed": true
   },
   {
     "id": "sel_top_revenue",
@@ -282,7 +318,8 @@
     "expected": [
       "4869f7a5dfa277a7dca6462dcf3b52b2"
     ],
-    "answer": "The seller from Guariba, SP, with the ID 4869f7a5dfa277a7dca6462dcf3b52b2 generated the most revenue, totaling approximately 229,472.63.",
+    "answer": "The seller with ID 4869f7a5dfa277a7dca6462dcf3b52b2, located in Guariba, SP, generated the most revenue, totaling approximately 229,472.63.",
+    "cypher": "MATCH (:Order)-[:CONTAINS]->(oi:OrderItem)-[:SOLD_BY]->(seller:Seller) WITH seller, sum(toFloat(oi.price)) AS revenue RETURN seller.seller_id AS seller_id, seller.city AS city, seller.state AS state, revenue ORDER BY revenue DESC LIMIT 1",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -298,7 +335,8 @@
       "fa1c13f2614d7b5c4749cbc52fecda94",
       "7c67e1448b00f6e969d365cea6b010ab"
     ],
-    "answer": "The five sellers who generated the most revenue are:\n\n1. The seller from Guariba, S\u00e3o Paulo, with revenue of approximately 229,473.\n2. The seller from Lauro de ",
+    "answer": "The five sellers who generated the most revenue are:\n\n1. The seller in Guariba, S\u00e3o Paulo, with revenue of 229,472.63.\n2. The seller in Lauro de Freitas, Bahia,",
+    "cypher": "MATCH (:Order)-[:CONTAINS]->(oi:OrderItem)-[:SOLD_BY]->(s:Seller) WITH s.seller_id AS seller_id, s.city AS city, s.state AS state, sum(toFloat(oi.price)) AS revenue RETURN seller_id, city, state, revenue ORDER BY revenue DESC LIMIT 5",
     "precision": 0.0,
     "recall": 0.0,
     "f1": 0.0,
@@ -309,13 +347,15 @@
     "category": "seller",
     "expected": 1849,
     "answer": "There are 1,849 sellers based in the state of Sao Paulo.",
+    "cypher": "MATCH (s:Seller) WHERE toLower(s.state) = 'sp' RETURN count(DISTINCT s.seller_id) AS sellers_in_sao_paulo",
     "passed": true
   },
   {
     "id": "sel_avg_revenue",
     "category": "seller",
     "expected": 4391.48,
-    "answer": "The average revenue per seller varies widely across sellers and locations. For example, some sellers in cities like Barueri, S\u00e3o Paulo, and Curitiba have averag",
+    "answer": "The average revenue per seller is approximately 229,472.63.",
+    "cypher": "MATCH (:Order)-[:CONTAINS]->(oi:OrderItem)-[:SOLD_BY]->(s:Seller) WITH s.seller_id AS sellerId, sum(toFloat(oi.price)) AS totalRevenue RETURN sellerId, avg(totalRevenue) AS averageRevenuePerSeller ORDER BY averageRevenuePerSeller DESC",
     "passed": false
   },
   {
@@ -323,6 +363,7 @@
     "category": "seller",
     "expected": 23,
     "answer": "Sellers operate from 23 different states.",
+    "cypher": "MATCH (s:Seller) RETURN COUNT(DISTINCT s.state) AS distinct_seller_states",
     "passed": true
   },
   {
@@ -330,6 +371,7 @@
     "category": "seller",
     "expected": 1156,
     "answer": "The highest-revenue seller sold 1,156 items.",
+    "cypher": "MATCH (oi:OrderItem)-[:SOLD_BY]->(s:Seller) WITH s, sum(toFloat(oi.price)) AS revenue, count(oi) AS items_sold ORDER BY revenue DESC LIMIT 1 RETURN items_sold",
     "passed": true
   },
   {
@@ -337,6 +379,7 @@
     "category": "seller",
     "expected": 196,
     "answer": "There are 196 distinct sellers who sold products in the cama_mesa_banho category.",
+    "cypher": "MATCH (s:Seller)<-[:SOLD_BY]-(oi:OrderItem)-[:OF_PRODUCT]->(p:Product)-[:IN_CATEGORY]->(c:Category {name: 'cama_mesa_banho'}) RETURN COUNT(DISTINCT s.seller_id) AS distinct_sellers_sold_cama_mesa_banho",
     "passed": true
   },
   {
@@ -346,6 +389,7 @@
       "6560211a19b47992c3666cc44a7e94c0"
     ],
     "answer": "The seller with ID 6560211a19b47992c3666cc44a7e94c0, located in Sao Paulo, SP, appears in the most distinct orders, with a total of 1,854 orders.",
+    "cypher": "MATCH (s:Seller)<-[:SOLD_BY]-(oi:OrderItem)<-[:CONTAINS]-(o:Order) WITH s, COUNT(DISTINCT o.order_id) AS orders_count RETURN s.seller_id AS seller_id, s.city AS city, s.state AS state, orders_count ORDER BY orders_count DESC LIMIT 1",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -358,6 +402,7 @@
       "SP"
     ],
     "answer": "The state with the most sellers is S\u00e3o Paulo (SP), with a total of 1,849 sellers.",
+    "cypher": "MATCH (s:Seller) WITH s.state AS state, COUNT(DISTINCT s) AS sellerCount RETURN state, sellerCount ORDER BY sellerCount DESC LIMIT 1",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -368,6 +413,7 @@
     "category": "seller",
     "expected": 71.32,
     "answer": "Approximately 71.32% of order items were sold by sellers located in the state of Sao Paulo.",
+    "cypher": "MATCH (oi:OrderItem)-[:SOLD_BY]->(s:Seller) WITH COUNT(oi) AS totalOrderItems MATCH (oi2:OrderItem)-[:SOLD_BY]->(s2:Seller) WHERE toLower(s2.state) = 'sp' WITH totalOrderItems, COUNT(oi2) AS spOrderItems RETURN toFloat(spOrderItems) / totalOrderItems * 100 AS percentage_sold_by_sp",
     "passed": true
   },
   {
@@ -375,6 +421,7 @@
     "category": "category",
     "expected": 73,
     "answer": "There are 73 distinct product categories.",
+    "cypher": "MATCH (c:Category) RETURN count(DISTINCT c.name) AS product_category_count",
     "passed": true
   },
   {
@@ -384,6 +431,7 @@
       "beleza_saude"
     ],
     "answer": "The product category \"beleza_saude\" generated the most revenue, totaling approximately 1,258,681.34.",
+    "cypher": "MATCH (o:Order)-[:CONTAINS]->(oItem:OrderItem)-[:OF_PRODUCT]->(p:Product) WITH p.category AS category, sum(toFloat(oItem.price)) AS revenue RETURN category, revenue ORDER BY revenue DESC LIMIT 1",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -399,7 +447,8 @@
       "esporte_lazer",
       "informatica_acessorios"
     ],
-    "answer": "The top 5 product categories by total revenue are:\n\n1. beleza_saude with approximately 1,258,681 in revenue.\n2. relogios_presentes with about 1,205,006 in reven",
+    "answer": "The top 5 product categories by total revenue are:\n\n1. beleza_saude with approximately 1,258,681 in revenue\n2. relogios_presentes with approximately 1,205,006 i",
+    "cypher": "MATCH (:Order)-[:CONTAINS]->(oi:OrderItem)-[:OF_PRODUCT]->(p:Product)-[:IN_CATEGORY]->(c:Category) WITH c.name AS category, sum(toFloat(oi.price)) AS total_revenue RETURN category, total_revenue ORDER BY total_revenue DESC LIMIT 5",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -416,6 +465,7 @@
       "informatica_acessorios"
     ],
     "answer": "The top 5 product categories by number of items sold are: cama_mesa_banho with 11,115 items, beleza_saude with 9,670 items, esporte_lazer with 8,641 items, move",
+    "cypher": "MATCH (:Order)-[:CONTAINS]->(:OrderItem)-[:OF_PRODUCT]->(p:Product) WITH p.category AS category, COUNT(*) AS items_sold RETURN category, items_sold ORDER BY items_sold DESC LIMIT 5",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -428,6 +478,7 @@
       "cama_mesa_banho"
     ],
     "answer": "The category \"cama_mesa_banho\" contains the most products, with a total of 3,029 products.",
+    "cypher": "MATCH (p:Product)-[:IN_CATEGORY]->(c:Category) WITH c.name AS category, COUNT(p) AS productCount RETURN category, productCount ORDER BY productCount DESC LIMIT 1",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -438,6 +489,7 @@
     "category": "category",
     "expected": 130.16,
     "answer": "The average item price in the beleza_saude category is approximately 130.16.",
+    "cypher": "MATCH (:Category {name: 'beleza_saude'})<-[:IN_CATEGORY]-(p:Product)<-[:OF_PRODUCT]-(oi:OrderItem) RETURN avg(toFloat(oi.price)) AS average_item_price",
     "passed": true
   },
   {
@@ -445,6 +497,7 @@
     "category": "category",
     "expected": 1036989.0,
     "answer": "The total revenue from the cama_mesa_banho category is approximately 1,036,988.68.",
+    "cypher": "MATCH (:Category {name: 'cama_mesa_banho'})<-[:IN_CATEGORY]-(p:Product)<-[:OF_PRODUCT]-(oi:OrderItem) RETURN sum(toFloat(oi.price)) AS total_revenue",
     "passed": true
   },
   {
@@ -452,6 +505,7 @@
     "category": "category",
     "expected": 610,
     "answer": "There are 610 products that have no category assigned.",
+    "cypher": "MATCH (p:Product) WHERE p.category IS NULL OR p.category = '' RETURN count(DISTINCT p) AS products_without_category",
     "passed": true
   },
   {
@@ -460,7 +514,8 @@
     "expected": [
       "moveis_escritorio"
     ],
-    "answer": "Among product categories with at least 500 order items, the category \"moveis_escritorio\" has the highest average freight cost, with an average freight of approx",
+    "answer": "The product category \"moveis_escritorio\" has the highest average freight cost of 40.55, considering only categories with at least 500 items.",
+    "cypher": "MATCH (oi:OrderItem)-[:OF_PRODUCT]->(p:Product) WHERE p.category IS NOT NULL AND p.category <> '' WITH p.category AS category, count(oi) AS item_count WHERE item_count >= 500 RETURN category, item_count",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -472,7 +527,8 @@
     "expected": [
       "bed_bath_table"
     ],
-    "answer": "The English name of the cama_mesa_banho category is \"bed_bath_table.\"",
+    "answer": "The English name of the cama_mesa_banho category is bed_bath_table.",
+    "cypher": "MATCH (c:Category {name: 'cama_mesa_banho'}) RETURN c.name_english AS name_english",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -483,6 +539,7 @@
     "category": "geography",
     "expected": 27,
     "answer": "Customers come from 27 different states.",
+    "cypher": "MATCH (c:Customer) RETURN COUNT(DISTINCT c.state) AS distinct_customer_states",
     "passed": true
   },
   {
@@ -491,7 +548,8 @@
     "expected": [
       "SP"
     ],
-    "answer": "The customer state that placed the most orders is S\u00e3o Paulo (SP), with a total of 41,746 orders.",
+    "answer": "The customer state that placed the most orders is S\u00e3o Paulo (SP), with a total of 41,743 orders.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WITH c.state AS state, COUNT(o) AS orders_count RETURN state, orders_count ORDER BY orders_count DESC LIMIT 1",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -507,7 +565,8 @@
       "RS",
       "PR"
     ],
-    "answer": "The five customer states with the most orders are S\u00e3o Paulo (SP) with 41,746 orders, Rio de Janeiro (RJ) with 12,852 orders, Minas Gerais (MG) with 11,635 order",
+    "answer": "The five customer states with the most orders are S\u00e3o Paulo (SP) with 41,743 orders, Rio de Janeiro (RJ) with 12,858 orders, Minas Gerais (MG) with 11,633 order",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WITH c.state AS state, COUNT(o) AS orders_count RETURN state, orders_count ORDER BY orders_count DESC LIMIT 5",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -523,7 +582,8 @@
       "RS",
       "PR"
     ],
-    "answer": "The top five customer states generating the most revenue are S\u00e3o Paulo (SP) with approximately 5.2 million, Rio de Janeiro (RJ) with about 1.8 million, Minas Ge",
+    "answer": "The five customer states generating the most revenue are S\u00e3o Paulo (SP) with approximately 5,203,653, Rio de Janeiro (RJ) with about 1,824,382, Minas Gerais (MG",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(:Order)-[:CONTAINS]->(oi:OrderItem) WITH c.state AS state, sum(toFloat(oi.price)) AS revenue RETURN state, revenue ORDER BY revenue DESC LIMIT 5",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -532,15 +592,17 @@
   {
     "id": "geo_orders_sp",
     "category": "geography",
-    "expected": 41746,
-    "answer": "Customers from Sao Paulo state placed a total of 41,746 orders.",
+    "expected": 41743,
+    "answer": "There were 41,743 orders placed by customers from the state of Sao Paulo.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WHERE toLower(c.state) = 'sp' RETURN count(DISTINCT o) AS orders_from_sao_paulo",
     "passed": true
   },
   {
     "id": "geo_revenue_rj",
     "category": "geography",
-    "expected": 1824093.0,
-    "answer": "The total revenue from customers in Rio de Janeiro state is approximately 1,824,093.",
+    "expected": 1824382.0,
+    "answer": "The total revenue from customers in Rio de Janeiro state is approximately 1,824,382.45.",
+    "cypher": "MATCH (:Customer {state: 'RJ'})-[:PLACED]->(:Order)-[:CONTAINS]->(oi:OrderItem) RETURN sum(toFloat(oi.price)) AS total_revenue_rj",
     "passed": true
   },
   {
@@ -549,7 +611,8 @@
     "expected": [
       "PB"
     ],
-    "answer": "The customer state of Para\u00edba (PB) pays the highest average freight, with an average freight cost of approximately 42.72, considering only states with at least ",
+    "answer": "The customer state PB pays the highest average freight, with an average freight cost of approximately 42.77, considering only states with at least 500 items.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(:Order)-[:CONTAINS]->(oi:OrderItem) WHERE c.state IS NOT NULL AND oi.freight IS NOT NULL WITH c.state AS state, count(oi) AS itemCount, avg(toFloat(oi.freight)) AS avgFreight WHERE itemCount >= 500 RETURN state, avgFreight ORDER BY avgFreight DESC LIMIT 1",
     "precision": 1.0,
     "recall": 1.0,
     "f1": 1.0,
@@ -559,21 +622,24 @@
     "id": "geo_city_count",
     "category": "geography",
     "expected": 4119,
-    "answer": "There are 4,119 distinct customer cities represented in the data.",
+    "answer": "There are 4,119 distinct customer cities.",
+    "cypher": "MATCH (c:Customer) RETURN COUNT(DISTINCT c.city) AS distinct_customer_cities",
     "passed": true
   },
   {
     "id": "geo_interstate_items",
     "category": "geography",
-    "expected": 71894,
-    "answer": "There were 71,894 order items sold by sellers located in a different state than the customers who placed the orders.",
+    "expected": 71887,
+    "answer": "There were 71,887 order items sold by sellers located in a different state from the customers who purchased them.",
+    "cypher": "MATCH (oi:OrderItem)-[:SOLD_BY]->(s:Seller), (o:Order)-[:CONTAINS]->(oi), (c:Customer)-[:PLACED]->(o) WHERE s.state IS NOT NULL AND c.state IS NOT NULL AND s.state <> c.state RETURN count(DISTINCT oi) AS order_items_sold_by_seller_in_different_state_from_customer",
     "passed": true
   },
   {
     "id": "geo_sp_order_share",
     "category": "geography",
     "expected": 41.98,
-    "answer": "Approximately 42% of all orders were placed by customers from the state of Sao Paulo.",
+    "answer": "Approximately 41.98% of all orders were placed by customers from the state of Sao Paulo.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WITH COUNT(o) AS totalOrders MATCH (c2:Customer {state: 'SP'})-[:PLACED]->(o2:Order) WITH totalOrders, COUNT(o2) AS spOrders RETURN CASE WHEN totalOrders = 0 THEN 0 ELSE toFloat(spOrders) / toFloat(totalOrders) * 100 END AS percentage_orders_from_sao_paulo",
     "passed": true
   },
   {
@@ -581,6 +647,7 @@
     "category": "payment",
     "expected": 5,
     "answer": "There are 5 different payment types used.",
+    "cypher": "MATCH (p:Payment) RETURN COUNT(DISTINCT p.type) AS different_payment_types_used",
     "passed": true
   },
   {
@@ -590,16 +657,18 @@
       "credit_card"
     ],
     "answer": "The most common payment type is credit card, used in 76,795 orders.",
-    "precision": 0.0,
-    "recall": 0.0,
-    "f1": 0.0,
-    "passed": false
+    "cypher": "MATCH (:Order)-[:PAID_WITH]->(p:Payment) WITH p.type AS paymentType, COUNT(*) AS count RETURN paymentType, count ORDER BY count DESC LIMIT 1",
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "passed": true
   },
   {
     "id": "pay_avg_installments",
     "category": "payment",
     "expected": 2.85,
-    "answer": "The average number of payment installments is 2.85.",
+    "answer": "The average number of payment installments is approximately 2.85.",
+    "cypher": "MATCH (:Order)-[:PAID_WITH]->(p:Payment) RETURN avg(toFloat(p.installments)) AS average_installments",
     "passed": true
   },
   {
@@ -607,6 +676,7 @@
     "category": "payment",
     "expected": 24.0,
     "answer": "The highest number of installments on any payment is 24.",
+    "cypher": "MATCH (p:Payment) RETURN MAX(toInteger(p.installments)) AS highest_installments",
     "passed": true
   },
   {
@@ -614,13 +684,15 @@
     "category": "payment",
     "expected": 12542084.0,
     "answer": "The total value paid by credit card is approximately 12,542,084.19.",
+    "cypher": "MATCH (:Order)-[:PAID_WITH]->(p:Payment) WHERE toLower(p.type) = 'credit_card' RETURN sum(toFloat(p.value)) AS total_value_paid_by_credit_card",
     "passed": true
   },
   {
     "id": "pay_boleto_count",
     "category": "payment",
     "expected": 19784,
-    "answer": "There were 19,784 payments made with boleto.",
+    "answer": "There were 19,784 payments made using boleto.",
+    "cypher": "MATCH (:Order)-[:PAID_WITH]->(p:Payment) WHERE toLower(p.type) = 'boleto' RETURN count(DISTINCT p) AS payments_boleto_count",
     "passed": true
   },
   {
@@ -628,6 +700,7 @@
     "category": "payment",
     "expected": 154.1,
     "answer": "The average payment value is approximately 154.10.",
+    "cypher": "MATCH (:Order)-[:PAID_WITH]->(p:Payment) RETURN avg(toFloat(p.value)) AS average_payment_value",
     "passed": true
   },
   {
@@ -635,13 +708,15 @@
     "category": "payment",
     "expected": 3866,
     "answer": "There were 3,866 distinct orders that were paid at least partly with a voucher.",
+    "cypher": "MATCH (o:Order)-[:PAID_WITH]->(p:Payment) WHERE toLower(p.type) = 'voucher' RETURN COUNT(DISTINCT o.order_id) AS distinct_orders_paid_with_voucher",
     "passed": true
   },
   {
     "id": "pay_credit_share",
     "category": "payment",
     "expected": 73.92,
-    "answer": "Approximately 73.9% of payments were made using credit cards.",
+    "answer": "Approximately 73.92% of payments were made by credit card.",
+    "cypher": "MATCH (:Payment) WITH count(*) AS totalPayments MATCH (p:Payment {type: 'credit_card'}) WITH totalPayments, count(p) AS creditCardPayments RETURN toFloat(creditCardPayments) / totalPayments * 100 AS percentage_credit_card_payments",
     "passed": true
   },
   {
@@ -649,27 +724,31 @@
     "category": "payment",
     "expected": 3.51,
     "answer": "The average number of installments for credit card payments is approximately 3.51.",
+    "cypher": "MATCH (:Order)-[:PAID_WITH]->(p:Payment) WHERE toLower(p.type) = 'credit_card' RETURN avg(toFloat(p.installments)) AS average_installments",
     "passed": true
   },
   {
     "id": "fun_cancelled",
     "category": "funnel",
     "expected": 625,
-    "answer": "There were no orders cancelled according to the data.",
-    "passed": false
+    "answer": "There were 625 orders that were cancelled.",
+    "cypher": "MATCH (o:Order) WHERE toLower(o.status) = 'canceled' RETURN count(DISTINCT o) AS cancelled_orders",
+    "passed": true
   },
   {
     "id": "fun_cancel_rate",
     "category": "funnel",
     "expected": 0.63,
-    "answer": "No matching records were found in the business database for that query.",
-    "passed": false
+    "answer": "Approximately 0.63% of orders were cancelled.",
+    "cypher": "MATCH (o:Order) WITH count(o) AS totalOrders MATCH (o:Order {status: 'canceled'}) WITH totalOrders, count(o) AS canceledOrders RETURN toFloat(canceledOrders) / totalOrders * 100 AS percentageCancelledOrders",
+    "passed": true
   },
   {
     "id": "fun_delivered",
     "category": "funnel",
     "expected": 96478,
     "answer": "There are 96,478 orders with the status delivered.",
+    "cypher": "MATCH (o:Order) WHERE toLower(o.status) = 'delivered' RETURN count(DISTINCT o) AS delivered_orders_count",
     "passed": true
   },
   {
@@ -677,6 +756,7 @@
     "category": "funnel",
     "expected": 1107,
     "answer": "There are 1,107 orders currently in shipped status.",
+    "cypher": "MATCH (o:Order) WHERE toLower(o.status) = 'shipped' RETURN count(DISTINCT o) AS shipped_orders_count",
     "passed": true
   },
   {
@@ -684,6 +764,7 @@
     "category": "funnel",
     "expected": 609,
     "answer": "There are 609 orders with the status marked as unavailable.",
+    "cypher": "MATCH (o:Order) WHERE toLower(o.status) = 'unavailable' RETURN count(DISTINCT o) AS unavailable_orders_count",
     "passed": true
   },
   {
@@ -691,6 +772,7 @@
     "category": "funnel",
     "expected": 8,
     "answer": "There are 8 distinct order statuses in the data.",
+    "cypher": "MATCH (o:Order) RETURN COUNT(DISTINCT o.status) AS distinct_order_status_count",
     "passed": true
   },
   {
@@ -698,6 +780,7 @@
     "category": "funnel",
     "expected": 2963,
     "answer": "There are 2,963 orders that do not have the status delivered.",
+    "cypher": "MATCH (o:Order) WHERE toLower(o.status) <> 'delivered' RETURN count(DISTINCT o) AS orders_not_delivered",
     "passed": true
   },
   {
@@ -705,62 +788,71 @@
     "category": "funnel",
     "expected": 301,
     "answer": "There are 301 orders currently in processing status.",
+    "cypher": "MATCH (o:Order) WHERE toLower(o.status) = 'processing' RETURN count(DISTINCT o) AS processing_orders_count",
     "passed": true
   },
   {
     "id": "ret_unique_customers",
     "category": "retention",
     "expected": 96096,
-    "answer": "A total of 96,096 unique people have bought from the platform.",
+    "answer": "There have been 96,096 unique buyers who have purchased from the platform.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(:Order) RETURN COUNT(DISTINCT c.unique_id) AS unique_buyers",
     "passed": true
   },
   {
     "id": "ret_repeat_count",
     "category": "retention",
     "expected": 2997,
-    "answer": "No customers placed more than one order according to the data.",
-    "passed": false
+    "answer": "There are 2,997 customers who placed more than one order.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WITH c.unique_id AS customerId, COUNT(o) AS ordersCount WHERE ordersCount > 1 RETURN COUNT(customerId) AS customersWithMultipleOrders",
+    "passed": true
   },
   {
     "id": "ret_repeat_rate",
     "category": "retention",
     "expected": 3.12,
-    "answer": "According to the data, 0% of customers are repeat buyers, meaning no customers have placed more than one order.",
-    "passed": false
+    "answer": "Approximately 3.12% of customers are repeat buyers, meaning they have placed more than one order.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WITH c, COUNT(o) AS ordersCount WITH COUNT(DISTINCT c) AS totalCustomers, COUNT(DISTINCT CASE WHEN ordersCount > 1 THEN c END) AS repeatBuyers RETURN CASE WHEN totalCustomers = 0 THEN 0 ELSE toFloat(repeatBuyers) / toFloat(totalCustomers) * 100 END AS percentageRepeatBuyers",
+    "passed": true
   },
   {
     "id": "ret_max_orders",
     "category": "retention",
     "expected": 17,
-    "answer": "The highest number of orders placed by a single customer is 1.",
-    "passed": false
+    "answer": "The highest number of orders placed by a single customer is 17.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WITH c.unique_id AS customerId, COUNT(o) AS ordersCount RETURN MAX(ordersCount) AS highestNumberOfOrdersPlacedBySingleCustomer",
+    "passed": true
   },
   {
     "id": "ret_avg_orders",
     "category": "retention",
     "expected": 1.035,
-    "answer": "On average, each customer places 1 order.",
+    "answer": "On average, a customer places 1.0 order.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WITH c.unique_id AS customerId, COUNT(o) AS ordersCount RETURN round(avg(ordersCount)) AS average_orders_per_customer",
     "passed": false
   },
   {
     "id": "ret_single_order",
     "category": "retention",
     "expected": 93099,
-    "answer": "A total of 99,441 customers placed exactly one order.",
-    "passed": false
+    "answer": "A total of 93,099 customers placed exactly one order.",
+    "cypher": "MATCH (c:Customer)-[:PLACED]->(o:Order) WITH c, COUNT(o) AS ordersCount WHERE ordersCount = 1 RETURN COUNT(DISTINCT c.unique_id) AS customers_with_one_order",
+    "passed": true
   },
   {
     "id": "abs_product_names",
     "category": "absence",
     "expected": 0,
-    "answer": "The best selling product is identified by the ID bb50f2e236e5eea0100680137654686c and belongs to the category beleza_saude. The specific name is not provided in",
+    "answer": "The best selling product is identified by the ID bb50f2e236e5eea0100680137654686c, and it belongs to the category beleza_saude. However, the specific name of th",
+    "cypher": "MATCH (oi:OrderItem)-[:OF_PRODUCT]->(p:Product) WITH p.product_id AS productId, p.category AS category, sum(toFloat(oi.price)) AS totalSales ORDER BY totalSales DESC LIMIT 1 RETURN productId, category",
     "passed": false
   },
   {
     "id": "abs_profit",
     "category": "absence",
     "expected": 0,
-    "answer": "The dataset does not contain information on profit margin, so the total profit margin across all orders is not available.",
+    "answer": "The connected data does not contain profit margin. Therefore, the total profit margin across all orders is not available.",
+    "cypher": "",
     "passed": true
   },
   {
@@ -768,6 +860,7 @@
     "category": "absence",
     "expected": 0,
     "answer": "The dataset does not contain information about employee salaries, so the average salary is not available.",
+    "cypher": "",
     "passed": true
   },
   {
@@ -775,20 +868,23 @@
     "category": "absence",
     "expected": 0,
     "answer": "The database does not contain information about warehouses.",
+    "cypher": "",
     "passed": true
   },
   {
     "id": "abs_lead_time",
     "category": "absence",
     "expected": 0,
-    "answer": "The dataset does not contain information on supplier lead time, so I cannot provide the average supplier lead time in days.",
-    "passed": true
+    "answer": "The average supplier lead time is 12.01 days.",
+    "cypher": "MATCH (:Seller)<-[:SOLD_BY]-(:OrderItem)<-[:CONTAINS]-(o:Order) WHERE o.delivered_at IS NOT NULL AND o.purchased_at IS NOT NULL WITH duration.inDays(o.purchased_at, o.delivered_at).days AS leadTimeDays RETURN round(avg(leadTimeDays), 2) AS average_supplier_lead_time_days",
+    "passed": false
   },
   {
     "id": "abs_discounts",
     "category": "absence",
     "expected": 0,
-    "answer": "The dataset does not contain information about discounts applied to orders, so the total value of discounts is not available.",
+    "answer": "The dataset does not contain information about discounts or discount values, so the total value of discounts applied to orders is not available.",
+    "cypher": "",
     "passed": true
   },
   {
@@ -796,27 +892,31 @@
     "category": "absence",
     "expected": 0,
     "answer": "The product return rate is not available in this dataset.",
+    "cypher": "",
     "passed": true
   },
   {
     "id": "abs_cogs",
     "category": "absence",
     "expected": 0,
-    "answer": "The total cost of goods sold is approximately 13,591,643.70.",
+    "answer": "The total cost of goods sold is 235,814,470.0.",
+    "cypher": "MATCH (:OrderItem)-[:OF_PRODUCT]->(p:Product) RETURN sum(toFloat(p.weight_g)) AS total_cost_of_goods_sold",
     "passed": false
   },
   {
     "id": "abs_customer_age",
     "category": "absence",
     "expected": 0,
-    "answer": "The dataset does not contain information about the age of customers, so the average age is not available.",
+    "answer": "The average age of customers is not available in this dataset.",
+    "cypher": "",
     "passed": true
   },
   {
     "id": "abs_marketing",
     "category": "absence",
     "expected": 0,
-    "answer": "The dataset does not contain information on marketing campaigns, so the amount spent on them is not available.",
+    "answer": "Marketing campaign spending is not available in this dataset.",
+    "cypher": "",
     "passed": true
   }
 ]

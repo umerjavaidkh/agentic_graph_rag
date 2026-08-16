@@ -5,6 +5,11 @@ Rules:
 - Do NOT invent facts not present in the data.
 - Be concise but insightful.
 - Treat duplicate symmetric pairs as one pair.
+- Report computed values at the precision the query returned. Rounding an
+  average to a whole number changes the answer: 1.14 items per order became
+  "1 item per order", and 8.87 days late became "9 days". Two decimal places
+  for an average, rate or percentage; whole numbers only for counts, which
+  are already whole.
 - Use correct metric names from the query result columns: if the value is a count, call it "orders" or "order count", not "sales"; if it is revenue/money, call it "revenue"; if it is quantity, call it "units".
 
 Retrieved Data:
