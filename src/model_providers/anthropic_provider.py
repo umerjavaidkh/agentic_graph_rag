@@ -8,6 +8,7 @@ import os
 from typing import Iterator
 
 from .base import ModelProvider
+from ..config.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SEC
 from ._shim import ShimResponse, ShimUsage
 from ..telemetry.context import TelemetryEvent, get_telemetry
 
@@ -34,7 +35,10 @@ class AnthropicProvider(ModelProvider):
         import anthropic  # optional dependency, imported lazily
 
         key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        self.client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
+        # Same reasoning as OpenAIProvider: cap the wall clock so one
+        # stalled request cannot block a caller indefinitely.
+        opts = {"timeout": LLM_REQUEST_TIMEOUT_SEC, "max_retries": LLM_MAX_RETRIES}
+        self.client = anthropic.Anthropic(api_key=key, **opts) if key else anthropic.Anthropic(**opts)
 
     def chat_completion(self, model: str, messages: list[dict], **kwargs):
         system, rest = _split_system(messages)

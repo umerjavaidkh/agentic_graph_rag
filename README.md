@@ -204,34 +204,49 @@ written against the wrong field returns *a number* rather than an error.
 
 ### What is better now
 
+Swapping a ~5k-row demo schema for 552k nodes of real data is what exposed these.
+Each one returned a plausible number rather than an error, which is why a small
+dataset had hidden every one of them.
+
 | Was | Now |
 | --- | --- |
 | Total freight reported as **"zero"** — the generated Cypher read a node property off a relationship, and Neo4j returns null rather than erroring | **2,251,910**, the true value. Property references are validated against the live schema before execution |
-| "Average salary of employees" answered **1,786,771,191,163** — `avg(created_at)` aliased as `averageSalary` after an empty result pushed the model to find *some* column with data | States the data does not contain it. The generator has an explicit "no such data" channel, so absence is a valid outcome |
-| Document queries took **165s** against a graph this size and the UI simply never returned | **8s**. A `WHERE any(l IN labels(n) ...)` predicate reads like a label filter but leaves the planner on `AllNodesScan` |
-| "Average price of an order item" could not be answered **at all** — a clarification menu offered three metrics defined over `unitPrice × quantity × (1 - discount)`, none of which exist here | Answers **120.65**. Clarification candidates come from the live schema, and it only asks when the graph is genuinely ambiguous |
-| Choosing **Structured data** could still return "this document does not cover it" — four separate fallbacks crossed between sources | The selected source is the only one consulted |
-| Average review score looked like a flaky metric | Stable across 8/8 runs. The cause was an intermittent `MATCH (:Review) AS r` — a SQL habit Cypher rejects — not numeric drift |
-| "Days between purchase and delivery" returned **−12.1** in half of four runs, explained away as bad source data | 10 of 11 runs land on 12–12.09. Duration argument order is now stated |
+| "Average salary of employees" answered **1,786,771,191,163** — `avg(created_at)` aliased as `averageSalary` | States the data does not contain it |
+| "Cost of goods sold" answered with the **sum of product weight in grams** | Refuses. A single-row aggregate is checked against the question before it is returned — the shape every fabrication took |
+| **99,441 customers who each bought exactly once** — the loader made a node per order, so every retention answer was wrong and none looked wrong | **96,096 people, 3.12% repeat rate.** Keyed on the person, not the per-order id |
+| "How many orders were cancelled?" → **"there were no orders cancelled"** against 625 | **625.** The schema now lists every value of a low-cardinality property, so `canceled` is visible rather than sampled past |
+| Averages silently truncated — 1.14 items per order returned as **1** | **1.14.** `round(avg(x))` goes to zero decimals in Neo4j; repaired to two |
+| Document queries took **165s** at this scale, and the UI never returned | **8s** |
+| Choosing "Structured data" could still answer from documents | The selected source is the only one consulted |
 
-Deterministic structured eval went **8/12 → 11/12** over this work. Nothing in the
-structured path names a dataset's fields any more; a guard test fails the build if
-they come back.
+**The 100-question business eval went 79 → 94.** It is deterministic — ground truth
+is computed from the graph by hand-written Cypher, with no LLM judge — so it costs
+nothing to run and gives the same answer twice. That matters: the sampled-judge
+score this project used to steer by swung **63 to 80 on an identical graph**, and
+would have scored the freight-of-zero bug as fine.
 
 ### Still in progress
 
-- **Two LLM-judge eval suites (20 cases) still target Northwind** —
-  `eval/structured_rag_suite.json` and `eval/advanced_structured_suite.json`. They have
-  not been re-pointed at Olist, so the previously reported 95/101 is stale. The
-  deterministic suite (`scripts/eval_structured.py`) does run against current data.
+Named specifically, because a number without its failures is not a measurement.
+
+- **6 of the 100 business questions still fail**, each recorded with its generated
+  Cypher in `eval/baseline_olist_business.json`: a join that walks out of `Payment`
+  into a different `Order` (returning 1.0 for an average review score), an `avg()`
+  taken over rows already collapsed one-per-seller, prose that drops the seller id
+  the query did return, and two absence questions still answered intermittently.
+- **Model choice is the limit on most of those.** Measured on the same cases,
+  `gpt-4.1-mini` gets seven wrong that `gpt-4.1` answers correctly. The larger model
+  is currently used only to regenerate after a failure
+  (`STRUCTURED_FALLBACK_MODEL`), which cannot help a query that succeeds with the
+  wrong answer.
+- **Two LLM-judge suites (20 cases) still target Northwind**, so the previously
+  reported 95/101 is stale rather than re-measured.
 - **Category names are Portuguese.** Asking for an English category (`bed_bath_table`)
-  filters `Category.name`, which holds `cama_mesa_banho`; the English value lives in
-  `name_english`. Sampled example values in the schema prompt did not fix it.
-- **Olist products are anonymised** — the source CSV has `product_name_lenght` but no
-  name column, so product-level answers can only identify a product by id and category.
-  A data limitation, not a bug.
-- The Northwind dump is retained for now, and `docs/API.md` still carries one
-  Northwind-era example URL.
+  filters `Category.name`, which holds `cama_mesa_banho`.
+- **Olist products are anonymised** — no name column exists, so product answers can
+  only cite an id and category.
+- **The document half has no equivalent suite.** These 100 questions cover structured
+  retrieval only.
 
 ## How it scales
 
@@ -305,8 +320,8 @@ chapter, no extra graph-algorithm dependency.
 | Audit log (who / what / when / result, admin API + dashboard)                                                                                                                                 | ✅                                                                                                       |
 | Google OIDC auth, RBAC, per-user thread isolation                                                                                                                                             | ✅ (`release/v1.0`)                                                                                      |
 | Streaming answers with charts, retrieval feedback loop                                                                                                                                        | ✅                                                                                                       |
-| Chapter-level rollup summaries for broad "what does this document/chapter discuss" questions                                                                                                  | ✅                                                                                                       |
-| Deterministic structured eval — 12 cases across fact / aggregate / ranking / multihop / temporal / absence, ground truth computed from the graph by hand-written Cypher (`scripts/eval_structured.py`) | ✅ 11/12 — no LLM judge, so it costs nothing to run; the open case is documented in the script |
+| Fast deterministic eval — 12 cases across fact / aggregate / ranking / multihop / temporal / absence (`scripts/eval_structured.py`) | ✅ 11/12 — the quick tier, run during iteration |
+| **Business-question eval — 100 questions a business user would actually ask** (delivery performance, satisfaction drivers, seller concentration, retention, payment mix, and absence), each with ground truth computed from the graph by hand-written Cypher (`eval/olist_business_suite.json`) | ✅ **94/100** — deterministic, no LLM judge, free to run. Every remaining failure is named in `eval/baseline_olist_business.json` |
 | LLM-judge eval suites — 4 suites, 101 cases (structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ⚠️ last measured 95/101 against the Northwind sample; the two structured suites still target that schema and have not been re-pointed at Olist, so those numbers are stale |
 | Storage split — lean Neo4j (structure, `search_text` and pointers only), full text in a blob store, embeddings in a vector store, `Hydrator` seam on the read path        | ✅ write-side strip and dual-write are in place and tested; `BLOB_STORE_BACKEND` / `VECTOR_STORE_BACKEND` still default to `local` / `memory`, so MinIO + Qdrant are opt-in |
 | Axis-2 semantic-edge precision (target ≥90% via sampled LLM-judge)                                                                                                                            | 🚧 in progress — structural graph (Axis-1) already scores ~99-100%, semantic linking is the open gap     |

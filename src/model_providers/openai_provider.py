@@ -4,13 +4,17 @@ from typing import Iterator
 from openai import OpenAI
 
 from .base import ModelProvider
+from ..config.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SEC
 from ..telemetry.context import TelemetryEvent, get_telemetry
 
 
 class OpenAIProvider(ModelProvider):
     def __init__(self, api_key: str | None = None):
         key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self.client = OpenAI(api_key=key) if key else OpenAI()
+        # Explicit timeout: the SDK default is 600s, and with retries a
+        # single stalled call can block for half an hour.
+        opts = {"timeout": LLM_REQUEST_TIMEOUT_SEC, "max_retries": LLM_MAX_RETRIES}
+        self.client = OpenAI(api_key=key, **opts) if key else OpenAI(**opts)
 
     def chat_completion(self, model: str, messages: list[dict], **kwargs):
         resp = self.client.chat.completions.create(model=model, messages=messages, **kwargs)

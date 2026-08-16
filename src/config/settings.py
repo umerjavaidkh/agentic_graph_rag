@@ -50,6 +50,15 @@ CHAT_PROVIDER_API_KEY = {
 }[_CANONICAL_PROVIDER]
 # Per-pipeline overrides (each defaults to CHAT_MODEL when unset).
 STRUCTURED_MODEL = os.environ.get("STRUCTURED_MODEL", CHAT_MODEL)  # Text-to-Cypher + structured synthesis
+
+# Escalation model, used only when the first attempt produced Cypher that
+# failed or was rejected. Measured on the eleven cases the small model got
+# wrong: seven were answered correctly on the larger one, including a join
+# that walked back out of Payment into a different Order and an avg() taken
+# over rows already collapsed per seller. Both are reasoning errors rather
+# than missing schema, so a retry with the same model reproduces them.
+# Escalating only on failure keeps the common path on the cheap model.
+STRUCTURED_FALLBACK_MODEL = os.environ.get("STRUCTURED_FALLBACK_MODEL", "gpt-4.1")
 ROUTING_MODEL = os.environ.get("ROUTING_MODEL", CHAT_MODEL)  # MCP tool selection (search_documents vs query_data)
 AXIS2_MODEL = os.environ.get("AXIS2_MODEL", CHAT_MODEL)  # Ingestion NER + optional relationship LLM pass
 
@@ -148,6 +157,13 @@ PDF_ENABLE_PDFPLUMBER = os.environ.get("PDF_ENABLE_PDFPLUMBER", "true").lower() 
 PDF_LOW_TEXT_CHARS = int(os.environ.get("PDF_LOW_TEXT_CHARS", "120"))
 # Per-page cap for pdfplumber fallback (find_tables/layout can hang on some PDFs).
 PDF_PLUMBER_PAGE_TIMEOUT_SEC = int(os.environ.get("PDF_PLUMBER_PAGE_TIMEOUT_SEC", "25"))
+
+# Wall-clock cap on a single chat/completion call. The vendor SDKs default to
+# 600s with retries on top, so one stalled request blocks a caller for up to
+# half an hour with nothing in the logs -- which is exactly what stalled a
+# 100-case eval run at case 33 and looked like a hang with no cause.
+LLM_REQUEST_TIMEOUT_SEC = float(os.environ.get("LLM_REQUEST_TIMEOUT_SEC", "90"))
+LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "2"))
 PDF_ENABLE_OCR = os.environ.get("PDF_ENABLE_OCR", "false").lower() in ("1", "true", "yes")
 PDF_OCR_BACKEND = os.environ.get("PDF_OCR_BACKEND", "none").lower()
 PDF_OCR_DPI = int(os.environ.get("PDF_OCR_DPI", "200"))

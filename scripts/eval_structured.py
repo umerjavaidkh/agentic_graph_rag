@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import signal
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -132,6 +133,28 @@ CASES: list[Case] = [
          "RETURN 0 AS n", lambda r: 0, kind="absence"),
 ]
 
+def load_suite(path: Path) -> list[Case]:
+    """Read cases from a JSON suite.
+
+    The 12 cases below are written as Python so they can carry a lambda. A
+    hundred business questions are data, not code, and `expect` there names
+    the field to read instead -- a single value for scalar cases, a collected
+    column for list cases. Same runner and same scoring either way, so a
+    suite cannot quietly grade itself differently.
+    """
+    suite = json.loads(path.read_text())
+    cases: list[Case] = []
+    for c in suite.get("cases", []):
+        field = c.get("expect", "n")
+        kind = c.get("kind", "scalar")
+        if kind == "list":
+            extract = (lambda f: lambda rows: [r[f] for r in rows])(field)
+        else:
+            extract = (lambda f: lambda rows: rows[0][f] if rows else None)(field)
+        cases.append(Case(c["id"], c["category"], c["question"], c["cypher"], extract, kind))
+    return cases
+
+
 _NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 # A permission denial is not an answer. Without this the absence cases pass
 # on a broken run, hiding that nothing was actually evaluated.
@@ -173,8 +196,15 @@ def list_scores(expected: list[str], answer: str) -> tuple[float, float, float]:
     categories in a different order has still answered the question. Ordering
     is a separate concern and would need its own case.
     """
-    low = (answer or "").lower()
-    found = [e for e in expected if e.lower() in low]
+    # Compare with separators flattened: the system writes "credit card"
+    # where the data stores "credit_card", and scoring that as a miss marks a
+    # correct answer wrong -- which is worse than a missed bug, because it
+    # sends you looking for a defect that is not there.
+    def _flat(t: str) -> str:
+        return re.sub(r"[\s_\-]+", " ", (t or "").lower())
+
+    low = _flat(answer)
+    found = [e for e in expected if _flat(str(e)) in low]
     # Precision needs a denominator of what the answer CLAIMED. Counting
     # comma/newline-separated fragments over-counts prose, so this uses the
     # expected-set size as the claim size -- precision and recall coincide
@@ -194,6 +224,10 @@ def run_case(session, case: Case, ctx: UserContext) -> dict[str, Any]:
     row: dict[str, Any] = {
         "id": case.id, "category": case.category, "expected": expected,
         "answer": answer[:160],
+        # The generated query, so a failure can be diagnosed from the saved
+        # results instead of being re-run -- re-running costs money and, since
+        # generation varies between runs, may not reproduce the failure at all.
+        "cypher": " ".join((((result or {}).get("sources") or [{}])[0].get("cypher") or "").split())[:400],
     }
     if _DENIED.search(answer):
         row.update(passed=False, error="access denied — check the eval user's RBAC role")
@@ -214,24 +248,62 @@ def run_case(session, case: Case, ctx: UserContext) -> dict[str, Any]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--category", help="run only this category")
+    ap.add_argument("--suite", help="path to a JSON suite (default: the built-in 12 cases)")
+    ap.add_argument("--limit", type=int, help="stop after this many cases")
+    ap.add_argument("--out", help="write results here after every case, so a partial run is still usable")
+    ap.add_argument("--resume", action="store_true", help="skip cases already present in --out")
+    ap.add_argument("--case-timeout", type=int, default=180,
+                    help="seconds a single case may take before it is failed (default 180)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args()
 
-    cases = [c for c in CASES if not args.category or c.category == args.category]
+    all_cases = load_suite(Path(args.suite)) if args.suite else CASES
+    cases = [c for c in all_cases if not args.category or c.category == args.category]
+    # Resume: a hundred cases is twenty minutes of paid calls, so a run that
+    # died at case 33 should not repay for the first 32.
+    results: list[dict[str, Any]] = []
+    if args.out and args.resume and Path(args.out).exists():
+        results = json.loads(Path(args.out).read_text())
+        done = {r["id"] for r in results}
+        cases = [c for c in cases if c.id not in done]
+        print(f"resuming: {len(done)} already done, {len(cases)} to go", file=sys.stderr)
+    if args.limit:
+        cases = cases[: args.limit]
     # A real user from the RBAC graph, not an invented one: access control is
     # graph-backed, so an unknown id is denied and EVERY case fails -- and the
     # absence cases would "pass", because a permission denial reads exactly
     # like a refusal to invent a figure.
     ctx = UserContext(user_id="admin_001", role=Role.ADMIN, department="IT", tenant_id="default")
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError()))
 
-    results = []
+    # Progress goes to stderr per case, and partial results are flushed to
+    # --out as they arrive. A hundred cases is twenty minutes of LLM calls;
+    # printing only at the end means a run that dies partway tells you
+    # nothing at all about how far it got or what it had already found.
     with get_neo4j_driver().session() as s:
-        for c in cases:
+        for idx, c in enumerate(cases, 1):
+            # Bound each case by wall clock. Retries nest -- SDK attempts
+            # inside Cypher attempts inside multistep steps -- so a single
+            # question can legitimately consume twenty minutes and stall the
+            # whole suite. One question exceeding the budget is a result
+            # worth recording, not a reason to stop measuring the other 99.
             try:
-                results.append(run_case(s, c, ctx))
+                signal.alarm(args.case_timeout)
+                try:
+                    row = run_case(s, c, ctx)
+                finally:
+                    signal.alarm(0)
+            except TimeoutError:
+                row = {"id": c.id, "category": c.category, "passed": False,
+                       "error": f"timed out after {args.case_timeout}s"}
             except Exception as exc:  # a broken case must not hide the rest
-                results.append({"id": c.id, "category": c.category, "passed": False,
-                                "error": str(exc)[:160]})
+                row = {"id": c.id, "category": c.category, "passed": False,
+                       "error": str(exc)[:160]}
+            results.append(row)
+            mark = "PASS" if row.get("passed") else "FAIL"
+            print(f"[{idx}/{len(cases)}] {mark} {c.id}", file=sys.stderr, flush=True)
+            if args.out:
+                Path(args.out).write_text(json.dumps(results, indent=2, default=str))
 
     if args.json:
         print(json.dumps(results, indent=2, default=str))

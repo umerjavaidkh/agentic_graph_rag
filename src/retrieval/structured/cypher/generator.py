@@ -26,6 +26,7 @@ class CypherGenerator(Protocol):
         previous_cypher: Optional[str] = None,
         execution_error: Optional[str] = None,
         max_tokens: int = STRUCTURED_TEXT2CYPHER_MAX_TOKENS,
+        model: Optional[str] = None,
     ) -> Optional[str]: ...
 
 
@@ -54,6 +55,21 @@ class OpenAICypherGenerator:
         self._model = model
         self._provider = provider
 
+    def ask_raw(self, prompt: str, *, model: Optional[str] = None, max_tokens: int = 60) -> str:
+        """One-shot completion with no Cypher scaffolding around it.
+
+        generate() wraps its argument in the text-to-Cypher template, so a
+        yes/no check sent through it would be answered as if it were a
+        request for a query.
+        """
+        response = self._provider.chat_completion(
+            model=model or self._model,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+        )
+        return (response.choices[0].message.content or "").strip()
+
     def generate(
         self,
         query: str,
@@ -63,6 +79,7 @@ class OpenAICypherGenerator:
         previous_cypher: Optional[str] = None,
         execution_error: Optional[str] = None,
         max_tokens: int = STRUCTURED_TEXT2CYPHER_MAX_TOKENS,
+        model: Optional[str] = None,
     ) -> Optional[str]:
         retry_block = ""
         if execution_error and previous_cypher:
@@ -88,7 +105,7 @@ If 0 rows: reverse any relationship whose direction does not match RELATIONSHIP 
         )
 
         response = self._provider.chat_completion(
-            model=self._model,
+            model=model or self._model,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
