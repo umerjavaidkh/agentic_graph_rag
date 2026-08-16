@@ -55,6 +55,21 @@ class OpenAICypherGenerator:
         self._model = model
         self._provider = provider
 
+    def ask_raw(self, prompt: str, *, model: Optional[str] = None, max_tokens: int = 60) -> str:
+        """One-shot completion with no Cypher scaffolding around it.
+
+        generate() wraps its argument in the text-to-Cypher template, so a
+        yes/no check sent through it would be answered as if it were a
+        request for a query.
+        """
+        response = self._provider.chat_completion(
+            model=model or self._model,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+        )
+        return (response.choices[0].message.content or "").strip()
+
     def generate(
         self,
         query: str,

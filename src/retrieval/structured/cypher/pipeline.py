@@ -22,6 +22,29 @@ from ..neo4j_sanitize import sanitize_row
 from ..schema.provider import SchemaProvider
 from .generator import CypherGenerator, regenerate_for_issue
 from .repair import fix_relationship_directions, normalize_generated_cypher
+VERIFY_PROMPT = """A question was asked of a graph database, and this Cypher was run to answer it.
+
+SCHEMA:
+{schema}
+
+QUESTION: {question}
+
+CYPHER: {cypher}
+
+Does the property being aggregated actually measure what the question asked
+for? Check the SCHEMA above before deciding anything is missing -- if the
+property exists and holds the right kind of quantity, the answer is OK. A weight is not a cost. A delivery duration is not a supplier lead time.
+An id is not a name. A timestamp is not a salary. Revenue IS legitimately the
+sum of a price, and a duration IS legitimately the gap between two timestamps
+-- derived metrics are fine when the underlying quantity is the right kind of
+thing.
+
+Answer with one line and nothing else:
+  OK
+or
+  MEASURES_SOMETHING_ELSE: <the thing the question asked for that this data does not hold>
+"""
+
 from .validator import (
     EMPTY_RESULT_HINTS,
     no_such_data_subject,
@@ -198,7 +221,56 @@ class Text2CypherPipeline:
                 if rows2:
                     rows = rows2
                     break
+        substitution = self._substitution_check(query, cypher, rows, schema)
+        if substitution is not None:
+            return [{
+                "id": "no_such_data",
+                "title": "Not in this dataset",
+                "text": (
+                    f"The connected data does not contain {substitution}. "
+                    f"State that it is not available; do not estimate it or "
+                    f"substitute a different measure."
+                ),
+                "score": 0.0,
+                "related": [],
+            }]
         return rows_to_chunks(rows, cypher)
+
+    def _substitution_check(
+        self, query: str, cypher: str, rows: list[dict], schema: Optional[str]
+    ) -> Optional[str]:
+        """Catch a query that answers a DIFFERENT question than the one asked.
+
+        Every fabrication observed took the same shape: one row, one number,
+        aggregated from whatever numeric property was to hand. Cost of goods
+        sold came back as the sum of product weight in grams; supplier lead
+        time as the average purchase-to-delivery gap; an average salary as
+        avg(created_at). All of them execute cleanly and return a plausible
+        figure, so no error path and no empty-result retry can see them --
+        and a larger model makes the same mistake, just with a different
+        column, so this is not something better generation fixes.
+
+        Checked here rather than in the prompt because three rounds of prompt
+        instruction did not hold. Scoped to single-row aggregates so ordinary
+        listing and ranking queries never pay for it.
+        """
+        if len(rows) != 1 or not schema:
+            return None
+        values = list(rows[0].values())
+        if len(values) != 1 or not isinstance(values[0], (int, float)) or isinstance(values[0], bool):
+            return None
+        try:
+            verdict = self._cypher.ask_raw(
+                VERIFY_PROMPT.format(schema=schema, question=query, cypher=cypher),
+                model=STRUCTURED_FALLBACK_MODEL,
+            )
+        except Exception:
+            return None  # a failed check must never block a real answer
+        text = (verdict or "").strip()
+        if text.upper().startswith("MEASURES_SOMETHING_ELSE"):
+            subject = text.split(":", 1)[-1].strip() if ":" in text else "that figure"
+            return subject or "that figure"
+        return None
 
     def _execute_cypher_rows(
         self,
