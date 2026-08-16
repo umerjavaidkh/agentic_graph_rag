@@ -247,7 +247,7 @@ Nodes carry the source they were loaded from, so `--clear` only removes rows tha
 
 A Northwind dump is still present at `sample_data_to_test/structured/northwind-data.cypher` (upload with `ALLOW_CYPHER_INGEST=true`), but the examples, eval and docs target Olist.
 
-## Dataset migration: Olist (in progress)
+## Dataset migration: what swapping the dataset exposed
 
 The bundled structured dataset changed from Northwind to the
 [Olist Brazilian e-commerce](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
@@ -366,7 +366,7 @@ chapter, no extra graph-algorithm dependency.
 | Area                                                                                                                                                                                          | Status                                                                                                   |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Dual-graph RAG (structured + documents + hybrid) via explicit retrieval-mode selection                                                                                                        | ✅                                                                                                       |
-| Olist e-commerce sample replacing Northwind — 552k nodes, schema-agnostic structured path (see [Dataset migration](#dataset-migration-olist-in-progress))                    | 🚧 in progress — data loaded and retrieval migrated; two LLM-judge eval suites still target the old schema |
+| Olist e-commerce dataset replacing Northwind — 552k nodes, and a structured path that names no dataset's fields (see [Dataset migration](#dataset-migration-what-swapping-the-dataset-exposed)) | ✅ done — data loaded, retrieval driven entirely from the live schema, and a guard test fails the build if dataset-specific field names reappear |
 | Pluggable parser / retrieval strategy registries (see [Pluggable by design](#pluggable-by-design))                                                                                            | ✅                                                                                                       |
 | Multi-provider chat/synthesis (OpenAI, Anthropic, Gemini) — embeddings always OpenAI                                                                                                          | ✅                                                                                                       |
 | Scalable ingestion (Redis + RQ workers, versioning)                                                                                                                                           | ✅                                                                                                       |
