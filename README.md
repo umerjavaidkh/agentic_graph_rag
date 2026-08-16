@@ -236,14 +236,31 @@ Load the sample data:
   see [ATTRIBUTION.md](sample_data_to_test/structured/olist-sample/ATTRIBUTION.md) for
   how it was cut and for its licence, which is **CC BY-NC-SA, not MIT like the code**.
 
-- **Your own tables** — CSV directory, Excel workbook, or SQLite file. Prints the
-  schema and relationships it inferred and stops, so you can check the plan before
-  anything is written:
+- **Your own tables** — a SQLite database, a directory of CSVs, or an Excel
+  workbook. Prints the schema and relationships it inferred and stops, so you can
+  check the plan before anything is written:
 
   ```bash
   python scripts/load_tabular.py --source ./my-data      # dry run
   python scripts/load_tabular.py --source ./my-data --load
   ```
+
+  | Format | Support |
+  | --- | --- |
+  | **SQLite** — `.db`, `.sqlite`, `.sqlite3` | Schema read directly, including **declared** foreign keys, so relationships are known rather than guessed |
+  | **CSV** — a directory of `.csv` files | Relationships inferred from column naming (`dept_id` → `dept.dept_id`) |
+  | **Excel** — `.xlsx`, `.xlsm` | One sheet per table; needs `openpyxl` installed |
+  | ~~`.sql` dump~~ | **Not supported.** A text file of `CREATE TABLE` / `INSERT` statements is not parsed — this is the usual export from MySQL, Postgres and SQL Server |
+  | ~~Live database connection~~ | **Not supported.** There is no connection string; the loader takes a file or a directory, not a server |
+
+  Coming from MySQL or Postgres, export each table as CSV rather than taking a
+  `.sql` dump. Importing a dump into SQLite first is unreliable — dialect
+  differences (`AUTO_INCREMENT`, backtick quoting, `ENGINE=` clauses) break a
+  plain import.
+
+  SQLite is the best-behaved input of the three: because its foreign keys are
+  declared rather than guessed, the "load related tables together" caveat below
+  does not apply to it.
 
   **Load related tables together.** Foreign keys are inferred from the tables
   present in a single run, so loading `orders.csv` today and `customers.csv`
@@ -389,7 +406,7 @@ chapter, no extra graph-algorithm dependency.
 | Multi-provider chat/synthesis (OpenAI, Anthropic, Gemini) — embeddings always OpenAI                                                                                                          | ✅                                                                                                       |
 | Scalable ingestion (Redis + RQ workers, versioning)                                                                                                                                           | ✅                                                                                                       |
 | Ingestion-quality validation (`GET /ingest/quality`, LLM-free per-document report)                                                                                                            | ✅                                                                                                       |
-| CSV / Excel / SQLite loading with inferred relationships, per-source provenance, and generated field descriptions | ✅ done via `scripts/load_tabular.py` — **CLI only**; the upload screen accepts PDFs and Cypher, not tables |
+| Tabular loading — SQLite (`.db`/`.sqlite`), CSV directories, Excel (`.xlsx`), with inferred relationships, per-source provenance and generated field descriptions | ✅ done via `scripts/load_tabular.py` — **CLI only**; the upload screen accepts PDFs and Cypher, not tables. No `.sql` dump or live-connection support |
 | Source document viewer — click a citation, view the original PDF in a side panel                                                                                                              | ✅                                                                                                       |
 | Bulk-question queue — paste several questions, answered one at a time in order                                                                                                                | ✅                                                                                                       |
 | Multi-tenancy (property-based `tenant_id` isolation)                                                                                                                                          | ✅                                                                                                       |
