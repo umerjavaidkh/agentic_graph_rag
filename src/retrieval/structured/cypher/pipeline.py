@@ -7,6 +7,7 @@ from neo4j import Driver
 
 from ....auth.roles import UserContext
 from ....config.settings import (
+    STRUCTURED_FALLBACK_MODEL,
     STRUCTURED_CYPHER_MAX_ATTEMPTS,
     STRUCTURED_CYPHER_SQL_LLM_RETRIES,
     STRUCTURED_EMPTY_RESULT_LLM_RETRIES,
@@ -125,12 +126,17 @@ class Text2CypherPipeline:
             repaired = repair_fn(prev)
             if repaired.strip() != prev.strip() and not _issue(repaired):
                 return repaired
+            # Escalate. The first attempt already failed with this model, and
+            # the errors that survive a repair are reasoning mistakes -- a
+            # join that leaves the entity it was meant to filter, an average
+            # over rows already collapsed -- which the same model reproduces.
             return self._cypher.generate(
                 query,
                 schema,
                 limit,
                 previous_cypher=prev,
                 execution_error=err,
+                model=STRUCTURED_FALLBACK_MODEL,
             )
 
         exec_res = self._executor.run(
@@ -177,6 +183,7 @@ class Text2CypherPipeline:
                     limit,
                     previous_cypher=cypher,
                     execution_error=retry_msg,
+                    model=STRUCTURED_FALLBACK_MODEL,
                 )
                 if not fixed or fixed.strip() == cypher.strip():
                     continue

@@ -234,6 +234,54 @@ def fix_extra_paren_as_alias(cypher: str) -> str:
     return re.sub(r"\bAS\s+(\w+)\)\s+AS\s+", r"AS \1 AS ", cypher, flags=re.I)
 
 
+def fix_round_precision(cypher: str) -> str:
+    """`round(avg(x))` -> `round(avg(x), 2)`.
+
+    Neo4j's single-argument round() goes to zero decimals, so an average is
+    destroyed at query time: 1.14 items per order returned as 1, 8.87 days
+    late as 9, 1.035 orders per customer as 1. Nothing downstream can
+    recover it -- the synthesis layer only ever sees the whole number, which
+    is why asking the answer text for more precision changed nothing.
+
+    Only aggregates that can be fractional are touched. round(count(...)) is
+    left alone because a count is already whole, and a rounding call that
+    already names its precision is left as the author wrote it.
+    """
+    fractional = ("avg(", "sum(", "stdev(", "percentileCont(", "percentileDisc(")
+    out, i = [], 0
+    text = cypher or ""
+    while True:
+        m = re.compile(r"\bround\s*\(", re.I).search(text, i)
+        if not m:
+            out.append(text[i:])
+            break
+        out.append(text[i:m.end()])
+        depth, j = 1, m.end()
+        while j < len(text) and depth:
+            if text[j] == "(":
+                depth += 1
+            elif text[j] == ")":
+                depth -= 1
+            j += 1
+        inner = text[m.end(): j - 1]
+        # A top-level comma means the precision is already specified.
+        has_precision = False
+        d = 0
+        for ch in inner:
+            if ch == "(":
+                d += 1
+            elif ch == ")":
+                d -= 1
+            elif ch == "," and d == 0:
+                has_precision = True
+        if not has_precision and any(f in inner.lower() for f in fractional):
+            out.append(inner + ", 2)")
+        else:
+            out.append(inner + ")")
+        i = j
+    return "".join(out)
+
+
 def fix_pattern_alias(cypher: str) -> str:
     """`MATCH (:Label) AS r` -> `MATCH (r:Label)`.
 
@@ -303,6 +351,7 @@ def normalize_generated_cypher(cypher: str, schema: str) -> str:
         return fixed
     fixed = fix_extra_paren_as_alias(fixed)
     fixed = fix_pattern_alias(fixed)
+    fixed = fix_round_precision(fixed)
     fixed = fix_with_missing_aliases(fixed)
     fixed = fix_relationship_property_access(fixed)
     fixed = fix_relationship_directions(fixed, schema)

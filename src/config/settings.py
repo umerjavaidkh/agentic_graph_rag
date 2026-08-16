@@ -50,6 +50,15 @@ CHAT_PROVIDER_API_KEY = {
 }[_CANONICAL_PROVIDER]
 # Per-pipeline overrides (each defaults to CHAT_MODEL when unset).
 STRUCTURED_MODEL = os.environ.get("STRUCTURED_MODEL", CHAT_MODEL)  # Text-to-Cypher + structured synthesis
+
+# Escalation model, used only when the first attempt produced Cypher that
+# failed or was rejected. Measured on the eleven cases the small model got
+# wrong: seven were answered correctly on the larger one, including a join
+# that walked back out of Payment into a different Order and an avg() taken
+# over rows already collapsed per seller. Both are reasoning errors rather
+# than missing schema, so a retry with the same model reproduces them.
+# Escalating only on failure keeps the common path on the cheap model.
+STRUCTURED_FALLBACK_MODEL = os.environ.get("STRUCTURED_FALLBACK_MODEL", "gpt-4.1")
 ROUTING_MODEL = os.environ.get("ROUTING_MODEL", CHAT_MODEL)  # MCP tool selection (search_documents vs query_data)
 AXIS2_MODEL = os.environ.get("AXIS2_MODEL", CHAT_MODEL)  # Ingestion NER + optional relationship LLM pass
 
