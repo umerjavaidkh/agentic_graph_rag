@@ -236,12 +236,30 @@ Load the sample data:
   see [ATTRIBUTION.md](sample_data_to_test/structured/olist-sample/ATTRIBUTION.md) for
   how it was cut and for its licence, which is **CC BY-NC-SA, not MIT like the code**.
 
-- **Your own tables** — CSV directory, Excel workbook, or SQLite file. Prints the schema and relationships it inferred and stops, so you can check the plan before anything is written:
+- **Your own tables** — CSV directory, Excel workbook, or SQLite file. Prints the
+  schema and relationships it inferred and stops, so you can check the plan before
+  anything is written:
 
   ```bash
   python scripts/load_tabular.py --source ./my-data      # dry run
   python scripts/load_tabular.py --source ./my-data --load
   ```
+
+  **Load related tables together.** Foreign keys are inferred from the tables
+  present in a single run, so loading `orders.csv` today and `customers.csv`
+  tomorrow leaves the two unlinked — with no error, just a graph where questions
+  spanning them return nothing. Rows themselves are incremental: loading is
+  `MERGE` on the primary key, so re-running updates existing rows and adds new
+  ones without duplicating. To add a table that references data already loaded,
+  re-run over the full set; the rows are unchanged and the missing relationships
+  are created.
+
+  Each run stamps its rows with the source it came from, so `--clear` removes only
+  what that source loaded and leaves other datasets in the same graph alone.
+
+  Field descriptions are generated at load time (one LLM call per table) and stored
+  in the graph, so the query layer knows what a column means and not just its type.
+  Pass `--no-docs` to skip.
 
 Nodes carry the source they were loaded from, so `--clear` only removes rows that loader wrote and leaves other datasets in the same graph alone.
 
@@ -371,6 +389,7 @@ chapter, no extra graph-algorithm dependency.
 | Multi-provider chat/synthesis (OpenAI, Anthropic, Gemini) — embeddings always OpenAI                                                                                                          | ✅                                                                                                       |
 | Scalable ingestion (Redis + RQ workers, versioning)                                                                                                                                           | ✅                                                                                                       |
 | Ingestion-quality validation (`GET /ingest/quality`, LLM-free per-document report)                                                                                                            | ✅                                                                                                       |
+| CSV / Excel / SQLite loading with inferred relationships, per-source provenance, and generated field descriptions | ✅ done via `scripts/load_tabular.py` — **CLI only**; the upload screen accepts PDFs and Cypher, not tables |
 | Source document viewer — click a citation, view the original PDF in a side panel                                                                                                              | ✅                                                                                                       |
 | Bulk-question queue — paste several questions, answered one at a time in order                                                                                                                | ✅                                                                                                       |
 | Multi-tenancy (property-based `tenant_id` isolation)                                                                                                                                          | ✅                                                                                                       |
