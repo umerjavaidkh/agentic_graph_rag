@@ -5,7 +5,7 @@ from typing import Optional
 
 from neo4j import Driver
 
-from ....graph.constants import NON_BUSINESS_LABELS
+from ....graph.constants import NON_BUSINESS_LABELS, SCHEMA_DOC_LABEL
 
 
 def _parse_node_type_labels(node_type: str) -> list[str]:
@@ -39,6 +39,30 @@ _ENUM_MAX_VALUES = 80
 # Cardinality needs a scan per label. Skipping the largest labels keeps
 # introspection bounded on a big graph; those are id-like columns anyway.
 _MAX_NODES_FOR_CARDINALITY = 2_000_000
+
+
+def _descriptions(session) -> list[str]:
+    """Human-written notes on what each field MEANS.
+
+    Types and sample values say what a column holds, never what it is for,
+    and several wrong answers came from exactly that gap: "which customer
+    state pays the highest freight" grouped by `seller.state` because both
+    are a two-letter code on a node the query already touched, and revenue
+    per seller was computed as avg(price) because nothing said price is a
+    per-line amount that must be summed first.
+
+    Stored as nodes rather than a dict in this file so the notes belong to
+    the dataset, not to the code -- a different graph brings its own, and a
+    graph with none is unaffected.
+    """
+    try:
+        rows = session.run(
+            "MATCH (d:`%s`) RETURN d.target AS target, d.text AS text ORDER BY d.target"
+            % SCHEMA_DOC_LABEL
+        )
+        return [f"{r['target']} — {r['text']}" for r in rows if r["target"] and r["text"]]
+    except Exception:
+        return []
 
 
 def _value_sets(session, labels: list[str], props: dict[str, set[str]]) -> list[str]:
@@ -251,6 +275,7 @@ class SchemaProvider:
 
             examples = _sample_values(session, sorted(labels))
             value_sets = _value_sets(session, sorted(labels), props)
+            described = _descriptions(session)
         self._props_cache = props
 
         schema = (
@@ -261,6 +286,9 @@ class SchemaProvider:
             "value in the question resembles one of these, filter on THAT property,\n"
             "not on a same-named property holding a different vocabulary):\n"
             + "\n".join(examples)
+            + ("\n\nWHAT EACH FIELD MEANS (read this before choosing which node or\n"
+               "property to group, filter or aggregate on):\n" + "\n".join(described)
+               if described else "")
             + ("\n\nVALUE SETS AND CARDINALITY (complete lists where a property is an\n"
                "enum; for the rest, how many distinct values exist -- a property with\n"
                "fewer distinct values than nodes repeats, so it groups rather than\n"

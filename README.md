@@ -5,6 +5,39 @@
 
 > 🚧 **Development in progress.** Core structured + unstructured retrieval, ingestion, and the storage-split architecture below are working and covered by tests, but this is not yet a tagged release — see [Current status](#current-status) for exactly what's done vs. in flight.
 
+## Structured retrieval: 95/100 on real business questions
+
+The benchmark is 100 questions a business user would actually ask this data —
+delivery performance, satisfaction drivers, seller concentration, retention,
+payment mix — each paired with a ground-truth Cypher query written by hand.
+**Deterministic: no LLM judge, so it costs nothing to run and returns the same
+answer twice.**
+
+| | |
+| --- | --- |
+| **95/100** | up from 79 when the suite was first run |
+| **12/12** | operational totals · **12/12** satisfaction · **10/10** category, geography, payment · **8/8** order funnel |
+| **0** | LLM-judge calls — every expected value is computed from the graph |
+
+All 100 were written before any were run, so the suite is not selected for
+questions that already worked. The twelve-case suite it replaced read 11/12
+while real business questions were failing.
+
+Every remaining failure is recorded with its generated Cypher in
+[`eval/baseline_olist_business.json`](eval/baseline_olist_business.json), and
+the causes are listed under [Still in progress](#still-in-progress).
+
+What the benchmark caught, on a 550k-node graph where each returned a
+plausible number rather than an error:
+
+- total freight reported as **"zero"** against a true 2,251,910
+- an average salary of **1,786,771,191,163** — a timestamp column, aliased
+- **99,441 customers who each bought exactly once**, because the loader keyed
+  on a per-order id
+- delivery times understated *and reordered* by `duration.between(...).days`,
+  which drops whole months
+- averages truncated to whole numbers before the answer layer ever saw them
+
 ## Why this is different
 
 | Typical flat RAG                   | Agentic GraphRAG                                            |
@@ -219,7 +252,7 @@ dataset had hidden every one of them.
 | Document queries took **165s** at this scale, and the UI never returned | **8s** |
 | Choosing "Structured data" could still answer from documents | The selected source is the only one consulted |
 
-**The 100-question business eval went 79 → 94.** It is deterministic — ground truth
+**The 100-question business eval went 79 → 95.** It is deterministic — ground truth
 is computed from the graph by hand-written Cypher, with no LLM judge — so it costs
 nothing to run and gives the same answer twice. That matters: the sampled-judge
 score this project used to steer by swung **63 to 80 on an identical graph**, and
@@ -229,11 +262,15 @@ would have scored the freight-of-zero bug as fine.
 
 Named specifically, because a number without its failures is not a measurement.
 
-- **6 of the 100 business questions still fail**, each recorded with its generated
-  Cypher in `eval/baseline_olist_business.json`: a join that walks out of `Payment`
-  into a different `Order` (returning 1.0 for an average review score), an `avg()`
-  taken over rows already collapsed one-per-seller, prose that drops the seller id
-  the query did return, and two absence questions still answered intermittently.
+- **5 of the 100 business questions still fail**, each recorded with its generated
+  Cypher in `eval/baseline_olist_business.json`. Two are a DateTime compared
+  against a `date()` and a relationship arrow reversed against the schema —
+  both produce zero rows, so the system truthfully reports "no orders were
+  delivered in 2018" from a query that could never match. The direction repair
+  already exists but only recognises named nodes, missing the anonymous
+  `(:Order)` form. The rest: prose that drops the seller id the query did
+  return, an average rounded to a whole number, and cost of goods sold still
+  answered from revenue.
 - **Model choice is the limit on most of those.** Measured on the same cases,
   `gpt-4.1-mini` gets seven wrong that `gpt-4.1` answers correctly. The larger model
   is currently used only to regenerate after a failure
@@ -321,7 +358,7 @@ chapter, no extra graph-algorithm dependency.
 | Google OIDC auth, RBAC, per-user thread isolation                                                                                                                                             | ✅ (`release/v1.0`)                                                                                      |
 | Streaming answers with charts, retrieval feedback loop                                                                                                                                        | ✅                                                                                                       |
 | Fast deterministic eval — 12 cases across fact / aggregate / ranking / multihop / temporal / absence (`scripts/eval_structured.py`) | ✅ 11/12 — the quick tier, run during iteration |
-| **Business-question eval — 100 questions a business user would actually ask** (delivery performance, satisfaction drivers, seller concentration, retention, payment mix, and absence), each with ground truth computed from the graph by hand-written Cypher (`eval/olist_business_suite.json`) | ✅ **94/100** — deterministic, no LLM judge, free to run. Every remaining failure is named in `eval/baseline_olist_business.json` |
+| **Business-question eval — 100 questions a business user would actually ask** (delivery performance, satisfaction drivers, seller concentration, retention, payment mix, and absence), each with ground truth computed from the graph by hand-written Cypher (`eval/olist_business_suite.json`) | ✅ **95/100** — deterministic, no LLM judge, free to run. Every remaining failure is named in `eval/baseline_olist_business.json` |
 | LLM-judge eval suites — 4 suites, 101 cases (structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ⚠️ last measured 95/101 against the Northwind sample; the two structured suites still target that schema and have not been re-pointed at Olist, so those numbers are stale |
 | Storage split — lean Neo4j (structure, `search_text` and pointers only), full text in a blob store, embeddings in a vector store, `Hydrator` seam on the read path        | ✅ write-side strip and dual-write are in place and tested; `BLOB_STORE_BACKEND` / `VECTOR_STORE_BACKEND` still default to `local` / `memory`, so MinIO + Qdrant are opt-in |
 | Axis-2 semantic-edge precision (target ≥90% via sampled LLM-judge)                                                                                                                            | 🚧 in progress — structural graph (Axis-1) already scores ~99-100%, semantic linking is the open gap     |

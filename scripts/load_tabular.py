@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.graph.driver import get_neo4j_driver  # noqa: E402
+from src.ingestion.schema_docs import ensure_field_docs  # noqa: E402
 from src.ingestion.tabular import infer_schema, load_schema, source_tag  # noqa: E402
 
 
@@ -30,6 +31,8 @@ def main() -> None:
     ap.add_argument("--source", required=True, help="CSV directory, .xlsx workbook, or .sqlite file")
     ap.add_argument("--load", action="store_true", help="actually write to Neo4j (default: dry run)")
     ap.add_argument("--clear", action="store_true", help="delete the labels this schema owns first")
+    ap.add_argument("--no-docs", action="store_true",
+                    help="skip generating field descriptions (one LLM call per label)")
     args = ap.parse_args()
 
     source = Path(args.source).expanduser()
@@ -78,6 +81,13 @@ def main() -> None:
         counts = load_schema(s, source, schema)
         for name, n in counts.items():
             print(f"  {name:<32} {n:>9,}")
+
+        if not args.no_docs:
+            # Types and names alone are not enough for a text-to-Cypher model
+            # to know that one column is a per-line amount to be summed while
+            # another is a code to group by. Written once, at load time.
+            n = ensure_field_docs(s, labels=[t.label for t in schema.tables])
+            print(f"\n  field descriptions generated: {n}")
 
         print("\nGraph now holds:")
         labels = [t.label for t in schema.tables]

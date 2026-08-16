@@ -234,6 +234,65 @@ def fix_extra_paren_as_alias(cypher: str) -> str:
     return re.sub(r"\bAS\s+(\w+)\)\s+AS\s+", r"AS \1 AS ", cypher, flags=re.I)
 
 
+_AGG_FN = re.compile(r"\b(?:avg|sum|count|min|max|collect|stdev|stdevp|percentilecont|percentiledisc)\s*\(", re.I)
+
+
+def fix_redundant_group_key(cypher: str) -> str:
+    """Drop a grouping key that survives into an outer aggregate's RETURN.
+
+    `WITH s.id AS k, sum(price) AS rev RETURN k, avg(rev)` reads like a
+    two-stage aggregate but is not one: keeping `k` in the RETURN makes avg()
+    group by it again, and averaging a single value returns that value. The
+    query hands back one row per group instead of one figure, and the answer
+    layer reports the first row -- "average revenue per seller" came back as
+    229,472 where the answer was 4,391, because 229,472 is the largest
+    seller's own revenue.
+
+    Repaired rather than regenerated because there is exactly one correct
+    reading and no LLM is needed to see it. Measured on this query, routing
+    it to the multistep planner instead got the right answer three times in
+    five; this gets it every time.
+
+    Only fires when the RETURN carries a bare grouping key AND aggregates an
+    alias that the WITH already aggregated. A legitimate breakdown -- one
+    that does not re-aggregate -- is untouched.
+    """
+    m = re.search(
+        r"\bWITH\s+(?P<with_body>.+?)\s+RETURN\s+(?P<ret_body>.+?)(?=\s+ORDER\s+BY\b|\s+LIMIT\b|\s*$)",
+        cypher or "",
+        re.I | re.S,
+    )
+    if not m:
+        return cypher
+
+    keys, aggregated = [], set()
+    for part in _split_top_level_commas(m.group("with_body")):
+        item = part.strip()
+        alias_m = re.search(r"\bAS\s+([A-Za-z_]\w*)\s*$", item, re.I)
+        if not alias_m:
+            continue
+        if _AGG_FN.search(item):
+            aggregated.add(alias_m.group(1))
+        else:
+            keys.append(alias_m.group(1))
+    if not keys or not aggregated:
+        return cypher
+
+    ret_items = [x.strip() for x in _split_top_level_commas(m.group("ret_body"))]
+    # Does the RETURN aggregate something the WITH already aggregated?
+    re_aggregates = any(
+        _AGG_FN.search(it) and any(re.search(rf"\b{re.escape(a)}\b", it) for a in aggregated)
+        for it in ret_items
+    )
+    if not re_aggregates:
+        return cypher
+
+    kept = [it for it in ret_items if it not in keys]
+    if not kept or len(kept) == len(ret_items):
+        return cypher
+    return cypher[: m.start("ret_body")] + ", ".join(kept) + cypher[m.end("ret_body") :]
+
+
 def fix_round_precision(cypher: str) -> str:
     """`round(avg(x))` -> `round(avg(x), 2)`.
 
@@ -352,6 +411,7 @@ def normalize_generated_cypher(cypher: str, schema: str) -> str:
     fixed = fix_extra_paren_as_alias(fixed)
     fixed = fix_pattern_alias(fixed)
     fixed = fix_round_precision(fixed)
+    fixed = fix_redundant_group_key(fixed)
     fixed = fix_with_missing_aliases(fixed)
     fixed = fix_relationship_property_access(fixed)
     fixed = fix_relationship_directions(fixed, schema)
