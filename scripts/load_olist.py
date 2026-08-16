@@ -44,6 +44,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.graph.constants import SCHEMA_DOC_LABEL  # noqa: E402
 from src.graph.driver import get_neo4j_driver  # noqa: E402
 
 BATCH = 5_000
@@ -82,6 +83,75 @@ CONSTRAINTS = [
     "CREATE CONSTRAINT olist_review   IF NOT EXISTS FOR (n:Review)   REQUIRE n.review_key IS UNIQUE",
     "CREATE CONSTRAINT olist_category IF NOT EXISTS FOR (n:Category) REQUIRE n.name IS UNIQUE",
 ]
+
+
+# What each field MEANS, as opposed to what type it is. Written from the
+# questions that got wrong answers: every note here corresponds to a real
+# mistake the Cypher generator made when it had only names and types to go on.
+FIELD_DOCS = [
+    ("Customer", "The PERSON who buys, one node each. Olist issues a fresh "
+     "customer_id per order, so this node is keyed on unique_id -- count these "
+     "for 'how many customers', and group by them for repeat-purchase or "
+     "orders-per-customer questions."),
+    ("Customer.state", "State where the BUYER lives, two-letter Brazilian code. "
+     "Use this for 'which state orders/spends/pays the most freight'. It is NOT "
+     "the same as Seller.state, which is where the merchant is."),
+    ("Customer.city", "City where the buyer lives. Lowercase, unnormalised."),
+    ("Seller.state", "State where the MERCHANT is based. Use only when the "
+     "question is about sellers; a question about where customers are asks for "
+     "Customer.state."),
+    ("Order", "One purchase. Carries status and the timestamps; the money is on "
+     "its OrderItems."),
+    ("Order.status", "Lifecycle stage. 'canceled' is spelled with one L."),
+    ("Order.purchased_at", "DateTime. When the customer placed the order -- the "
+     "START of any delivery-duration calculation. Elapsed days is "
+     "duration.inDays(purchased_at, delivered_at).days; duration.between(...).days "
+     "silently drops whole months and gives a smaller, wrongly-ranked answer."),
+    ("Order.delivered_at", "When the customer received it. Null for ~3% of "
+     "orders that were never delivered, so exclude nulls from delivery averages."),
+    ("Order.estimated_delivery", "The date promised at checkout. 'Late' means "
+     "delivered_at > estimated_delivery."),
+    ("OrderItem", "One LINE of an order: a single product from a single seller. "
+     "An order with three products has three of these."),
+    ("OrderItem.price", "Double. Price of this ONE line, excluding freight. "
+     "Revenue for any group is the SUM of its lines, never the average. "
+     "'Average revenue per X' is a TWO-STAGE aggregate: sum the lines per X "
+     "first, then average those sums -- `WITH x, sum(oi.price) AS rev RETURN "
+     "avg(rev)`. Writing avg(oi.price) in one stage answers a different "
+     "question (the typical line price) and returns one row per X rather than "
+     "a single figure."),
+    ("OrderItem.freight", "Double. Shipping charged on this ONE line, paid by "
+     "the customer. Totals are the SUM of lines; 'average freight per state' "
+     "averages over the customer's lines. Same two-stage rule as price when "
+     "the question is 'average freight per order or per seller'."),
+    ("Payment", "One payment instrument used on an order. Each Payment belongs "
+     "to exactly ONE Order, and an order may have several. Never traverse from a "
+     "Payment back out to a second Order -- that pattern requires one payment to "
+     "have two orders and matches nothing."),
+    ("Payment.value", "Amount settled by this instrument. It is not the order "
+     "total unless the order had a single payment."),
+    ("Review", "The customer's rating of a delivered order. Attached to Order, "
+     "NOT to OrderItem -- a review covers the whole order."),
+    ("Review.score", "1 to 5. 'Satisfaction' questions mean this."),
+    ("Category.name", "Category in PORTUGUESE, which is what Product.category "
+     "also holds. Match a Portuguese value here."),
+    ("Category.name_english", "The same category in English. If the question "
+     "names a category in English, match on THIS property."),
+    ("Product", "A catalogue item. Anonymised: there is no product name "
+     "anywhere in this data, only an id, a category and physical attributes."),
+    ("Product.weight_g", "Shipping weight in grams. A physical measure -- never "
+     "an answer to a question about money, cost or value."),
+]
+
+
+def write_field_docs(session) -> int:
+    """Store FIELD_DOCS in the graph for SchemaProvider to read."""
+    session.run(f"MATCH (d:{SCHEMA_DOC_LABEL}) DETACH DELETE d")
+    session.run(
+        f"UNWIND $rows AS r MERGE (d:{SCHEMA_DOC_LABEL} {{target: r.target}}) SET d.text = r.text",
+        rows=[{"target": t, "text": x} for t, x in FIELD_DOCS],
+    )
+    return len(FIELD_DOCS)
 
 
 def rows(path: Path) -> Iterator[dict[str, str]]:
@@ -152,6 +222,8 @@ def main() -> None:
             s.run(c)
         for c in CONSTRAINTS:
             s.run(c)
+
+        print(f"  field docs   {write_field_docs(s):>9,}")
 
         print("Loading Olist:")
         load(s, "categories", src / "product_category_name_translation.csv",

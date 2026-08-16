@@ -165,7 +165,15 @@ _REFUSAL = re.compile(
 )
 
 
+# Identifiers carry digits without being figures: a product id, a postcode, a
+# hash. Counting them as "the model stated a number" marked a correct refusal
+# as a fabrication -- "the best selling product is id bb50f2e2..., but its name
+# is not in the data" is exactly the right answer and was scored a failure.
+_IDENTIFIER = re.compile(r"\b(?=\w*[A-Za-z])(?=\w*\d)\w{6,}\b")
+
+
 def numbers_in(text: str) -> list[float]:
+    text = _IDENTIFIER.sub(" ", text or "")
     out = []
     for m in _NUM.finditer(text or ""):
         try:

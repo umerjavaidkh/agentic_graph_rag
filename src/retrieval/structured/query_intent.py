@@ -88,6 +88,13 @@ def estimate_structured_synthesis_max_tokens(
     return default_max
 
 
+# Note: routing "average X per Y" here was tried and reverted. It IS a nested
+# aggregate the planner handles better than single-shot -- 3/5 correct against
+# 0/5 -- but the repair that fixes it deterministically (repair.py's
+# fix_redundant_group_key) only sees a single query, and the planner's failure
+# is a multi-query plan whose last step returns per-group rows. The two
+# together scored worse than either alone, so the deterministic repair is the
+# one kept.
 def likely_needs_multistep_plan(question: str) -> bool:
     """
     Fast regex gate for the multistep LLM planner.

@@ -24,3 +24,10 @@ NON_BUSINESS_LABELS = frozenset(
     | {DOCUMENT_LOGICAL_LABEL, DOC_REVISION_LABEL}
     | {"User", "Role", "Tenant", "Chunk"}
 )
+
+
+# Field documentation, stored in the graph rather than in code so it travels
+# with whatever dataset is loaded. A loader (or a human) writes one node per
+# label/property/relationship it wants to explain; SchemaProvider folds them
+# into the schema the Cypher generator sees. Absent nodes change nothing.
+SCHEMA_DOC_LABEL = "SchemaDoc"

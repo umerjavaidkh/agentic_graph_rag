@@ -79,6 +79,13 @@ NUMBERS AND DATES:
 - Aggregations and rankings ("most", "highest", "top"): MATCH the full path,
   WITH groupKey, the aggregate AS metric, then RETURN groupKey, metric
   ORDER BY metric DESC LIMIT {n}
+- Elapsed days is duration.inDays(earlier, later).days. Do NOT use
+  duration.between(a, b).days for this: `.days` on a general duration is the
+  day component left after whole months are removed, so a 45-day gap reads as
+  15. Measured on real data it understated every state's delivery time and
+  changed which state ranked first -- a wrong answer that looks entirely
+  plausible. Use duration.inDays for a total, and aggregate with avg()
+  directly rather than collect() plus apoc.coll.avg().
 - Duration argument order: duration.inDays(earlier, later) and
   duration.between(earlier, later) take the EARLIER instant first. Reversing
   them returns a negative elapsed time, which is never the answer to "how
