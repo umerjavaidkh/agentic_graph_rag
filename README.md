@@ -3,40 +3,60 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status: Development in Progress](https://img.shields.io/badge/status-development%20in%20progress-orange.svg)](#current-status)
 
-> 🚧 **Development in progress.** Core structured + unstructured retrieval, ingestion, and the storage-split architecture below are working and covered by tests, but this is not yet a tagged release — see [Current status](#current-status) for exactly what's done vs. in flight.
+> **Structured retrieval is measured and reproducible** — 95/100 on a committed 100-question benchmark with ground truth computed from the graph ([re-run it](#structured-retrieval-95100-and-you-can-re-run-the-benchmark-yourself)). RBAC, multi-tenancy, audit logging and the storage split are in place. 🚧 Still moving: the document (unstructured) half has no equivalent benchmark yet, two of the four LLM-judge suites still target a retired schema, and a tagged release is pending — see [Current status](#current-status).
 
-## Structured retrieval: 95/100 on real business questions
+## Structured retrieval: 95/100, and you can re-run the benchmark yourself
 
-The benchmark is 100 questions a business user would actually ask this data —
+Text-to-Cypher over your own schema, measured against
+**[100 questions a business user would actually ask](eval/olist_business_suite.json)** —
 delivery performance, satisfaction drivers, seller concentration, retention,
-payment mix — each paired with a ground-truth Cypher query written by hand.
-**Deterministic: no LLM judge, so it costs nothing to run and returns the same
-answer twice.**
+payment mix, and questions the data *cannot* answer.
 
 | | |
 | --- | --- |
-| **95/100** | up from 79 when the suite was first run |
-| **12/12** | operational totals · **12/12** satisfaction · **10/10** category, geography, payment · **8/8** order funnel |
-| **0** | LLM-judge calls — every expected value is computed from the graph |
+| **95/100** | up from 79 when the suite was first baselined |
+| **12/12** operational · **12/12** satisfaction | **10/10** category · geography · payment · **8/8** funnel |
+| **0** LLM-judge calls | every expected value is computed from the graph by hand-written Cypher |
 
-All 100 were written before any were run, so the suite is not selected for
-questions that already worked. The twelve-case suite it replaced read 11/12
-while real business questions were failing.
+```bash
+python scripts/eval_structured.py --suite eval/olist_business_suite.json
+```
 
-Every remaining failure is recorded with its generated Cypher in
-[`eval/baseline_olist_business.json`](eval/baseline_olist_business.json), and
-the causes are listed under [Still in progress](#still-in-progress).
+**The benchmark is the claim.** It is deterministic — no sampled judge, so it
+costs nothing to run and returns the same answer twice. Ground truth is a
+separate hand-written Cypher query per question, so a pass means the system
+agrees with the database, not with another model. Every question was written
+before any were run, so the suite is not selected for what already worked. And
+every result, including the generated Cypher for each failure, is committed:
 
-What the benchmark caught, on a 550k-node graph where each returned a
-plausible number rather than an error:
+- **[`eval/olist_business_suite.json`](eval/olist_business_suite.json)** — the 100 questions with their ground-truth queries
+- **[`eval/baseline_olist_business.json`](eval/baseline_olist_business.json)** — the last full run: every answer, every generated query
+- **[`eval/OLIST_DATA_CONTEXT.md`](eval/OLIST_DATA_CONTEXT.md)** — the schema the questions were written from
 
-- total freight reported as **"zero"** against a true 2,251,910
-- an average salary of **1,786,771,191,163** — a timestamp column, aliased
-- **99,441 customers who each bought exactly once**, because the loader keyed
-  on a per-order id
-- delivery times understated *and reordered* by `duration.between(...).days`,
-  which drops whole months
-- averages truncated to whole numbers before the answer layer ever saw them
+The twelve-case suite this replaced read 11/12 while real business questions
+were failing. That gap is the reason for the larger one.
+
+### What it caught
+
+On a 550k-node graph, each of these returned a plausible number rather than an
+error — which is why a smaller demo dataset had hidden every one:
+
+| | |
+| --- | --- |
+| Total freight reported as **"zero"** | true value 2,251,910 — a node property read off a relationship |
+| An average salary of **1,786,771,191,163** | a timestamp column, aliased as salary |
+| **99,441 customers who each bought once** | the loader keyed on a per-order id, so every retention answer was wrong |
+| Delivery times understated **and reordered** | `duration.between(...).days` drops whole months |
+| Averages truncated to whole numbers | `round(avg(x))` goes to zero decimals before the answer layer sees it |
+
+Behind the number: RBAC enforced in the graph, per-tenant isolation, an audit
+log, bounded LLM timeouts, and a schema read live at runtime rather than
+hardcoded — the structured path names no label or property of any particular
+dataset.
+
+Five questions still fail. They are listed with their causes under
+[Still in progress](#still-in-progress), because a benchmark that hides its
+failures is not a measurement.
 
 ## Why this is different
 
