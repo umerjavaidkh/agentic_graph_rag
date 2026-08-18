@@ -13,6 +13,7 @@ from ..config.settings import (
 from ..model_providers.factory import get_chat_provider
 from ..presentation import build_presentation
 from ..retrieval.unstructured.graph import (
+    _claim_citations,
     _STRUCTURAL_FAST_MODES,
     _build_fast_unstructured_answer,
     _fix_misrouted_structured_answer,
@@ -174,6 +175,9 @@ def iter_document_stream(
             presentation=presentation,
             document_id=retrieved.get("document_id"),
             document_title=retrieved.get("document_title"),
+            # Per-claim attribution, so the UI can put a page next to each
+            # sentence rather than one list under the whole answer.
+            claims=_claim_citations(answer, chunks),
         )
         return
 
@@ -224,4 +228,7 @@ def iter_document_stream(
         confidence_note=confidence_note,
         document_id=retrieved.get("document_id"),
         document_title=retrieved.get("document_title"),
+        # Per-claim attribution: a page beside each sentence rather than one
+        # list under the whole answer.
+        claims=_claim_citations(answer, chunks),
     )
