@@ -106,6 +106,57 @@ def retrieve_node(state: ESGState):
     }
 
 
+_CITATION_STOPWORDS = frozenset(
+    "the a an and or of to in for on with is are was were be been this that these "
+    "those it its as at by from not no which who whom whose what when where how "
+    "section covers cover document report page pages".split()
+)
+
+
+def _grounded_sources(answer: str, chunks: list[dict]) -> list[dict]:
+    """Keep the chunks the answer actually draws on.
+
+    Every retrieved chunk was being cited, not just the ones used, so a reader
+    was pointed at roughly four times the material that bore on the answer --
+    measured at 0.26 mean page precision against 88% correct section naming.
+    A citation nobody can practically check is close to no citation at all,
+    which is the whole reason citation is tracked separately from answer text.
+
+    Lexical overlap rather than a second LLM call: it costs nothing per query
+    and is deterministic, so the same answer always cites the same sources.
+
+    Fails OPEN. If nothing clears the bar the original list is returned
+    unchanged -- dropping a source a reader wanted is worse than showing one
+    they did not need, and the source viewer must never be left with nothing
+    to open.
+    """
+    if not answer or len(chunks) <= 1:
+        return chunks
+
+    def words(text: str) -> set[str]:
+        return {
+            w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(w) > 3 and w not in _CITATION_STOPWORDS
+        }
+
+    answer_words = words(answer)
+    if not answer_words:
+        return chunks
+
+    scored = []
+    for c in chunks:
+        overlap = len(answer_words & words(c.get("text") or c.get("title") or ""))
+        scored.append((overlap, c))
+
+    best = max(o for o, _ in scored)
+    if best == 0:
+        return chunks
+    # Half the best chunk's overlap: keeps genuine supporting passages while
+    # dropping the long tail that merely came back from the same retrieval.
+    keep = [c for o, c in scored if o >= max(1, best // 2)]
+    return keep or chunks
+
+
 def generate_node(state: ESGState):
     question = state["question"]
     retrieved = state.get("retrieved_context", {}) or {}
@@ -256,6 +307,7 @@ def _generate_document_answer(
         "answer": answer,
         "low_confidence": low_confidence,
         "confidence_note": confidence_note,
+        "sources": _grounded_sources(answer, chunks),
     }
 
 
