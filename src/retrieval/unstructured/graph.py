@@ -113,6 +113,63 @@ _CITATION_STOPWORDS = frozenset(
 )
 
 
+# A digit before the period is a section number, not a sentence end:
+# splitting on "2.4. Interoperability" produced a fragment ending at
+# '"2.4.' and attributed the rest to a different page.
+_SENTENCE_SPLIT = re.compile(r"(?<![0-9].)(?<=[.!?])\s+(?=[A-Z])")
+
+
+def _claim_citations(answer: str, chunks: list[dict]) -> list[dict]:
+    """Attribute each sentence of the answer to the chunk that supports it.
+
+    A flat source list cannot say WHICH page supports which claim, so a reader
+    checking a four-page answer has to read all four -- which removes the
+    property that makes citation worth having. Per-claim attribution is also
+    sharper to compute: matching one sentence against a chunk is a much
+    narrower problem than matching a whole answer, where every chunk shares
+    some vocabulary with something.
+
+    Sentences with no confident support are returned with source_id None
+    rather than dropped. Telling a reader which line is unverifiable is more
+    useful than quietly omitting it, and it is the part a public deployment
+    most needs to be honest about.
+    """
+    if not answer or not chunks:
+        return []
+
+    scored_chunks = [(c, _content_words(c.get("text") or c.get("title") or "")) for c in chunks]
+    claims: list[dict] = []
+    for sentence in _SENTENCE_SPLIT.split(answer.strip()):
+        sentence = sentence.strip()
+        if len(sentence) < 15:  # headings, "Yes.", list bullets
+            continue
+        words = _content_words(sentence)
+        best, best_overlap = None, 0
+        for chunk, chunk_words in scored_chunks:
+            overlap = len(words & chunk_words)
+            if overlap > best_overlap:
+                best, best_overlap = chunk, overlap
+        # Two matching content words is coincidence; a supported sentence
+        # shares the terms it is reporting.
+        supported = best is not None and best_overlap >= 3
+        raw = (best or {}).get("raw") if isinstance((best or {}).get("raw"), dict) else (best or {})
+        claims.append({
+            "text": sentence,
+            "source_id": best.get("id") if supported else None,
+            "page": raw.get("page_start") if supported else None,
+            "title": (best.get("title") or "")[:120] if supported else None,
+            "overlap": best_overlap if supported else 0,
+        })
+    return claims
+
+
+def _content_words(text: str) -> set[str]:
+    return {
+        w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(w) > 3 and w not in _CITATION_STOPWORDS
+    }
+
+
 def _grounded_sources(answer: str, chunks: list[dict]) -> list[dict]:
     """Keep the chunks the answer actually draws on.
 
@@ -133,12 +190,7 @@ def _grounded_sources(answer: str, chunks: list[dict]) -> list[dict]:
     if not answer or len(chunks) <= 1:
         return chunks
 
-    def words(text: str) -> set[str]:
-        return {
-            w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
-            if len(w) > 3 and w not in _CITATION_STOPWORDS
-        }
-
+    words = _content_words
     answer_words = words(answer)
     if not answer_words:
         return chunks
@@ -308,6 +360,7 @@ def _generate_document_answer(
         "low_confidence": low_confidence,
         "confidence_note": confidence_note,
         "sources": _grounded_sources(answer, chunks),
+        "claims": _claim_citations(answer, chunks),
     }
 
 

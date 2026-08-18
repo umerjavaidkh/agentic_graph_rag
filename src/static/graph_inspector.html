@@ -1059,17 +1059,55 @@
         const snapshot = await resp.json();
         viewingPageNumber = pageNumber;
         currentSnapshot = snapshot;
-        renderStats(snapshot);
-        renderGraph(snapshot);
-        renderLegend(snapshot);
-        const banner = document.createElement('div');
-        banner.className = 'page-scoped-banner';
-        banner.innerHTML = `<span>Page ${pageNumber} — ${snapshot.internal_edge_count} inner edge(s), ${snapshot.external_edge_count} outer edge(s) (dashed/dim) to other pages</span>`;
-        document.getElementById('graph-canvas').appendChild(banner);
+        drawPageScoped(snapshot, pageNumber);
         document.getElementById('back_to_doc_btn').style.display = 'block';
       } catch (err) {
         showError(err.message);
       }
+    }
+
+
+    // The page view arrives with this page's nodes AND their links out to the
+    // rest of the document. That outer context is genuinely useful, but it
+    // dominates: the snapshot query's own note records a page with 10 inner
+    // edges and 64 outer ones, so the page's own structure is buried in a
+    // hairball six times its size and the view stops being readable.
+    //
+    // So it opens on the page itself and reveals the outer edges on request.
+    // Nothing is discarded -- the toggle re-renders from the same snapshot.
+    let showOuterEdges = false;
+
+    function innerOnly(snapshot) {
+      if (showOuterEdges) return snapshot;
+      const kept = new Set(snapshot.nodes.filter(n => !n.is_external).map(n => n.id));
+      return {
+        ...snapshot,
+        nodes: snapshot.nodes.filter(n => kept.has(n.id)),
+        edges: (snapshot.edges || []).filter(e => kept.has(e.source) && kept.has(e.target)),
+      };
+    }
+
+    function drawPageScoped(snapshot, pageNumber) {
+      const view = innerOnly(snapshot);
+      renderStats(view);
+      renderGraph(view);
+      renderLegend(view);
+      const banner = document.createElement('div');
+      banner.className = 'page-scoped-banner';
+      const outer = snapshot.external_edge_count || 0;
+      banner.innerHTML =
+        `<span>Page ${pageNumber} — ${snapshot.internal_edge_count} edge(s) on this page` +
+        (outer ? `, ${outer} to other pages ${showOuterEdges ? 'shown' : 'hidden'}` : '') +
+        `</span>` +
+        (outer ? `<button id="toggle_outer">${showOuterEdges ? 'Hide' : 'Show'} outer edges</button>` : '');
+      const canvas = document.getElementById('graph-canvas');
+      canvas.appendChild(banner);
+      const btn = document.getElementById('toggle_outer');
+      if (btn) btn.onclick = () => {
+        showOuterEdges = !showOuterEdges;
+        canvas.querySelectorAll('.page-scoped-banner').forEach(b => b.remove());
+        drawPageScoped(snapshot, pageNumber);
+      };
     }
 
     function backToDocGraph() {
