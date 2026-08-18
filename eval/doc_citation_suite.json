@@ -6,7 +6,6 @@
    "id": "sec_acknowledgements",
    "question": "What does the section titled \"acknowledgements\" cover?",
    "expected_section": "acknowledgements",
-   "expected_section_path": "",
    "expected_pages": [
     5
    ]
@@ -15,7 +14,6 @@
    "id": "sec_list_of_abbreviations",
    "question": "What does the section titled \"List of abbreviations\" cover?",
    "expected_section": "List of abbreviations",
-   "expected_section_path": "",
    "expected_pages": [
     6
    ]
@@ -24,7 +22,6 @@
    "id": "sec_executive_summary",
    "question": "What does the section titled \"EXECUTIVE SUMMARY\" cover?",
    "expected_section": "EXECUTIVE SUMMARY",
-   "expected_section_path": "",
    "expected_pages": [
     7,
     8
@@ -34,7 +31,6 @@
    "id": "sec_1._introduction",
    "question": "What does the section titled \"1. Introduction\" cover?",
    "expected_section": "1. Introduction",
-   "expected_section_path": "",
    "expected_pages": [
     9,
     10,
@@ -49,7 +45,6 @@
    "id": "sec_1.1._goal_of_this_report",
    "question": "What does the section titled \"1.1. Goal of this report\" cover?",
    "expected_section": "1.1. Goal of this report",
-   "expected_section_path": "1. Introduction",
    "expected_pages": [
     12
    ]
@@ -58,7 +53,6 @@
    "id": "sec_1.2._key_functionalities_and",
    "question": "What does the section titled \"1.2. Key functionalities and project origins\" cover?",
    "expected_section": "1.2. Key functionalities and project origins",
-   "expected_section_path": "1. Introduction",
    "expected_pages": [
     13,
     14,
@@ -69,7 +63,6 @@
    "id": "sec_2.1.1._goarn",
    "question": "What does the section titled \"2.1.1. GOARN\" cover?",
    "expected_section": "2.1.1. GOARN",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.1. \u0007Leveraging collective expertise",
    "expected_pages": [
     16,
     17
@@ -79,7 +72,6 @@
    "id": "sec_2._\u0007go.data_activities_and_o",
    "question": "What does the section titled \"2. \u0007Go.Data activities and objectives\" cover?",
    "expected_section": "2. \u0007Go.Data activities and objectives",
-   "expected_section_path": "",
    "expected_pages": [
     16,
     17,
@@ -108,7 +100,6 @@
    "id": "sec_2.1._\u0007leveraging_collective_",
    "question": "What does the section titled \"2.1. \u0007Leveraging collective expertise\" cover?",
    "expected_section": "2.1. \u0007Leveraging collective expertise",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives",
    "expected_pages": [
     16,
     17,
@@ -121,7 +112,6 @@
    "id": "sec_2.1.2._three-level_who_colla",
    "question": "What does the section titled \"2.1.2. Three-level WHO collaboration\" cover?",
    "expected_section": "2.1.2. Three-level WHO collaboration",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.1. \u0007Leveraging collective expertise",
    "expected_pages": [
     18
    ]
@@ -130,7 +120,6 @@
    "id": "sec_2.1.3._users_supporting_user",
    "question": "What does the section titled \"2.1.3. Users supporting users and open knowledge exchange\" cover?",
    "expected_section": "2.1.3. Users supporting users and open knowledge exchange",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.1. \u0007Leveraging collective expertise",
    "expected_pages": [
     19,
     20
@@ -140,7 +129,6 @@
    "id": "sec_2.2._promoting_best_practice",
    "question": "What does the section titled \"2.2. Promoting best practices in field epidemiology response\" cover?",
    "expected_section": "2.2. Promoting best practices in field epidemiology response",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives",
    "expected_pages": [
     21,
     22,
@@ -151,7 +139,6 @@
    "id": "sec_2.2.1._generating_real-time_",
    "question": "What does the section titled \"2.2.1. Generating real-time insights into transmission dynamics\" cover?",
    "expected_section": "2.2.1. Generating real-time insights into transmission dynamics",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.2. Promoting best practices in field epidemiology response",
    "expected_pages": [
     22
    ]
@@ -160,7 +147,6 @@
    "id": "sec_2.2.2._field_epidemiology_tr",
    "question": "What does the section titled \"2.2.2. Field epidemiology training networks\" cover?",
    "expected_section": "2.2.2. Field epidemiology training networks",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.2. Promoting best practices in field epidemiology response",
    "expected_pages": [
     23
    ]
@@ -169,7 +155,6 @@
    "id": "sec_2.3.1._openwho",
    "question": "What does the section titled \"2.3.1. OpenWHO\" cover?",
    "expected_section": "2.3.1. OpenWHO",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.3. Training and country implementation support",
    "expected_pages": [
     24
    ]
@@ -178,7 +163,6 @@
    "id": "sec_2.3._training_and_country_im",
    "question": "What does the section titled \"2.3. Training and country implementation support\" cover?",
    "expected_section": "2.3. Training and country implementation support",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives",
    "expected_pages": [
     24,
     25,
@@ -190,7 +174,6 @@
    "id": "sec_2.3.2._open-access_materials",
    "question": "What does the section titled \"2.3.2. Open-access materials for implementation\" cover?",
    "expected_section": "2.3.2. Open-access materials for implementation",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.3. Training and country implementation support",
    "expected_pages": [
     25
    ]
@@ -199,7 +182,6 @@
    "id": "sec_2.3.3._decentralized_capacit",
    "question": "What does the section titled \"2.3.3. Decentralized capacity-building activities\" cover?",
    "expected_section": "2.3.3. Decentralized capacity-building activities",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.3. Training and country implementation support",
    "expected_pages": [
     26,
     27
@@ -209,7 +191,14 @@
    "id": "sec_2.4.2._interoperability",
    "question": "What does the section titled \"2.4.2. Interoperability\" cover?",
    "expected_section": "2.4.2. Interoperability",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.4. Interoperability and analytics",
+   "expected_pages": [
+    28
+   ]
+  },
+  {
+   "id": "sec_2.4.1._go.data_github",
+   "question": "What does the section titled \"2.4.1. Go.Data Github\" cover?",
+   "expected_section": "2.4.1. Go.Data Github",
    "expected_pages": [
     28
    ]
@@ -218,7 +207,6 @@
    "id": "sec_2.4._interoperability_and_an",
    "question": "What does the section titled \"2.4. Interoperability and analytics\" cover?",
    "expected_section": "2.4. Interoperability and analytics",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives",
    "expected_pages": [
     28,
     29,
@@ -230,7 +218,6 @@
    "id": "sec_2.4.3._analytics",
    "question": "What does the section titled \"2.4.3. Analytics\" cover?",
    "expected_section": "2.4.3. Analytics",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.4. Interoperability and analytics",
    "expected_pages": [
     29,
     30,
@@ -241,7 +228,6 @@
    "id": "sec_2.5.1._go.data_development",
    "question": "What does the section titled \"2.5.1. Go.Data development\" cover?",
    "expected_section": "2.5.1. Go.Data development",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.5. Development and support",
    "expected_pages": [
     32,
     33
@@ -251,7 +237,6 @@
    "id": "sec_2.5._development_and_support",
    "question": "What does the section titled \"2.5. Development and support\" cover?",
    "expected_section": "2.5. Development and support",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives",
    "expected_pages": [
     32,
     33,
@@ -262,19 +247,8 @@
    "id": "sec_2.5.2._country_it_focal_poin",
    "question": "What does the section titled \"2.5.2. Country IT focal points\" cover?",
    "expected_section": "2.5.2. Country IT focal points",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives > 2.5. Development and support",
    "expected_pages": [
     34
-   ]
-  },
-  {
-   "id": "sec_2.6._route_to_open_sourcing",
-   "question": "What does the section titled \"2.6. Route to open sourcing\" cover?",
-   "expected_section": "2.6. Route to open sourcing",
-   "expected_section_path": "2. \u0007Go.Data activities and objectives",
-   "expected_pages": [
-    35,
-    36
    ]
   }
  ]

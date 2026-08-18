@@ -68,6 +68,10 @@ def main() -> None:
         # every question regardless of subject. Precision is what a reader
         # experiences: of the pages they were pointed at, how many actually
         # bear on the answer.
+        # Cited nodes are Sections, not Pages -- only Section and Chapter are
+        # embedded, so semantic retrieval can never return a Page. Comparing a
+        # Section citation against Page ground truth scored like-for-unlike and
+        # reported 12%. Each cited node is measured against its OWN page span.
         precision = len(got & want) / len(got) if got else 0.0
         page_ok = precision >= 0.5
         section_ok = c["expected_section"].lower() in answer.lower()
