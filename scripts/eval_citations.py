@@ -56,27 +56,36 @@ def main() -> None:
         cases = cases[: args.limit]
     ctx = UserContext(user_id="admin_001", role=Role.ADMIN, department="IT", tenant_id="default")
 
-    hits = {"page": 0, "section": 0}
+    hits = {"page": 0, "section": 0, "precision": 0.0}
     for i, c in enumerate(cases, 1):
         result = ask(c["question"], user_context=ctx, retrieval_mode="unstructured") or {}
         answer = (result.get("answer") or "")
         got = cited_pages(result.get("sources") or [])
         want = set(c["expected_pages"])
-        # Overlap, not equality: an answer may legitimately cite one page of a
-        # multi-page section. Citing NO expected page is the failure.
-        page_ok = bool(got & want)
+        # Overlap alone flatters this. Citing six pages of a 52-page document
+        # hits a four-page section largely by coverage, so a first pass scored
+        # 88% while pages 18, 21, 28 and 32 were being returned for nearly
+        # every question regardless of subject. Precision is what a reader
+        # experiences: of the pages they were pointed at, how many actually
+        # bear on the answer.
+        precision = len(got & want) / len(got) if got else 0.0
+        page_ok = precision >= 0.5
         section_ok = c["expected_section"].lower() in answer.lower()
         hits["page"] += page_ok
+        hits["precision"] += precision
         hits["section"] += section_ok
         print(
             f"[{i}/{len(cases)}] {c['id']:<32} page={'ok ' if page_ok else 'MISS'} "
-            f"section={'ok ' if section_ok else 'MISS'} cited={sorted(got)[:6]} want={sorted(want)[:4]}",
+            f"p={precision:.2f} section={'ok ' if section_ok else 'MISS'} "
+            f"cited={sorted(got)[:6]} want={sorted(want)[:4]}",
             file=sys.stderr, flush=True,
         )
 
     n = len(cases)
     print(f"\n  page citation:    {hits['page']}/{n}  ({100*hits['page']//n if n else 0}%)")
     print(f"  section citation: {hits['section']}/{n}  ({100*hits['section']//n if n else 0}%)")
+    print(f"  mean page precision: {hits['precision']/n:.2f}  "
+          f"(share of cited pages that bear on the answer)")
 
 
 if __name__ == "__main__":
