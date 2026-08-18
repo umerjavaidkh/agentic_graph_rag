@@ -133,11 +133,19 @@ def _topk_edge_pairs(
     n = sim.shape[0]
     if n < 2 or k <= 0:
         return []
-    iu, ju = np.triu_indices(n, k=1)
+    # Mask first, then materialise. np.triu_indices allocates two int64 arrays
+    # covering EVERY pair before the threshold removes any -- 16 bytes per pair
+    # -- whereas a boolean mask is one byte and np.nonzero returns only the
+    # survivors. Measured: at n=6000 with a selective threshold, peak drops
+    # 378 MB -> 108 MB. The gain is conditional, not universal: when most pairs
+    # pass the threshold the surviving candidate list dominates and the two are
+    # within noise of each other (474 MB vs 479 MB at n=3000, thr=0.75). It is
+    # kept because the selective case is the one that scales -- a larger
+    # document raises n without raising how many pairs are genuinely similar.
+    keep = sim >= threshold if threshold is not None else np.ones(sim.shape, dtype=bool)
+    keep = np.triu(keep, k=1)  # k=1 also excludes the diagonal, so no self-pairs
+    iu, ju = np.nonzero(keep)
     scores = sim[iu, ju]
-    if threshold is not None:
-        mask = scores >= threshold
-        iu, ju, scores = iu[mask], ju[mask], scores[mask]
     candidates = [(int(i), int(j), float(s)) for i, j, s in zip(iu, ju, scores)]
     return _cap_edges_by_degree(candidates, k)
 
@@ -1042,17 +1050,37 @@ class Axis2Builder:
         merged_entities: dict[str, list[str]] = {}
         merged_types: dict[str, dict[str, str]] = {}
 
+        # A dropped batch is indistinguishable from a batch that found nothing,
+        # and the difference matters: entity coverage, SHARES_ENTITY precision
+        # and every Axis-2 score read the same either way. Three compounding NER
+        # bugs once zeroed out whole pages' entities and looked like sparse
+        # documents rather than failed calls, so failures are counted and
+        # reported rather than passed over.
+        failed_batches = 0
         with ThreadPoolExecutor(max_workers=AXIS2_NER_CONCURRENCY, thread_name_prefix="axis2_ner") as pool:
             futures = [pool.submit(_ner_batch, batch) for batch in batches]
             for fut in as_completed(futures):
                 try:
                     batch_entities, batch_types = fut.result()
-                except Exception:
+                except Exception as exc:
+                    failed_batches += 1
+                    logger.warning(
+                        "axis2 NER batch failed (%d/%d so far): %s",
+                        failed_batches, len(batches), exc,
+                    )
                     continue
                 for node_id, entities in batch_entities.items():
                     merged_entities.setdefault(node_id, []).extend(entities)
                 for node_id, etypes in batch_types.items():
                     merged_types.setdefault(node_id, {}).update(etypes)
+
+        if failed_batches:
+            logger.error(
+                "axis2 NER: %d of %d batches failed; entity coverage is "
+                "understated and Axis-2 scores computed from it are not "
+                "comparable with a clean run",
+                failed_batches, len(batches),
+            )
 
         for node_id, entities in merged_entities.items():
             node = id_to_node.get(node_id)
@@ -1086,7 +1114,7 @@ class Axis2Builder:
 
         vecs  = np.array([n.embedding for n in embedded], dtype=np.float32)
         norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        vecs  = vecs / (norms + 1e-10)
+        vecs /= (norms + 1e-10)  # in place: vecs is already a fresh array
         sim   = vecs @ vecs.T  # cosine similarity matrix
         np.fill_diagonal(sim, -1.0)  # a node is never its own neighbor
 
@@ -1467,7 +1495,7 @@ on its own. Answer strictly as JSON: {{"grounded": true/false, "confidence": 0.0
 
         vecs  = np.array([n.embedding for n in embedded], dtype=np.float32)
         norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        vecs  = vecs / (norms + 1e-10)
+        vecs /= (norms + 1e-10)  # in place: vecs is already a fresh array
         sim   = vecs @ vecs.T
 
         sim_candidates: list[Tuple[float, int, int]] = []
