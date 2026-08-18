@@ -83,9 +83,6 @@
   <header>
     <h1>Feedback Loop Monitor</h1>
     <nav>
-      <a href="/chat">Chat</a>
-      <a href="/upload">Upload</a>
-      <a href="/docs">API</a>
     </nav>
     <span id="refresh-label" style="margin-left:auto;color:var(--muted);font-size:0.85rem;"></span>
   </header>
@@ -531,5 +528,6 @@
     loadIngestionDocList();
     timer = setInterval(() => { loadDashboard(); loadAudit(); }, 30000);
   </script>
+<script src="/static/nav.js"></script>
 </body>
 </html>

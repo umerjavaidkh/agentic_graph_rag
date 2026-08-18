@@ -20,7 +20,7 @@
        overflow-x on the layout itself is the fallback below the combined
        minimums (280+400+300=980px), so the canvas always gets real,
        usable width -- scroll instead of squeeze. */
-    .layout { display: grid; grid-template-columns: minmax(280px, 320px) minmax(400px, 1fr) minmax(300px, 340px); gap: 0; height: calc(100vh - 58px); overflow-x: auto; }
+    .layout { display: grid; grid-template-columns: minmax(280px, 320px) minmax(400px, 1fr) minmax(300px, 340px); gap: 0; height: calc(100vh - 58px - var(--app-nav-h, 0px)); overflow-x: auto; }
 
     .panel { background: #fff; border-right: 1px solid #e2e8f0; padding: 1.1rem; overflow-y: auto; }
     .panel h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: #374151; }
@@ -157,8 +157,6 @@
   <header>
     <h1>Graph Inspector <span style="font-weight:400;color:#94a3b8;font-size:0.85rem;">— X1 / X2 / final construction stages</span></h1>
     <nav>
-      <a href="/upload">Upload</a>
-      <a href="/chat">Chat</a>
     </nav>
   </header>
 
@@ -1103,5 +1101,6 @@
     initDocSearch();
     searchDocs('');
   </script>
+<script src="/static/nav.js"></script>
 </body>
 </html>
