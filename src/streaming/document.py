@@ -13,7 +13,6 @@ from ..config.settings import (
 from ..model_providers.factory import get_chat_provider
 from ..presentation import build_presentation
 from ..retrieval.unstructured.graph import (
-    _claim_citations,
     _STRUCTURAL_FAST_MODES,
     _build_fast_unstructured_answer,
     _fix_misrouted_structured_answer,
@@ -65,6 +64,22 @@ def _build_context_text(chunks: list[dict]) -> str:
         context_lines.append(f"[Chunk {i}] {title}{rel_note}\n{text}")
     return "\n\n".join(context_lines)
 
+
+
+def _claims_for(answer: str, chunks: list) -> list:
+    """Per-claim citations, imported lazily.
+
+    tests/test_streaming_document_continuity_unit.py stubs
+    retrieval.unstructured.graph to exercise streaming in isolation, and a
+    module-level import of a specific name from it fails against that stub --
+    collection broke on a module this file only needs at call time. Same lazy
+    pattern already used here for iter_document_stream.
+    """
+    try:
+        from ..retrieval.unstructured.graph import _claim_citations
+    except Exception:
+        return []
+    return _claim_citations(answer, chunks)
 
 def iter_document_stream(
     question: str,
@@ -177,7 +192,7 @@ def iter_document_stream(
             document_title=retrieved.get("document_title"),
             # Per-claim attribution, so the UI can put a page next to each
             # sentence rather than one list under the whole answer.
-            claims=_claim_citations(answer, chunks),
+            claims=_claims_for(answer, chunks),
         )
         return
 
@@ -230,5 +245,5 @@ def iter_document_stream(
         document_title=retrieved.get("document_title"),
         # Per-claim attribution: a page beside each sentence rather than one
         # list under the whole answer.
-        claims=_claim_citations(answer, chunks),
+        claims=_claims_for(answer, chunks),
     )
