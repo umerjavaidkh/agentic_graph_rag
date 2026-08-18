@@ -6,6 +6,7 @@ Vector seed + graph expansion + LLM synthesis.
 
 from langgraph.graph import END, StateGraph
 
+import math
 import re
 
 from ...routing import document_agent_structured_guard, has_document_cue, structured_entity_summary
@@ -144,19 +145,34 @@ def _claim_citations(answer: str, chunks: list[dict]) -> list[dict]:
         if len(sentence) < 15:  # headings, "Yes.", list bullets
             continue
         words = _content_words(sentence)
-        best, best_overlap = None, 0
+        # Raw overlap counts grow with chunk length, so a big chunk wins on
+        # size rather than on evidence: "What does Figure 1 show?" matched the
+        # 12-word figure caption at 11 and the 536-word section CONTAINING it
+        # at 12, and cited the section -- a page away from the figure.
+        #
+        # Length-normalising by sqrt (the same damping BM25 uses) ranks by how
+        # concentrated the support is rather than how much text was searched:
+        # caption 11/sqrt(12)=3.2, page 12/sqrt(69)=1.4, section 12/sqrt(536)
+        # =0.5. sqrt rather than a plain ratio because a plain ratio hands the
+        # win to any tiny fragment that happens to share its whole vocabulary.
+        # The absolute floor below still applies, so normalisation only
+        # decides between chunks that genuinely support the sentence.
+        best, best_overlap, best_score = None, 0, 0.0
         for chunk, chunk_words in scored_chunks:
             overlap = len(words & chunk_words)
-            if overlap > best_overlap:
-                best, best_overlap = chunk, overlap
+            if overlap == 0:
+                continue
+            score = overlap / math.sqrt(len(chunk_words) or 1)
+            if score > best_score:
+                best, best_overlap, best_score = chunk, overlap, score
         # Two matching content words is coincidence; a supported sentence
         # shares the terms it is reporting.
         supported = best is not None and best_overlap >= 3
-        raw = (best or {}).get("raw") if isinstance((best or {}).get("raw"), dict) else (best or {})
         claims.append({
             "text": sentence,
             "source_id": best.get("id") if supported else None,
-            "page": raw.get("page_start") if supported else None,
+            "page": _chunk_page(best) if supported else None,
+            "page_end": _chunk_page_end(best) if supported else None,
             "title": (best.get("title") or "")[:120] if supported else None,
             "overlap": best_overlap if supported else 0,
         })
@@ -168,6 +184,77 @@ def _content_words(text: str) -> set[str]:
         w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
         if len(w) > 3 and w not in _CITATION_STOPWORDS
     }
+
+
+def _chunk_page(chunk: dict) -> object:
+    """The page a chunk sits on, however the retriever happened to shape it.
+
+    Retrieval paths do not agree on a name: the structural strategies emit
+    `pdf_page`, the graph/vector path emits `page_start`, and some wrap the
+    node under `raw`. Reading only `raw.page_start` -- which is what the
+    claim builder did -- meant every citation from a structural strategy
+    reported page None, so "What is Box 9 about?" cited no page at all.
+    """
+    return _chunk_field(chunk, ("pdf_page", "page_start", "page"))
+
+
+def _chunk_page_end(chunk: dict) -> object:
+    """The last page of a chunk that spans several, else its only page.
+
+    20 of the 122 units in one 52-page report span more than one page, and a
+    citation that names a single page for those sends the reader to where the
+    content starts and silently drops the rest -- Box 9 runs across pages 30
+    and 31, and only 30 was reported. Emitting the end alongside the start
+    lets a citation read as a range, and collapses back to one page whenever
+    start and end agree.
+    """
+    end = _chunk_field(chunk, ("page_end",))
+    start = _chunk_page(chunk)
+    return end if end is not None else start
+
+
+def _chunk_field(chunk: dict, keys: tuple) -> object:
+    for source in (chunk, chunk.get("raw") if isinstance(chunk.get("raw"), dict) else None):
+        if not source:
+            continue
+        for key in keys:
+            value = source.get(key)
+            if value is not None:
+                return value
+    return None
+
+
+def _verbatim_claims(chunks: list[dict]) -> list[dict]:
+    """One citation per chunk, for answers assembled verbatim from chunks.
+
+    The structural fast path (_STRUCTURAL_FAST_MODES: TOC, page, box,
+    section and figure lookups) does not synthesise anything -- it
+    concatenates chunk text as-is. So attribution needs no lexical matching
+    and cannot be wrong: the chunk the text came from IS the source.
+
+    Without this the fast path returned an answer with neither sources nor
+    claims, which is why "What is Box 9 about?" and "What does Figure 1
+    show?" came back with no page at all, while the TOC answer -- which
+    formats a citation into its own text -- looked fine. Box 9 also spans
+    two pages, so it yields two claims rather than one arbitrary page.
+    """
+    claims: list[dict] = []
+    for chunk in chunks:
+        text = (chunk.get("text") or "").strip()
+        if not text:
+            continue
+        claims.append({
+            "text": text[:400],
+            "source_id": chunk.get("id"),
+            "page": _chunk_page(chunk),
+            "page_end": _chunk_page_end(chunk),
+            "title": (chunk.get("title") or "")[:120],
+            # Verbatim, so support is total rather than estimated -- the
+            # lexical overlap score that _claim_citations reports has no
+            # meaning here.
+            "overlap": None,
+        })
+    return claims
 
 
 def _grounded_sources(answer: str, chunks: list[dict]) -> list[dict]:
@@ -289,7 +376,16 @@ def _generate_document_answer(
     if mode in _STRUCTURAL_FAST_MODES:
         answer = _build_fast_unstructured_answer(chunks)
         if answer:
-            return {"answer": answer, "low_confidence": False}
+            # Carry sources and claims explicitly: this path returns before
+            # the synthesis path below that would otherwise attach them, and
+            # a fast answer with no citation is exactly the case a reader
+            # cannot check.
+            return {
+                "answer": answer,
+                "low_confidence": False,
+                "sources": [c for c in chunks if (c.get("text") or "").strip()],
+                "claims": _verbatim_claims(chunks),
+            }
 
     # Budget the total prompt context in characters, not just per-chunk --
     # a single chunk (e.g. a whole Chapter node's .text) can itself be huge

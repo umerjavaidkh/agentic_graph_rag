@@ -1037,7 +1037,11 @@
         cite.type = 'button';
         if (c.source_id && c.page != null) {
           cite.className = 'claim-cite';
-          cite.textContent = 'p.' + c.page;
+          // A unit spanning several pages cites as a range from where it
+          // starts, so the reader opens at the beginning of the content
+          // rather than wherever the matching sentence happened to land.
+          const spans = c.page_end != null && c.page_end !== c.page;
+          cite.textContent = spans ? ('pp.' + c.page + '–' + c.page_end) : ('p.' + c.page);
           cite.title = c.title || ('Open page ' + c.page);
           cite.addEventListener('click', () => openDocPanel(documentId, documentTitle, c.page));
         } else {
