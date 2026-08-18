@@ -20,7 +20,7 @@ import csv
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from ..graph.driver import get_neo4j_driver
 
@@ -162,6 +162,36 @@ class Neo4jExporter:
             content_hash=content_hash,
         ).single()
         return bool(row and row.get("id"))
+
+    def logical_id_holding_hash(
+        self, session, content_hash: str, tenant_id: str
+    ) -> Optional[str]:
+        """Which logical document already owns this exact content, if any.
+
+        Supersede only ever fires within one logical id, so the same file
+        ingested twice under different doc_keys becomes two documents rather
+        than two revisions of one. That is how three copies of one PDF ended
+        up in the graph, all titled from the same filename and so
+        indistinguishable in a document picker. Binding content to the
+        logical id it first got makes the second ingest a revision, and the
+        existing supersede path then expires and deletes the older one.
+
+        Oldest wins, so the answer is stable no matter how many copies exist.
+        """
+        row = session.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]->(rev:{DOC_REVISION_LABEL})
+            WHERE rev.content_hash = $content_hash
+              AND rev.status = 'ACTIVE'
+              AND coalesce(rev.tenant_id, 'default') = $tenant_id
+            RETURN dl.logical_id AS logical_id
+            ORDER BY rev.ingested_at ASC
+            LIMIT 1
+            """,
+            content_hash=content_hash,
+            tenant_id=tenant_id,
+        ).single()
+        return row.get("logical_id") if row else None
 
     def next_version_number(self, session, logical_id: str) -> int:
         row = session.run(
