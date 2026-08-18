@@ -1078,20 +1078,41 @@ class Axis1StructuralBuilder:
                 for ref in _FIGURE_REF.findall(title_lower):
                     title_lookup[f"figure {ref.lower()}"] = n.id
 
+        # Look the reference up, rather than scanning every title for one that
+        # fits inside it. The previous loop walked the whole title_lookup for
+        # each match, so cost grew with the number of nodes in the document --
+        # roughly n*m*k, or ~190M substring tests on a 7,000-node document.
+        # A reference phrase is short, so enumerating ITS substrings and asking
+        # the dict about each is bounded by the phrase length instead: the same
+        # answer, at a cost that no longer depends on document size.
+        #
+        # Longest match wins. The old loop took whichever key dict order
+        # happened to reach first, which could prefer "table 1" over
+        # "table 1.2" purely by insertion order; preferring the longer key
+        # makes the more specific title win, which is what a reader means.
         for node in nodes:
             # Section bodies can be very large; references appear in titles/intros.
             snippet = (node.text or "")[:8000]
             for match in REFERENCE_PATTERN.findall(snippet):
                 ref_key = match.strip().lower()
-                for key, target_id in title_lookup.items():
-                    if key in ref_key and target_id != node.id:
-                        edges.append(
-                            DKGEdge(
-                                source_id=node.id,
-                                target_id=target_id,
-                                rel_type=RelType.REFERENCES,
-                                axis=2,
-                                properties={"matched_text": match.strip()},
-                            )
-                        )
-                        break
+                best_key: Optional[str] = None
+                for start in range(len(ref_key)):
+                    for end in range(len(ref_key), start, -1):
+                        candidate = ref_key[start:end]
+                        if best_key is not None and len(candidate) <= len(best_key):
+                            break
+                        target = title_lookup.get(candidate)
+                        if target is not None and target != node.id:
+                            best_key = candidate
+                            break
+                if best_key is None:
+                    continue
+                edges.append(
+                    DKGEdge(
+                        source_id=node.id,
+                        target_id=title_lookup[best_key],
+                        rel_type=RelType.REFERENCES,
+                        axis=2,
+                        properties={"matched_text": match.strip()},
+                    )
+                )
