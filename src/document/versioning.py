@@ -111,8 +111,15 @@ def build_revision_plan(
     job_id: str | None = None,
     version_number: int = 1,
     content_root_id: str | None = None,
+    logical_id: str | None = None,
 ) -> DocumentRevisionPlan:
-    logical_id = resolve_logical_id(file_path, doc_key=doc_key, job_id=job_id)
+    # An explicit logical_id wins over one derived from doc_key/filename: the
+    # caller may have found that this exact content already belongs to a
+    # different logical document, and the revision must land there so the
+    # older copy is superseded rather than joined by a duplicate.
+    logical_id = logical_id or resolve_logical_id(
+        file_path, doc_key=doc_key, job_id=job_id
+    )
     revision_id = f"{logical_id}:r{version_number}"
     clean_stem = upload_filename_stem(file_path, job_id)
     root = content_root_id or f"doc_{slug_logical_key(clean_stem)}"

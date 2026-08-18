@@ -360,6 +360,43 @@ class IngestionManager:
             # Redis unavailable: proceed without lock (best-effort).
             yield
 
+    def _logical_id_for_content(
+        self, driver, exporter, job: IngestionJob, logical_id: str
+    ) -> str:
+        """Reuse the logical id this exact content already has, if it has one.
+
+        A logical id is derived from the filename unless the caller supplies a
+        doc_key, and supersede only ever fires within one logical id. So the
+        same PDF ingested twice under different doc_keys became two documents
+        rather than two revisions of one -- three copies of one file, all
+        titled from the same filename and so indistinguishable in the document
+        picker. Adopting the first logical id makes the re-ingest a revision,
+        which the existing supersede path expires and deletes.
+
+        Best-effort: on any failure the caller's own logical id stands, which
+        is the pre-existing behaviour.
+        """
+        if not job.content_hash:
+            return logical_id
+        try:
+            with driver.session() as session:
+                owner = exporter.logical_id_holding_hash(
+                    session, job.content_hash, job.tenant_id or "default"
+                )
+        except Exception as exc:
+            self._log(job, f"Content-hash lookup failed (keeping {logical_id}): {exc}")
+            return logical_id
+        if not owner or owner == logical_id:
+            return logical_id
+        job.logical_doc_id = owner
+        self.store.save(job)
+        self._log(
+            job,
+            f"Identical content is already document {owner!r}; ingesting as a new "
+            f"revision of it rather than as a second copy under {logical_id!r}.",
+        )
+        return owner
+
     def _process_unstructured(self, job: IngestionJob) -> None:
         self._set_status(job, IngestionStatus.parsing, "Parsing document")
         if not job.input_path or not job.input_path.exists():
@@ -376,14 +413,21 @@ class IngestionManager:
         job.logical_doc_id = logical_id
         self.store.save(job)
 
-        # Fast duplicate check (no lock needed — reading is safe).
-        if AUTO_LOAD_TO_NEO4J and DOC_SKIP_DUPLICATE_HASH:
+        # Fast duplicate check (no lock needed — reading is safe). The logical
+        # id is settled first and unconditionally: DOC_SKIP_DUPLICATE_HASH
+        # decides whether an identical re-upload is skipped, but even when it
+        # is off the re-upload must land as a REVISION of the document that
+        # already holds this content, never as a second copy of it.
+        if AUTO_LOAD_TO_NEO4J:
             job.content_hash = file_content_sha256(job.input_path)
             exporter_probe = self.exporter_factory(
                 output_dir=str(job.output_dir) if job.output_dir else Path(".")
             )
             driver = get_neo4j_driver()
-            if check_duplicate(
+            logical_id = self._logical_id_for_content(
+                driver, exporter_probe, job, logical_id
+            )
+            if DOC_SKIP_DUPLICATE_HASH and check_duplicate(
                 job.input_path, logical_id=logical_id, exporter=exporter_probe, driver=driver
             ):
                 job.skipped_duplicate = True
@@ -435,6 +479,7 @@ class IngestionManager:
             job_id=job.id,
             version_number=version_number,
             content_root_id=content_root_id,
+            logical_id=logical_id,
         )
         nodes, edges = apply_revision_to_graph(nodes, edges, plan)
         job.logical_doc_id = plan.logical_id

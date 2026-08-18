@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import json
 import logging
 import re
@@ -20,6 +21,7 @@ from .document.graph_snapshot import (
     query_page_scoped_snapshot_sync,
     read_snapshot as read_graph_snapshot,
 )
+from .document.purge import delete_document
 from .document.versioning import source_file_blob_key
 from .storage.blob.factory import get_blob_store
 from pydantic import BaseModel, Field
@@ -974,6 +976,67 @@ async def get_document_source_file(
         media_type=content_type,
         headers={"Content-Disposition": f'inline; filename="{download_name}"'},
     )
+
+
+@app.delete("/documents/{logical_doc_id}")
+async def delete_document_everywhere(
+    logical_doc_id: str,
+    keep_source: bool = Query(
+        False,
+        description="Keep the original uploaded file in the blob store. Everything "
+        "else is derived and can be rebuilt by re-ingesting that file; the file "
+        "itself cannot be rebuilt from anything.",
+    ),
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+):
+    """
+    Delete a document from every store it lives in, keyed on its logical id.
+
+    A document is spread across three: structure in Neo4j, text and reports
+    and the uploaded file in the blob store, embeddings in the vector store.
+    Deleting only the Neo4j half is what left 50,642 orphaned blobs and 6,195
+    orphaned vectors behind, so this removes every revision from all three and
+    then the document node itself.
+
+    Admin-only and irreversible. `keep_source=true` spares the original upload
+    so the document can be re-ingested later.
+    """
+    session = resolve_admin_session(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+        body_tenant_id=tenant_id,
+    )
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        _query_executor,
+        functools.partial(
+            delete_document,
+            get_neo4j_driver(),
+            logical_id=logical_doc_id,
+            tenant_id=session.user.tenant_id,
+            keep_source=keep_source,
+        ),
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail=f"No document found for {logical_doc_id!r}"
+        )
+    return {
+        "status": "ok",
+        "logical_doc_id": logical_doc_id,
+        "revisions_deleted": result["revisions"],
+        "nodes_deleted": result["nodes"],
+        "blobs_deleted": result["blobs"],
+        "source_file_kept": keep_source,
+        # Non-empty means part of the delete did not land: the document is gone
+        # from Neo4j (so it cannot be queried) but some storage was left behind.
+        # scripts/gc_orphaned_storage.py reclaims it.
+        "errors": result["errors"],
+    }
 
 
 @app.get("/documents/{logical_doc_id}/graph-snapshot/{stage}")

@@ -61,7 +61,7 @@
       display:grid;
       grid-template-columns: 300px 1fr;
       gap: 20px;
-      height: calc(100vh - 40px);
+      height: calc(100vh - 40px - var(--app-nav-h, 0px));
       max-height: 920px;
     }
     @media (max-width: 980px){
@@ -819,7 +819,7 @@
       flex-shrink: 0;
     }
     @media (max-width: 980px){
-      .shell{ height: auto; max-height: none; min-height: calc(100vh - 40px); }
+      .shell{ height: auto; max-height: none; min-height: calc(100vh - 40px - var(--app-nav-h, 0px)); }
       .chat{ min-height: 70vh; }
     }
     /* Which source answers the question is the single most consequential
@@ -2193,5 +2193,6 @@
 
     renderWelcome();
   </script>
+<script src="/static/nav.js"></script>
 </body>
 </html>
