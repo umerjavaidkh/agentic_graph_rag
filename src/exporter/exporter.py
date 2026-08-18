@@ -212,9 +212,27 @@ class Neo4jExporter:
         nodes: list[DKGNode],
         edges: list[DKGEdge],
     ) -> None:
-        session.execute_write(self._install_revision_tx, plan, nodes, edges)
+        superseded = session.execute_write(self._install_revision_tx, plan, nodes, edges)
+        if superseded:
+            # After the transaction commits, never inside it: an object-store
+            # round trip would otherwise hold a Neo4j write lock open for the
+            # length of a network call. Best-effort -- a leaked blob is
+            # cheaper than failing an ingest that has already succeeded.
+            from ..document.purge import purge_revision
 
-    def _install_revision_tx(self, tx, plan: DocumentRevisionPlan, nodes, edges) -> None:
+            purge_revision(
+                tenant_id=plan.tenant_id,
+                logical_id=plan.logical_id,
+                revision_id=superseded,
+                blob_store=self.blob_store,
+                vector_store=self.vector_store,
+            )
+
+    def _install_revision_tx(
+        self, tx, plan: DocumentRevisionPlan, nodes, edges
+    ) -> Optional[str]:
+        """Returns the id of the revision this one superseded, if any, so the
+        caller can purge its blobs and vectors once the write has committed."""
         tx.run(
             f"""
             MERGE (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
@@ -342,6 +360,7 @@ class Neo4jExporter:
             revision_id=plan.revision_id,
             root_id=plan.content_root_id,
         )
+        return prev_id
 
     def _dual_write_chunk(self, chunk: list[DKGNode], plan: DocumentRevisionPlan) -> None:
         """
