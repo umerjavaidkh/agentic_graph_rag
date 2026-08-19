@@ -26,6 +26,58 @@ if str(REPO_ROOT) not in sys.path:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Stand-ins for packages that are genuinely not installed here.
+#
+# hdbscan, langgraph and qdrant_client cannot be imported in this
+# environment, so nothing that depends on them -- axis2, both retrieval
+# graphs, the vector store -- can be imported either. Ten separate test files
+# each installed their own hdbscan, and ten their own langgraph, every one
+# guarded by `if not in sys.modules`. Which stand-in the whole suite ended up
+# sharing was therefore decided by import order, and removing any single
+# file's copy broke every other file that had been free-riding on it.
+#
+# These have to exist before any test module is imported, so they are
+# installed here rather than in a fixture. Only the bare module is shared: a
+# test that cares about behaviour overrides the attribute it needs for its
+# own duration. Packages that ARE installed (neo4j, fastapi, openai, sklearn)
+# are deliberately not touched -- stubbing those is a per-test choice about
+# isolation, not a precondition for importing anything.
+# ─────────────────────────────────────────────────────────────────────────
+import types as _types
+from unittest.mock import MagicMock as _MagicMock
+
+
+def _ensure(name: str, **attrs):
+    mod = sys.modules.get(name)
+    if mod is None:
+        mod = _types.ModuleType(name)
+        sys.modules[name] = mod
+    for attr, value in attrs.items():
+        if not hasattr(mod, attr):
+            setattr(mod, attr, value)
+    return mod
+
+
+class _DefaultHDBSCAN:
+    """Everything in one cluster, so callers get edges rather than noise."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def fit_predict(self, vecs):
+        return [0] * len(vecs)
+
+
+_ensure("hdbscan", HDBSCAN=_DefaultHDBSCAN)
+_ensure("langgraph")
+_ensure("langgraph.graph", StateGraph=_MagicMock(), END=_MagicMock())
+sys.modules["langgraph"].graph = sys.modules["langgraph.graph"]
+_ensure("qdrant_client", QdrantClient=_MagicMock())
+_ensure("qdrant_client.models")
+sys.modules["qdrant_client"].models = sys.modules["qdrant_client.models"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Importing a module with stand-ins in place, without leaking them.
 #
 # Most of this suite replaces heavy dependencies -- neo4j, langgraph, the
