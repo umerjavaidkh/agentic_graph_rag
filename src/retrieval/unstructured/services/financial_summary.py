@@ -72,6 +72,7 @@ class FinancialSummaryService:
               coalesce(n.title, '') AS title,
               n.text AS text,
               n.page_start AS page_start,
+              n.document_page AS document_page,
               coalesce(n.order, 0) AS order
             ORDER BY order ASC
             LIMIT 5
@@ -128,6 +129,7 @@ class FinancialSummaryService:
               coalesce(n.title, '') AS title,
               n.text AS text,
               n.page_start AS page_start,
+              n.document_page AS document_page,
               coalesce(n.order, 0) AS order
             ORDER BY order ASC
             LIMIT 5

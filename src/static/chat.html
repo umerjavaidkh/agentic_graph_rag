@@ -1037,12 +1037,18 @@
         cite.type = 'button';
         if (c.source_id && c.page != null) {
           cite.className = 'claim-cite';
+          // Show the number PRINTED on the page, navigate by the PDF index.
+          // They differ by seven in the Go.Data report, so showing the index
+          // sends a reader hunting for a number the page does not carry.
           // A unit spanning several pages cites as a range from where it
           // starts, so the reader opens at the beginning of the content
           // rather than wherever the matching sentence happened to land.
           const spans = c.page_end != null && c.page_end !== c.page;
-          cite.textContent = spans ? ('pp.' + c.page + '–' + c.page_end) : ('p.' + c.page);
-          cite.title = c.title || ('Open page ' + c.page);
+          const shown = c.page_label != null ? c.page_label : c.page;
+          cite.textContent = spans ? ('pp.' + shown + '–' + c.page_end) : ('p.' + shown);
+          cite.title = c.page_label != null && String(c.page_label) !== String(c.page)
+            ? (c.title ? c.title + ' — ' : '') + 'printed page ' + c.page_label + ', PDF page ' + c.page
+            : (c.title || ('Open page ' + c.page));
           cite.addEventListener('click', () => openDocPanel(documentId, documentTitle, c.page));
         } else {
           cite.className = 'claim-cite unsourced';

@@ -28,7 +28,7 @@ import re
 
 from ..document.ir import Block, DocumentIR, PageBlock
 from ..document.light.parser import _TABLE_OR_FIGURE
-from ..document.page_numbers import enrich_page_nodes
+from ..document.page_numbers import enrich_page_nodes, propagate_document_pages
 from ..document.patterns import (
     REFERENCE_PATTERN,
     clean_heading_text,
@@ -403,6 +403,11 @@ class Axis1StructuralBuilder:
             f"{len(section_nodes)} sections (nested CONTAINS), {len(page_nodes)} pages, "
             f"{len(region_nodes)} regions"
         )
+        # Regions and Sections carry no printed label of their own, but a
+        # citation lands on them as readily as on a Page -- so a Box answer
+        # reported "printed page 23" while a Figure answer on the next page
+        # reported nothing. Stamp them from the page each one starts on.
+        propagate_document_pages(page_nodes, [n for n in nodes if n not in page_nodes])
         return nodes, edges
 
     # ─────────────────────────────────────────
@@ -691,6 +696,11 @@ class Axis1StructuralBuilder:
             f"{len(section_nodes)} sections (nested CONTAINS), {len(page_nodes)} pages, "
             f"{len(region_nodes)} regions"
         )
+        # Regions and Sections carry no printed label of their own, but a
+        # citation lands on them as readily as on a Page -- so a Box answer
+        # reported "printed page 23" while a Figure answer on the next page
+        # reported nothing. Stamp them from the page each one starts on.
+        propagate_document_pages(page_nodes, [n for n in nodes if n not in page_nodes])
         return nodes, edges
 
     # ─────────────────────────────────────────

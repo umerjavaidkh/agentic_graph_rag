@@ -173,6 +173,7 @@ def _claim_citations(answer: str, chunks: list[dict]) -> list[dict]:
             "source_id": best.get("id") if supported else None,
             "page": _chunk_page(best) if supported else None,
             "page_end": _chunk_page_end(best) if supported else None,
+            "page_label": _chunk_page_label(best) if supported else None,
             "title": (best.get("title") or "")[:120] if supported else None,
             "overlap": best_overlap if supported else 0,
         })
@@ -196,6 +197,19 @@ def _chunk_page(chunk: dict) -> object:
     reported page None, so "What is Box 9 about?" cited no page at all.
     """
     return _chunk_field(chunk, ("pdf_page", "page_start", "page"))
+
+
+def _chunk_page_label(chunk: dict) -> object:
+    """The number PRINTED on the page, which is rarely the PDF index.
+
+    A reader checking a citation looks for the number printed on the paper,
+    while the viewer can only open the file by its index. The two differ by
+    seven in the Go.Data report -- printed page 2 is PDF page 9 -- so citing
+    one and navigating by the other lands the reader on the wrong page in
+    both directions. Both travel with the claim: `page`/`page_end` drive
+    navigation, `page_label` is what gets shown.
+    """
+    return _chunk_field(chunk, ("document_page", "page_label"))
 
 
 def _chunk_page_end(chunk: dict) -> object:
@@ -248,6 +262,7 @@ def _verbatim_claims(chunks: list[dict]) -> list[dict]:
             "source_id": chunk.get("id"),
             "page": _chunk_page(chunk),
             "page_end": _chunk_page_end(chunk),
+            "page_label": _chunk_page_label(chunk),
             "title": (chunk.get("title") or "")[:120],
             # Verbatim, so support is total rather than estimated -- the
             # lexical overlap score that _claim_citations reports has no
