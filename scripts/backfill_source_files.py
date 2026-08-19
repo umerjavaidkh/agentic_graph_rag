@@ -19,10 +19,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
-from src.document.versioning import source_file_blob_key
-from src.graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
-from src.storage.blob.factory import get_blob_store
+from src.shared.config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from src.unstructured.document.versioning import source_file_blob_key
+from src.unstructured.graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
+from src.shared.storage.blob.factory import get_blob_store
 
 SAMPLE_DATA_ROOT = Path(__file__).resolve().parents[1] / "sample_data_to_test"
 

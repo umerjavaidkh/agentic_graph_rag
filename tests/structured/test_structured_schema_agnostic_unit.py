@@ -1,0 +1,125 @@
+"""
+Guard: the structured side must not name any particular dataset's fields.
+
+This repo shipped with Northwind demo data, and its field names leaked into
+prompts and helper lists that outlived it. That is not a cosmetic problem:
+the text-to-cypher prompt instructed the model to read line-item values off
+the relationship (`li.unitPrice`), which against a different schema produced
+`sum(li.freight)` over a relationship with no properties and reported a
+total of "zero" for a true 2,251,910. A clarification menu offered three
+metrics defined in terms of `unitPrice x quantity x (1 - discount)`, none of
+which existed, so an easy question could not be answered at all.
+
+So this asserts absence rather than trusting review. Comment lines are
+exempt: explaining why a fix exists is the opposite of the problem.
+"""
+from pathlib import Path
+
+import pytest
+
+# Repo root located by searching upward for src/, not by counting parents:
+# a fixed index silently points at the wrong directory the moment this
+# file changes nesting depth.
+ROOT = next(p for p in Path(__file__).resolve().parents if (p / "src").is_dir())
+
+# Field and relationship names specific to one dataset. Generic words a real
+# schema might also use ("name", "price", "total") are deliberately absent --
+# this bans dataset vocabulary, not English.
+BANNED = (
+    "unitPrice", "companyName", "contactName", "productName", "categoryName",
+    "ORDER_CONTAINS", "SUPPLIED_BY", "SHIPPED_TO", "orderDate", "shipCountry",
+    "employeeID", "customerID", "supplierID",
+)
+
+STRUCTURED_SOURCES = [
+    "src/structured/retrieval",
+    "src/structured/presentation.py",
+    "src/shared/conversation/thread_memory.py",
+    "src/prompts/structured_text2cypher.txt",
+    "src/prompts/structured_multistep_plan.txt",
+]
+
+
+def _files() -> list[Path]:
+    # Every entry must exist. Without this the list fails OPEN: a path
+    # that moves silently drops out of the parametrisation and the guard
+    # stops checking it, with no failure to say so. A repo reorganisation
+    # did exactly that -- thread_memory.py vanished from the suite and the
+    # only visible symptom was the passed count falling by one.
+    missing = [e for e in STRUCTURED_SOURCES if not (ROOT / e).exists()]
+    assert not missing, f"STRUCTURED_SOURCES entries no longer exist: {missing}"
+    out: list[Path] = []
+    for entry in STRUCTURED_SOURCES:
+        path = ROOT / entry
+        if path.is_dir():
+            out.extend(sorted(path.rglob("*.py")))
+        elif path.exists():
+            out.append(path)
+    return out
+
+
+def _docstring_lines(path: Path) -> set[int]:
+    """Line numbers occupied by docstrings.
+
+    Exempt for the same reason comments are: naming the old field in prose
+    that explains why a fix exists is the opposite of depending on it. Only
+    docstrings are exempt, not every string literal -- a banned name inside
+    an ordinary literal (a tuple of column names, say) is exactly the kind of
+    hidden coupling this is looking for.
+    """
+    import ast
+
+    if path.suffix != ".py":
+        return set()
+    covered: set[int] = set()
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) \
+                and isinstance(first.value.value, str):
+            covered.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    return covered
+
+
+def _is_comment(line: str) -> bool:
+    return line.lstrip().startswith("#")
+
+
+@pytest.mark.parametrize("path", _files(), ids=lambda p: str(p.relative_to(ROOT)))
+def test_no_dataset_specific_field_names(path: Path):
+    offenders: list[str] = []
+    exempt = _docstring_lines(path)
+    for lineno, line in enumerate(path.read_text().splitlines(), 1):
+        if _is_comment(line) or lineno in exempt:
+            continue
+        for token in BANNED:
+            if token in line:
+                offenders.append(f"{path.relative_to(ROOT)}:{lineno} {token}")
+    assert not offenders, (
+        "dataset-specific field names in structured code/prompts:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_pattern_alias_repair():
+    """`MATCH (:Label) AS r` is a SQL habit Cypher rejects outright.
+
+    Observed intermittently on "average review score": 5 runs in 6 returned
+    4.09, the sixth generated this and failed outright, which read as a flaky
+    metric rather than a syntax slip. Repaired deterministically because there
+    is exactly one correct reading, and the regeneration it replaces sometimes
+    ran out of attempts and returned an error instead of an answer.
+    """
+    from src.structured.retrieval.cypher.repair import fix_pattern_alias
+
+    assert fix_pattern_alias("MATCH (:Review) AS r RETURN avg(r.score)") == (
+        "MATCH (r:Review) RETURN avg(r.score)"
+    )
+    # Valid Cypher must survive untouched.
+    valid = "MATCH (r:Review) RETURN avg(r.score) AS s"
+    assert fix_pattern_alias(valid) == valid

@@ -21,9 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.graph.driver import get_neo4j_driver  # noqa: E402
-from src.ingestion.schema_docs import ensure_field_docs  # noqa: E402
-from src.ingestion.tabular import infer_schema, load_schema, source_tag  # noqa: E402
+from src.shared.neo4j.driver import get_neo4j_driver  # noqa: E402
+from src.structured.ingestion.schema_docs import ensure_field_docs  # noqa: E402
+from src.structured.ingestion.tabular import infer_schema, load_schema, source_tag  # noqa: E402
 
 
 def main() -> None:

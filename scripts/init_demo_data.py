@@ -12,7 +12,7 @@ from neo4j.exceptions import ClientError
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.ingestion.service import IngestionManager  # noqa: E402
+from src.unstructured.ingestion.service import IngestionManager  # noqa: E402
 
 URI = os.environ.get("NEO4J_URI", "bolt://neo4j:7687")
 USER = os.environ.get("NEO4J_USER", "neo4j")

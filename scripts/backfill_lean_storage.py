@@ -32,9 +32,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.graph.driver import get_neo4j_driver  # noqa: E402
-from src.storage.blob.factory import get_blob_store  # noqa: E402
-from src.storage.vector.factory import get_vector_store  # noqa: E402
+from src.shared.neo4j.driver import get_neo4j_driver  # noqa: E402
+from src.shared.storage.blob.factory import get_blob_store  # noqa: E402
+from src.shared.storage.vector.factory import get_vector_store  # noqa: E402
 
 _SEARCH_TEXT_CHAR_BUDGET = 2000  # matches Axis1StructuralBuilder._SEARCH_TEXT_CHAR_BUDGET
 

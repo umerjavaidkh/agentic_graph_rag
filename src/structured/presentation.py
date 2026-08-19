@@ -1,0 +1,293 @@
+"""
+Build presentation blocks for structured Neo4j queries (analytics, top-N, etc.).
+"""
+from __future__ import annotations
+
+import re
+from typing import Any, Optional
+
+from .retrieval.query_intent import is_singular_best_query
+
+_ANALYTICS = re.compile(
+    r"\b(top|bottom|best|worst|highest|lowest|most|least|ranking|rank|"
+    r"sales|sold|revenue|profit|count|sum|total|average|compare|trend|"
+    r"products?|orders?|customers?)\b",
+    re.I,
+)
+# Matched as SUFFIXES against whatever columns the query returned, so
+# `productName`, `company_name` and `category_label` all resolve without any
+# of them being listed. The previous version enumerated one schema's column
+# names, so every other dataset fell through to an opaque id.
+_LABEL_PRIORITY = (
+    "month",
+    "name",
+    "title",
+    "label",
+)
+_VALUE_PRIORITY = (
+    "ordervolume",
+    "order_volume",
+    "unitssold",
+    "units_sold",
+    "totalrevenue",
+    "total_revenue",
+    "revenue",
+    "sales",
+    "amount",
+    "total",
+    "sum",
+    "count",
+    "quantity",
+    "units",
+    "orders",
+    "value",
+)
+# Identifiers are never the metric being charted. Suffix-based, so
+# `productId`, `customer_id` and `order_key` are all skipped without naming
+# any particular entity.
+_SKIP_VALUE_KEYS = re.compile(r"(^|_)?(id|uuid|key)$", re.I)
+
+
+def is_structured_analytics_query(question: str) -> bool:
+    return bool(_ANALYTICS.search(question))
+
+
+def _is_number(val: Any) -> bool:
+    if val is None:
+        return False
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        return True
+    try:
+        float(str(val).replace(",", ""))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _to_float(val: Any) -> float:
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        return float(val)
+    return float(str(val).replace(",", ""))
+
+
+def extract_rows_from_sources(sources: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for src in sources or []:
+        raw = src.get("raw")
+        if isinstance(raw, dict) and raw:
+            rows.append(dict(raw))
+    return rows
+
+
+def _pick_columns(rows: list[dict]) -> tuple[Optional[str], Optional[str], list[str]]:
+    if not rows:
+        return None, None, []
+    keys: list[str] = []
+    for row in rows:
+        for k in row:
+            if k not in keys:
+                keys.append(k)
+
+    numeric = [
+        k for k in keys
+        if not _SKIP_VALUE_KEYS.search(k.replace(" ", ""))
+        and sum(1 for r in rows if _is_number(r.get(k))) >= min(2, len(rows))
+    ]
+    stringish = [
+        k for k in keys
+        if not all(_is_number(r.get(k)) for r in rows)
+        and any(r.get(k) is not None and str(r.get(k)).strip() for r in rows)
+    ]
+
+    label_key = None
+    for pref in _LABEL_PRIORITY:
+        label_key = next((k for k in stringish if k.lower().endswith(pref)), None)
+        if label_key:
+            break
+    if not label_key and stringish:
+        label_key = stringish[0]
+
+    value_key = None
+    for pref in _VALUE_PRIORITY:
+        for k in numeric:
+            kn = k.lower().replace(" ", "").replace("_", "")
+            if pref in kn:
+                value_key = k
+                break
+        if value_key:
+            break
+    if not value_key and numeric:
+        value_key = max(
+            numeric,
+            key=lambda k: sum(_to_float(r.get(k)) for r in rows if _is_number(r.get(k))),
+        )
+
+    display_keys = [k for k in keys if k in (label_key, value_key) or k in numeric]
+    if label_key and label_key not in display_keys:
+        display_keys.insert(0, label_key)
+    if value_key and value_key not in display_keys:
+        display_keys.append(value_key)
+    if not display_keys:
+        display_keys = keys[:8]
+    return label_key, value_key, display_keys
+
+
+def build_structured_presentation(
+    question: str,
+    answer: str,
+    sources: list[dict],
+) -> Optional[dict]:
+    """
+    Returns { kind, blocks } or None if not suitable for rich structured UI.
+    """
+    rows = extract_rows_from_sources(sources)
+    if not rows:
+        return None
+    if not is_structured_analytics_query(question):
+        return None
+
+    if is_singular_best_query(question) or len(rows) == 1:
+        return {
+            "kind": "plain",
+            "blocks": [{"type": "markdown", "content": (answer or "").strip()}],
+        }
+
+    if len(rows) < 2:
+        return None
+
+    label_key, value_key, display_keys = _pick_columns(rows)
+    if not display_keys:
+        return None
+
+    headers = [_human_key(k) for k in display_keys]
+    table_rows: list[list[str]] = []
+    labels: list[str] = []
+    values: list[float] = []
+
+    chart_rows: list[tuple[str, float]] = []
+    for row in rows[:25]:
+        table_rows.append([_cell(row.get(k)) for k in display_keys])
+        if label_key and value_key and _is_number(row.get(value_key)):
+            lbl = _cell(row.get(label_key)) or "—"
+            chart_rows.append((lbl[:40], _to_float(row.get(value_key))))
+
+    if chart_rows:
+        chart_rows.sort(key=lambda x: x[1], reverse=True)
+    labels = [r[0] for r in chart_rows]
+    values = [r[1] for r in chart_rows]
+
+    blocks: list[dict] = []
+
+    chart_limit = 16 if len(rows) > 10 else 12
+    chart_labels = labels[:chart_limit]
+    chart_values = values[:chart_limit]
+
+    if value_key and len(chart_values) >= 2 and _values_vary_enough(chart_values):
+        chart_title = _chart_title(question, value_key)
+        chart_type = choose_chart_type(question, label_key, chart_labels, chart_values)
+        blocks.append({
+            "type": "chart",
+            "chartType": chart_type,
+            "interactive": chart_type in ("bar", "bar-horizontal", "line"),
+            "valueFormat": "number",
+            "valueKey": value_key,
+            "title": chart_title,
+            "labels": chart_labels,
+            "values": chart_values,
+        })
+
+    table_block = {
+        "type": "table",
+        "title": "Query results",
+        "headers": headers,
+        "rows": table_rows,
+        "interactive": True,
+    }
+    if len(display_keys) > 4 and blocks:
+        blocks.insert(0, table_block)
+    else:
+        blocks.append(table_block)
+
+    blocks.append({"type": "markdown", "content": answer or ""})
+
+    kinds = {b["type"] for b in blocks}
+    kind = "mixed" if len(kinds) > 1 else "table"
+    return {"kind": kind, "blocks": blocks}
+
+
+def _human_key(key: str) -> str:
+    return re.sub(r"([a-z])([A-Z])", r"\1 \2", key).replace("_", " ").title()
+
+
+def _cell(val: Any) -> str:
+    if val is None:
+        return ""
+    if hasattr(val, "iso_format"):
+        return val.iso_format()[:7]
+    if hasattr(val, "year") and hasattr(val, "month"):
+        return f"{val.year}-{val.month:02d}"
+    if isinstance(val, float):
+        return f"{val:,.2f}" if abs(val) < 1e9 else f"{val:.2e}"
+    s = str(val)
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return s[:7]
+    return s
+
+
+def choose_chart_type(
+    question: str,
+    label_key: Optional[str],
+    labels: list[str],
+    values: list[float],
+) -> str:
+    """
+    Pick a chart type from query shape and data (document-agnostic).
+
+    Returns one of: bar, bar-horizontal, line, pie, doughnut.
+    """
+    n = len(values)
+    if n < 2:
+        return "bar"
+    q = (question or "").lower()
+    lk = (label_key or "").lower().replace(" ", "")
+
+    if lk in ("month", "orderdate", "shipdate", "requireddate", "date", "period", "year"):
+        return "line"
+    if re.search(r"\b(monthly|over\s+time|trend|time\s+series|by\s+month|per\s+month)\b", q):
+        return "line"
+    if re.search(
+        r"\b(share|portion|percent|%|distribution|breakdown|split|composition|"
+        r"proportion|mix)\b",
+        q,
+    ):
+        return "doughnut" if n <= 6 else "pie"
+
+    total = sum(values)
+    if n <= 8 and total > 0 and all(v >= 0 for v in values):
+        mx = max(values)
+        if mx <= 1.0 + 1e-9:
+            return "doughnut"
+        if mx <= 100 and abs(total - 100.0) <= max(2.0, 0.03 * total):
+            return "pie"
+
+    if n > 10 or (labels and max(len(str(lbl)) for lbl in labels) > 16):
+        return "bar-horizontal"
+    return "bar"
+
+
+def _values_vary_enough(values: list[float]) -> bool:
+    if len(values) < 2:
+        return False
+    lo, hi = min(values), max(values)
+    if hi <= 0:
+        return False
+    if lo == hi:
+        return False
+    return (hi - lo) / max(abs(hi), 1.0) >= 0.01
+
+
+def _chart_title(question: str, value_key: str) -> str:
+    m = re.search(r"\btop\s+(\d+)\b", question, re.I)
+    if m:
+        return f"Top {m.group(1)} by {_human_key(value_key)}"
+    return f"By {_human_key(value_key)}"
