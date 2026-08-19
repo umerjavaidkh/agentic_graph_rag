@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
-    from .structured.strategies.base import StructuredStrategy
+    from ..structured.retrieval.strategies.base import StructuredStrategy
     from ..unstructured.retrieval.strategies.base import UnstructuredStrategy
 
 _UNSTRUCTURED_REGISTRY: dict[str, Callable[..., "UnstructuredStrategy"]] = {}

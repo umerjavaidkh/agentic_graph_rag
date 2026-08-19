@@ -13,16 +13,16 @@ from ..shared.config.settings import (
 )
 from ..shared.model_providers.factory import get_chat_provider
 from ..unstructured.presentation import build_presentation
-from ..presentation.structured_planner import build_structured_presentation
-from ..retrieval.structured.graph import (
+from .presentation import build_structured_presentation
+from .retrieval.graph import (
     _build_fast_structured_answer,
     _should_fast_structured_answer,
     retrieve_node,
 )
-from ..retrieval.structured.query_intent import estimate_structured_synthesis_max_tokens
-from ..retrieval.structured.verification import _COUNT_WORDS, compute_confidence
+from .retrieval.query_intent import estimate_structured_synthesis_max_tokens
+from .retrieval.verification import _COUNT_WORDS, compute_confidence
 from ..shared.telemetry.pipeline import record_pipeline_step
-from .events import stream_event
+from ..streaming.events import stream_event
 
 
 def _try_document_fallback_stream(

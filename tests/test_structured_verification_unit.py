@@ -17,7 +17,7 @@ import pytest
 
 
 from src.shared.model_providers.base import ModelProvider
-from src.retrieval.structured.verification import (
+from src.structured.retrieval.verification import (
     check_answer_sanity,
     compute_confidence,
     verify_with_llm,
@@ -147,7 +147,7 @@ def test_verify_with_llm_truncates_row_sample():
 
 
 def test_compute_confidence_clean_query_no_verify_enabled(monkeypatch):
-    import src.retrieval.structured.verification as v
+    import src.structured.retrieval.verification as v
 
     monkeypatch.setattr(v, "STRUCTURED_VERIFY_ENABLED", False)
     chunks = [{"cypher": "MATCH (c:Customer) RETURN count(c)", "raw": {"count": 5}}]
@@ -159,7 +159,7 @@ def test_compute_confidence_clean_query_no_verify_enabled(monkeypatch):
 
 
 def test_compute_confidence_rule_hit_skips_llm_call(monkeypatch):
-    import src.retrieval.structured.verification as v
+    import src.structured.retrieval.verification as v
 
     monkeypatch.setattr(v, "STRUCTURED_VERIFY_ENABLED", True)
     provider = FakeModelProvider('{"valid": true}')
@@ -175,7 +175,7 @@ def test_compute_confidence_rule_hit_skips_llm_call(monkeypatch):
 
 
 def test_compute_confidence_llm_gate_flags_when_enabled(monkeypatch):
-    import src.retrieval.structured.verification as v
+    import src.structured.retrieval.verification as v
 
     monkeypatch.setattr(v, "STRUCTURED_VERIFY_ENABLED", True)
     provider = FakeModelProvider('{"valid": false, "reason": "filters do not match"}')

@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from src.retrieval.structured.schema.provider import SchemaProvider, _parse_node_type_labels
+from src.structured.retrieval.schema.provider import SchemaProvider, _parse_node_type_labels
 
 
 def test_parse_node_type_labels_single():

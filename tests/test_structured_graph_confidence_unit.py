@@ -57,21 +57,21 @@ sys.modules["src.shared.auth.roles"].UserContext = MagicMock
 #
 # Only clear/re-stub the two modules this file actually needs control over
 # (graph.py itself, and its retriever dependency) — NOT the whole
-# src.retrieval.structured.* namespace. Other test files (e.g.
+# src.structured.retrieval.* namespace. Other test files (e.g.
 # test_structured_verification_unit.py) import sibling modules like
 # verification.py directly and hold references to that module object;
 # blanket-deleting it here would force a second, distinct module instance
 # into existence, silently breaking monkeypatch targeting in those files
 # once pytest's collection phase (which imports every test file before
 # running any test) reaches this one.
-for _mod_name in ("src.retrieval.structured.graph", "src.retrieval.structured.retriever"):
+for _mod_name in ("src.structured.retrieval.graph", "src.structured.retrieval.retriever"):
     if _mod_name in sys.modules:
         del sys.modules[_mod_name]
-_retriever_stub = _stub_module("src.retrieval.structured.retriever")
+_retriever_stub = _stub_module("src.structured.retrieval.retriever")
 _retriever_stub.StructuredRetriever = lambda *a, **k: MagicMock()
 
-from src.retrieval.structured.graph import _generate_structured_answer
-import src.retrieval.structured.graph as graph_mod
+from src.structured.retrieval.graph import _generate_structured_answer
+import src.structured.retrieval.graph as graph_mod
 
 
 class FakeChatProvider:
@@ -122,7 +122,7 @@ def test_mismatched_aggregation_is_flagged_but_answer_unchanged(monkeypatch):
 
     # Verification must never rewrite the answer text — compare against the
     # same fast-path build with confidence stripped out of the equation.
-    from src.retrieval.structured.graph import _build_fast_structured_answer
+    from src.structured.retrieval.graph import _build_fast_structured_answer
 
     expected_answer = _build_fast_structured_answer(chunks, "text2cypher", question)
     assert flagged["answer"] == expected_answer

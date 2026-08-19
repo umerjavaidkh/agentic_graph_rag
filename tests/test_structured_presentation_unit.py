@@ -1,5 +1,5 @@
 """Unit tests for structured presentation chart type selection."""
-from src.presentation.structured_planner import choose_chart_type
+from src.structured.presentation import choose_chart_type
 
 
 def test_choose_bar_for_top_n():

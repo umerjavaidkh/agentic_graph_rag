@@ -1,5 +1,5 @@
 """Heuristic gate for structured multistep planning."""
-from src.retrieval.structured.query_intent import likely_needs_multistep_plan
+from src.structured.retrieval.query_intent import likely_needs_multistep_plan
 
 
 def test_simple_queries_skip_planner():

@@ -74,10 +74,10 @@ from src.unstructured.ingestion.service import IngestionManager
 
 @pytest.fixture()
 def fake_structured_graph(monkeypatch):
-    mod = types.ModuleType("src.retrieval.structured.graph")
+    mod = types.ModuleType("src.structured.retrieval.graph")
     fake_retriever = MagicMock()
     mod.retriever = fake_retriever
-    monkeypatch.setitem(sys.modules, "src.retrieval.structured.graph", mod)
+    monkeypatch.setitem(sys.modules, "src.structured.retrieval.graph", mod)
     return fake_retriever
 
 
@@ -108,11 +108,11 @@ def test_entity_cache_failure_is_swallowed(fake_structured_graph, fake_routing):
 
 
 def test_missing_structured_graph_module_does_not_block_entity_cache_clear(monkeypatch, fake_routing):
-    monkeypatch.delitem(sys.modules, "src.retrieval.structured.graph", raising=False)
+    monkeypatch.delitem(sys.modules, "src.structured.retrieval.graph", raising=False)
     real_import = __import__
 
     def _raise_for_structured_graph(name, *args, **kwargs):
-        if name == "src.retrieval.structured.graph" or name.endswith("retrieval.structured.graph"):
+        if name == "src.structured.retrieval.graph" or name.endswith("retrieval.structured.graph"):
             raise ImportError("not available in this deployment")
         return real_import(name, *args, **kwargs)
 

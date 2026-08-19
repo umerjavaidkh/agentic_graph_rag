@@ -31,20 +31,20 @@ from ..shared.config.settings import (
     STRUCTURED_SYNTHESIS_MAX_TOKENS,
 )
 from ..shared.model_providers.factory import get_chat_provider
-from ..retrieval.structured.graph import (
+from ..structured.retrieval.graph import (
     _build_fast_structured_answer,
     _should_fast_structured_answer,
 )
-from ..retrieval.structured.query_intent import estimate_structured_synthesis_max_tokens
+from ..structured.retrieval.query_intent import estimate_structured_synthesis_max_tokens
 from ..unstructured.retrieval.graph import (
     _STRUCTURAL_FAST_MODES,
     _build_fast_unstructured_answer,
     _fix_misrouted_structured_answer,
 )
 from ..unstructured.retrieval.graph import retrieve_node as doc_retrieve_node
-from ..retrieval.structured.graph import retrieve_node as struct_retrieve_node
+from ..structured.retrieval.graph import retrieve_node as struct_retrieve_node
 from .events import stream_event
-from .structured import _viz_blocks_only, iter_structured_stream
+from ..structured.streaming import _viz_blocks_only, iter_structured_stream
 
 
 def _resolve_tool(

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.structured.cypher.validator import sql_cypher_issue, unknown_label_issue
+from src.structured.retrieval.cypher.validator import sql_cypher_issue, unknown_label_issue
 
 
 @pytest.mark.parametrize(
@@ -48,7 +48,7 @@ def test_substring_based_month_bucketing_not_flagged():
 
 
 def test_tenant_filter_not_checked_when_multi_tenancy_disabled(monkeypatch):
-    import src.retrieval.structured.cypher.validator as v
+    import src.structured.retrieval.cypher.validator as v
 
     monkeypatch.setattr(v, "MULTI_TENANCY_ENABLED", False)
     cypher = "MATCH (p:Product) RETURN p.name"  # no tenant filter at all
@@ -56,7 +56,7 @@ def test_tenant_filter_not_checked_when_multi_tenancy_disabled(monkeypatch):
 
 
 def test_tenant_filter_checked_when_multi_tenancy_enabled(monkeypatch):
-    import src.retrieval.structured.cypher.validator as v
+    import src.structured.retrieval.cypher.validator as v
 
     monkeypatch.setattr(v, "MULTI_TENANCY_ENABLED", True)
     cypher = "MATCH (p:Product) RETURN p.name"  # no tenant filter at all
@@ -66,7 +66,7 @@ def test_tenant_filter_checked_when_multi_tenancy_enabled(monkeypatch):
 
 
 def test_tenant_filter_satisfied_when_multi_tenancy_enabled(monkeypatch):
-    import src.retrieval.structured.cypher.validator as v
+    import src.structured.retrieval.cypher.validator as v
 
     monkeypatch.setattr(v, "MULTI_TENANCY_ENABLED", True)
     cypher = "MATCH (p:Product) WHERE p.tenant_id = $tenant_id RETURN p.name"

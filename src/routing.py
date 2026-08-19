@@ -264,7 +264,7 @@ def run_structured_autofix(question: str, user_context: Optional[UserContext]) -
         return None
     if not user_can_query_structured(user_context):
         return None
-    from .retrieval.structured.graph import structured_agent
+    from .structured.retrieval.graph import structured_agent
 
     state: dict[str, Any] = {"question": question}
     if user_context is not None:

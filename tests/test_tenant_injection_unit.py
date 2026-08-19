@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.structured.cypher.tenant_injection import (
+from src.structured.retrieval.cypher.tenant_injection import (
     inject_tenant_filters,
     missing_tenant_filter_issue,
 )

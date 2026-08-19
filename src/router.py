@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from .unstructured.retrieval.graph import esg_agent
-from .retrieval.structured.graph import structured_agent
+from .structured.retrieval.graph import structured_agent
 from .shared.auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
 from .shared.audit import AuditEventType, record_audit_event
 from .unstructured.presentation import build_presentation

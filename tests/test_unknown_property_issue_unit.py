@@ -7,7 +7,7 @@ having: Neo4j returns null for a missing property rather than erroring, and
 an aggregate over nulls still returns one row, so nothing downstream can
 tell a wrong answer from a right one.
 """
-from src.retrieval.structured.cypher.validator import unknown_property_issue
+from src.structured.retrieval.cypher.validator import unknown_property_issue
 
 SCHEMA = {
     "OrderItem": {"price", "freight", "item_key", "line_no"},

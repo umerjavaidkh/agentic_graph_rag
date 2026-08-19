@@ -43,10 +43,10 @@ sys.modules["src.shared.auth.roles"].DEFAULT_PUBLIC_CONTEXT = MagicMock(role=Mag
 # to construct. query_data() only calls structured_agent.invoke(state), so
 # stub both graph modules wholesale rather than importing the real (heavy)
 # LangGraph pipelines.
-for _n in ["src.retrieval.structured.graph", "src.unstructured.retrieval.graph"]:
+for _n in ["src.structured.retrieval.graph", "src.unstructured.retrieval.graph"]:
     if _n in sys.modules:
         del sys.modules[_n]
-_structured_graph_stub = _stub_module("src.retrieval.structured.graph")
+_structured_graph_stub = _stub_module("src.structured.retrieval.graph")
 _structured_graph_stub.structured_agent = MagicMock()
 _unstructured_graph_stub = _stub_module("src.unstructured.retrieval.graph")
 _unstructured_graph_stub.esg_agent = MagicMock()

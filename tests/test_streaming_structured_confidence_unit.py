@@ -47,13 +47,13 @@ sys.modules["src.shared.auth.rbac_setup"].initialize_rbac_schema = MagicMock()
 sys.modules["src.shared.auth.roles"].UserContext = MagicMock
 
 for _mod_name in (
-    "src.retrieval.structured.graph",
-    "src.retrieval.structured.retriever",
-    "src.streaming.structured",
+    "src.structured.retrieval.graph",
+    "src.structured.retrieval.retriever",
+    "src.structured.streaming",
 ):
     if _mod_name in sys.modules:
         del sys.modules[_mod_name]
-_retriever_stub = _stub_module("src.retrieval.structured.retriever")
+_retriever_stub = _stub_module("src.structured.retrieval.retriever")
 _retriever_stub.StructuredRetriever = lambda *a, **k: MagicMock()
 
 # src.streaming.__init__ imports query_stream.py, which pulls in router.py,
@@ -66,8 +66,8 @@ if "src.streaming" not in sys.modules:
     _streaming_pkg.__package__ = "src.streaming"
     sys.modules["src.streaming"] = _streaming_pkg
 
-from src.streaming.structured import iter_structured_stream
-import src.streaming.structured as structured_stream_mod
+from src.structured.streaming import iter_structured_stream
+import src.structured.streaming as structured_stream_mod
 
 
 def _chunks(cypher: str, rows: list[dict]) -> list[dict]:

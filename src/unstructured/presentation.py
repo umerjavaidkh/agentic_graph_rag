@@ -10,7 +10,7 @@ import re
 from typing import Any, Callable, Optional
 
 from .document.page_numbers import parse_page_number_from_query
-from ..presentation.structured_planner import build_structured_presentation
+from ..structured.presentation import build_structured_presentation
 from .document.page_vision import compact_visual_content
 from .retrieval.visual_retrieval import wants_page_text
 

@@ -1,10 +1,10 @@
 """Unit tests for deterministic Cypher repair helpers."""
-from src.retrieval.structured.cypher.repair import (
+from src.structured.retrieval.cypher.repair import (
     fix_extra_paren_as_alias,
     fix_with_missing_aliases,
     normalize_generated_cypher,
 )
-from src.retrieval.structured.cypher.validator import sql_cypher_issue
+from src.structured.retrieval.cypher.validator import sql_cypher_issue
 
 _SCHEMA = """
 RELATIONSHIP TYPES:
@@ -53,7 +53,7 @@ def test_normalize_generated_cypher_idempotent():
 
 
 def test_normalize_generated_cypher_no_tenant_filter_when_disabled(monkeypatch):
-    import src.retrieval.structured.cypher.repair as repair_mod
+    import src.structured.retrieval.cypher.repair as repair_mod
 
     monkeypatch.setattr(repair_mod, "MULTI_TENANCY_ENABLED", False)
     cypher = "MATCH (p:Product) RETURN p.name"
@@ -62,7 +62,7 @@ def test_normalize_generated_cypher_no_tenant_filter_when_disabled(monkeypatch):
 
 
 def test_normalize_generated_cypher_injects_tenant_filter_when_enabled(monkeypatch):
-    import src.retrieval.structured.cypher.repair as repair_mod
+    import src.structured.retrieval.cypher.repair as repair_mod
 
     monkeypatch.setattr(repair_mod, "MULTI_TENANCY_ENABLED", True)
     cypher = "MATCH (p:Product) RETURN p.name"

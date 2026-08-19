@@ -6,7 +6,7 @@ Tests that retrievers enforce access checks before querying.
 """
 
 from src.shared.auth.roles import UserContext, validate_role
-from src.retrieval.structured.retriever import StructuredRetriever
+from src.structured.retrieval.retriever import StructuredRetriever
 from src.unstructured.retrieval.retriever import DocumentRAGRetriever
 
 

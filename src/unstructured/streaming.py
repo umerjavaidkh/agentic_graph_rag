@@ -26,7 +26,7 @@ from .retrieval.retriever import (
 )
 from .retrieval.verification import compute_confidence
 from ..routing import document_agent_structured_guard, structured_entity_summary
-from ..streaming.structured import iter_structured_stream
+from ..structured.streaming import iter_structured_stream
 from ..streaming.events import stream_event
 
 

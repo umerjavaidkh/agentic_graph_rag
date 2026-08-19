@@ -23,9 +23,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Iterable, Optional
 
-from ..shared.config.settings import STRUCTURED_FALLBACK_MODEL
-from ..unstructured.graph.constants import NON_BUSINESS_LABELS, SCHEMA_DOC_LABEL
-from ..shared.model_providers.factory import get_chat_provider
+from ...shared.config.settings import STRUCTURED_FALLBACK_MODEL
+from ...unstructured.graph.constants import NON_BUSINESS_LABELS, SCHEMA_DOC_LABEL
+from ...shared.model_providers.factory import get_chat_provider
 
 logger = logging.getLogger(__name__)
 

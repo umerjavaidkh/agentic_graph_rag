@@ -19,7 +19,7 @@ from ...shared.config.settings import (
     STRUCTURED_EMPTY_MULTISTEP_FALLBACK,
 )
 from ...shared.neo4j.driver import get_neo4j_driver
-from ..strategy_registry import get_structured, register_structured
+from ...retrieval.strategy_registry import get_structured, register_structured
 from ...shared.telemetry import pipeline_step
 from .cypher.generator import OpenAICypherGenerator
 from .cypher.pipeline import Text2CypherPipeline

@@ -47,9 +47,9 @@ _auth_roles.DEFAULT_PUBLIC_CONTEXT = MagicMock(role=MagicMock(value="public"))
 # modules at module level — those need a live Neo4j-backed retriever to
 # construct, so stub both wholesale rather than importing the real (heavy)
 # LangGraph pipelines. query_hybrid() only calls .invoke(state) on each.
-for _n in ["src.retrieval.structured.graph", "src.unstructured.retrieval.graph"]:
+for _n in ["src.structured.retrieval.graph", "src.unstructured.retrieval.graph"]:
     sys.modules.pop(_n, None)
-_structured_graph_stub = _stub_module("src.retrieval.structured.graph")
+_structured_graph_stub = _stub_module("src.structured.retrieval.graph")
 _structured_graph_stub.structured_agent = MagicMock()
 _unstructured_graph_stub = _stub_module("src.unstructured.retrieval.graph")
 _unstructured_graph_stub.esg_agent = MagicMock()

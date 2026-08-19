@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.structured.executor import StructuredCypherExecutor
+from src.structured.retrieval.executor import StructuredCypherExecutor
 
 
 def _no_issue(_cypher: str):

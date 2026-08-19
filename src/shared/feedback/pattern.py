@@ -12,7 +12,7 @@ def question_hash(question: str) -> str:
 
 def retrieval_pattern(question: str, *, agent: str = "") -> str:
     """Bucket key from intent flags (not verbatim question text)."""
-    from ...retrieval.structured.query_intent import likely_needs_multistep_plan
+    from ...structured.retrieval.query_intent import likely_needs_multistep_plan
     from ...unstructured.retrieval.query_intent import (
         is_enumeration_question,
         is_fact_lookup_question,

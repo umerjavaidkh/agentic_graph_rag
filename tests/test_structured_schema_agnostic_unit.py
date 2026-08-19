@@ -29,8 +29,8 @@ BANNED = (
 )
 
 STRUCTURED_SOURCES = [
-    "src/retrieval/structured",
-    "src/presentation/structured_planner.py",
+    "src/structured/retrieval",
+    "src/structured/presentation.py",
     "src/shared/conversation/thread_memory.py",
     "src/prompts/structured_text2cypher.txt",
     "src/prompts/structured_multistep_plan.txt",
@@ -112,7 +112,7 @@ def test_pattern_alias_repair():
     is exactly one correct reading, and the regeneration it replaces sometimes
     ran out of attempts and returned an error instead of an answer.
     """
-    from src.retrieval.structured.cypher.repair import fix_pattern_alias
+    from src.structured.retrieval.cypher.repair import fix_pattern_alias
 
     assert fix_pattern_alias("MATCH (:Review) AS r RETURN avg(r.score)") == (
         "MATCH (r:Review) RETURN avg(r.score)"

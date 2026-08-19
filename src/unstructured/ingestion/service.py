@@ -266,7 +266,7 @@ class IngestionManager:
         module, and there's no reverse dependency either way to worry about.
         """
         try:
-            from ...retrieval.structured.graph import retriever as _structured_retriever
+            from ...structured.retrieval.graph import retriever as _structured_retriever
 
             _structured_retriever.clear_schema_cache()
         except Exception:

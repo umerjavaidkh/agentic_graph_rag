@@ -48,10 +48,10 @@ sys.modules["src.shared.auth.rbac_setup"].initialize_rbac_schema = MagicMock()
 sys.modules["src.shared.auth.roles"].UserContext = MagicMock
 sys.modules["src.shared.auth.roles"].DEFAULT_PUBLIC_CONTEXT = MagicMock(role=MagicMock(value="public"))
 
-for _n in ["src.retrieval.structured.graph", "src.unstructured.retrieval.graph"]:
+for _n in ["src.structured.retrieval.graph", "src.unstructured.retrieval.graph"]:
     if _n in sys.modules:
         del sys.modules[_n]
-_structured_graph_stub = _stub_module("src.retrieval.structured.graph")
+_structured_graph_stub = _stub_module("src.structured.retrieval.graph")
 _structured_graph_stub.structured_agent = MagicMock()
 _structured_graph_stub._build_fast_structured_answer = MagicMock()
 _structured_graph_stub._should_fast_structured_answer = MagicMock()

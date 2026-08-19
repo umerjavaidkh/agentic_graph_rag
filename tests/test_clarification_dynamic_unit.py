@@ -8,7 +8,7 @@ price of an order item?" -- a question with one obvious answer -- could not
 be answered at all. These cases pin the two properties that matters: ask
 only when the graph really is ambiguous, and offer only real fields.
 """
-from src.retrieval.structured.policies.clarification import (
+from src.structured.retrieval.policies.clarification import (
     needs_clarification,
     numeric_metric_candidates,
 )
