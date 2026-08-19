@@ -78,7 +78,18 @@ def stubbed_import():
     imported: list = []
 
     def _import(target: str, stubs: dict | None = None, drop: tuple = ()):
-        with _patched_modules(stubs or {}, drop=tuple(drop) + (target,)):
+        # Drop the target's ancestor packages too, unless this file stubs them
+        # deliberately. Another test module may have replaced src.shared.auth
+        # at import time with a stand-in that has no __path__, and importing
+        # src.shared.auth.rbac_setup through that fails. Clearing the ancestors
+        # makes a converted file immune to the ones not yet converted, so each
+        # conversion helps on its own instead of only once all of them land.
+        parts = target.split(".")
+        ancestors = tuple(
+            ".".join(parts[:i]) for i in range(1, len(parts))
+            if ".".join(parts[:i]) not in (stubs or {})
+        )
+        with _patched_modules(stubs or {}, drop=tuple(drop) + ancestors + (target,)):
             module = importlib.import_module(target)
             imported.append(target)
             return module

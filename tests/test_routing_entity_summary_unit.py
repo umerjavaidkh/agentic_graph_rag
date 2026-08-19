@@ -14,38 +14,31 @@ Run with:
 """
 from __future__ import annotations
 
-import sys
-import types
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 
-def _stub_module(name: str) -> types.ModuleType:
-    mod = types.ModuleType(name)
-    sys.modules[name] = mod
-    return mod
+@pytest.fixture
+def routing_mod(stubbed_import):
+    """The routing module, imported with its heavy dependencies stood in for.
 
-
-if "neo4j" not in sys.modules:
-    _stub_module("neo4j")
-sys.modules["neo4j"].GraphDatabase = MagicMock()
-sys.modules["neo4j"].Driver = object
-
-for _n in ["src.shared.auth", "src.shared.auth.roles"]:
-    if _n not in sys.modules:
-        _stub_module(_n)
-sys.modules["src.shared.auth.roles"].UserContext = MagicMock
-
-if "src.interface.routing" in sys.modules:
-    del sys.modules["src.interface.routing"]
-
-import src.interface.routing as routing_mod
+    Scoped to a test rather than installed at module scope: pytest imports
+    every test module during collection, so module-level stubs are still in
+    place when a later module is imported and quietly decide what it sees.
+    """
+    return stubbed_import(
+        "src.interface.routing",
+        stubs={
+            "neo4j": {"GraphDatabase": MagicMock(), "Driver": object},
+            "src.shared.auth": {},
+            "src.shared.auth.roles": {"UserContext": MagicMock},
+        },
+    )
 
 
 @pytest.fixture(autouse=True)
-def _reset_cache():
+def _reset_cache(routing_mod):
     routing_mod.clear_structured_entity_cache()
     yield
     routing_mod.clear_structured_entity_cache()
@@ -64,7 +57,7 @@ def _fake_driver(labels):
     return driver
 
 
-def test_excludes_document_graph_labels(monkeypatch):
+def test_excludes_document_graph_labels(routing_mod, monkeypatch):
     labels = ["Product", "Order", "Customer", "Document", "Section", "Page", "DocumentLogical", "DocRevision"]
     fake_driver = _fake_driver(labels)
     monkeypatch.setattr("src.shared.neo4j.driver.get_neo4j_driver", lambda: fake_driver)
@@ -78,7 +71,7 @@ def test_excludes_document_graph_labels(monkeypatch):
         assert doc_label not in summary.split(", ")
 
 
-def test_falls_back_to_generic_string_on_error(monkeypatch):
+def test_falls_back_to_generic_string_on_error(routing_mod, monkeypatch):
     def _boom():
         raise RuntimeError("no db")
 
@@ -89,7 +82,7 @@ def test_falls_back_to_generic_string_on_error(monkeypatch):
     assert summary == "structured graph data"
 
 
-def test_caches_across_calls(monkeypatch):
+def test_caches_across_calls(routing_mod, monkeypatch):
     call_count = {"n": 0}
 
     def _get_driver():
@@ -105,7 +98,7 @@ def test_caches_across_calls(monkeypatch):
     assert call_count["n"] == 1
 
 
-def test_no_hardcoded_domain_vocabulary_in_tool_descriptions(monkeypatch):
+def test_no_hardcoded_domain_vocabulary_in_tool_descriptions(routing_mod, monkeypatch):
     monkeypatch.setattr("src.shared.neo4j.driver.get_neo4j_driver", lambda: _fake_driver(["Product", "Order"]))
 
     tools = routing_mod._build_mcp_route_tools()

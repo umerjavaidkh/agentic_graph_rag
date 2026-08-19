@@ -20,36 +20,30 @@ Run with:
 """
 from __future__ import annotations
 
-import sys
-import types
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 
-def _stub_module(name: str) -> types.ModuleType:
-    mod = types.ModuleType(name)
-    sys.modules[name] = mod
-    return mod
+@pytest.fixture
+def routing_mod(stubbed_import):
+    """The routing module, imported with its heavy dependencies stood in for.
+
+    Scoped to a test rather than installed at module scope: pytest imports
+    every test module during collection, so module-level stubs are still in
+    place when a later module is imported and quietly decide what it sees.
+    """
+    return stubbed_import(
+        "src.interface.routing",
+        stubs={
+            "neo4j": {"GraphDatabase": MagicMock()},
+            "src.shared.auth": {},
+            "src.shared.auth.roles": {"UserContext": MagicMock},
+        },
+    )
 
 
-if "neo4j" not in sys.modules:
-    _stub_module("neo4j")
-sys.modules["neo4j"].GraphDatabase = MagicMock()
-
-for _n in ["src.shared.auth", "src.shared.auth.roles"]:
-    if _n not in sys.modules:
-        _stub_module(_n)
-sys.modules["src.shared.auth.roles"].UserContext = MagicMock
-
-if "src.interface.routing" in sys.modules:
-    del sys.modules["src.interface.routing"]
-
-import src.interface.routing as routing_mod
-
-
-def test_run_via_mcp_tool_reattributes_document_agent_structured_autofix(monkeypatch):
+def test_run_via_mcp_tool_reattributes_document_agent_structured_autofix(routing_mod, monkeypatch):
     monkeypatch.setattr(routing_mod, "_fast_route_tool", lambda q: "search_documents")
 
     fake_result = {
@@ -67,7 +61,7 @@ def test_run_via_mcp_tool_reattributes_document_agent_structured_autofix(monkeyp
     assert out["_route_method"] == "misroute_autofix"
 
 
-def test_run_via_mcp_tool_leaves_plain_document_answer_unattributed(monkeypatch):
+def test_run_via_mcp_tool_leaves_plain_document_answer_unattributed(routing_mod, monkeypatch):
     monkeypatch.setattr(routing_mod, "_fast_route_tool", lambda q: "search_documents")
 
     fake_result = {
