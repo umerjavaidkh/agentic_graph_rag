@@ -17,6 +17,9 @@ venv/
 # Output and generated data
 data/assets/
 data/feedback/
+data/blobs/
+# Uploaded files staged mid-ingest; two were committed by accident.
+tmp_ingest/
 output/
 output_v2/
 output_v3/
