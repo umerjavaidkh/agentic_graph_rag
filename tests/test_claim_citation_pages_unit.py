@@ -137,7 +137,7 @@ def test_query_response_declares_claims():
     could only ever show a document-level citation."""
     from pathlib import Path
 
-    source = (Path(__file__).parent.parent / "src" / "api.py").read_text()
+    source = (Path(__file__).parent.parent / "src" / "interface" / "api.py").read_text()
     model = source.split("class QueryResponse", 1)[1].split("\n@app.", 1)[0]
     assert "claims:" in model, "QueryResponse does not declare claims"
     assert "claims       = result.get(\"claims\"" in source, "claims never passed through"

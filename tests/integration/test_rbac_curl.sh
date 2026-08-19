@@ -8,7 +8,7 @@ echo "RBAC CURL TEST COMMANDS"
 echo "========================================================"
 echo ""
 echo "Start the API server first:"
-echo "  ./venv/bin/python -m src.api"
+echo "  ./venv/bin/python -m src.interface.api"
 echo ""
 echo "========================================================"
 

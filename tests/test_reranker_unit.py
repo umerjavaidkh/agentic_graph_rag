@@ -1,7 +1,7 @@
 """Unit tests for the pluggable reranker (registry + service + backends)."""
 from __future__ import annotations
 
-from src.retrieval.reranker_registry import (
+from src.shared.registries.reranker_registry import (
     get_reranker_backend,
     list_rerankers,
     register_reranker,

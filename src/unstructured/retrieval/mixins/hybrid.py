@@ -13,7 +13,7 @@ from ....shared.config.settings import (
 )
 from ....shared.neo4j.driver import get_neo4j_driver
 from ....shared.telemetry.context import TelemetryEvent, get_telemetry
-from ....retrieval.strategy_registry import get_unstructured
+from ....shared.registries.strategy_registry import get_unstructured
 from ..executor import DocumentQueryExecutor
 from ..query_intent import (
     is_filing_date_question,

@@ -39,10 +39,10 @@ for _n in ["src.shared.auth", "src.shared.auth.roles"]:
         _stub_module(_n)
 sys.modules["src.shared.auth.roles"].UserContext = MagicMock
 
-if "src.routing" in sys.modules:
-    del sys.modules["src.routing"]
+if "src.interface.routing" in sys.modules:
+    del sys.modules["src.interface.routing"]
 
-from src.routing import _DATA_ROUTE, _DOC_ROUTE, _fast_route_tool
+from src.interface.routing import _DATA_ROUTE, _DOC_ROUTE, _fast_route_tool
 
 
 @pytest.mark.parametrize(

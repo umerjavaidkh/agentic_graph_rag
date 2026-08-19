@@ -138,11 +138,11 @@ def test_delete_is_tenant_scoped():
 def test_endpoint_is_registered_and_admin_gated():
     """A DELETE that anyone could call is a denial-of-service on the corpus.
 
-    Read as source rather than imported: src.api pulls in the whole retrieval
+    Read as source rather than imported: src.interface.api pulls in the whole retrieval
     stack, and other tests in this suite stub parts of it in sys.modules, so
     importing it here passes or fails depending on collection order.
     """
-    source = (Path(__file__).parent.parent / "src" / "api.py").read_text()
+    source = (Path(__file__).parent.parent / "src" / "interface" / "api.py").read_text()
     decorator = '@app.delete("/documents/{logical_doc_id}")'
     assert decorator in source, "DELETE /documents/{logical_doc_id} is not registered"
     body = source.split(decorator, 1)[1].split("\n@app.", 1)[0]

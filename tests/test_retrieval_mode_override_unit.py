@@ -41,10 +41,10 @@ for _n in ["src.shared.auth", "src.shared.auth.roles"]:
         _stub_module(_n)
 sys.modules["src.shared.auth.roles"].UserContext = MagicMock
 
-if "src.routing" in sys.modules:
-    del sys.modules["src.routing"]
+if "src.interface.routing" in sys.modules:
+    del sys.modules["src.interface.routing"]
 
-from src.routing import DEFAULT_RETRIEVAL_MODE, MODE_TO_TOOL, resolve_mode_override
+from src.interface.routing import DEFAULT_RETRIEVAL_MODE, MODE_TO_TOOL, resolve_mode_override
 
 _DEFAULT_TOOL = MODE_TO_TOOL[DEFAULT_RETRIEVAL_MODE]
 

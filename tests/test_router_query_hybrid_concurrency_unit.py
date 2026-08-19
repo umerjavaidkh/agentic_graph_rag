@@ -54,9 +54,9 @@ _structured_graph_stub.structured_agent = MagicMock()
 _unstructured_graph_stub = _stub_module("src.unstructured.retrieval.graph")
 _unstructured_graph_stub.esg_agent = MagicMock()
 
-sys.modules.pop("src.router", None)
+sys.modules.pop("src.interface.router", None)
 
-import src.router as router_mod
+import src.interface.router as router_mod
 
 
 class _ConcurrencyProbeAgent:

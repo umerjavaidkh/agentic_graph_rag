@@ -75,7 +75,7 @@ for _mod_name in list(sys.modules):
         del sys.modules[_mod_name]
 
 import src.unstructured.streaming as document_stream_mod
-import src.streaming.query_stream as query_stream_mod
+import src.interface.streaming.query_stream as query_stream_mod
 
 
 def _last_done_event(lines: list[str]) -> dict:

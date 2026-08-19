@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from ..conversation import get_turn, resolve_follow_up
-from ...routing import select_mcp_tool
+from ...interface.routing import select_mcp_tool
 from ..telemetry import pipeline_step
 from .routing.service import get_feedback_routing
 

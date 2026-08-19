@@ -27,7 +27,7 @@ def _stub_module(name: str) -> types.ModuleType:
 
 
 for _mod_name in list(sys.modules):
-    if _mod_name.startswith("src.ingestion") or _mod_name.startswith("src.unstructured.document"):
+    if _mod_name.startswith("src.pipeline.ingestion") or _mod_name.startswith("src.unstructured.document"):
         del sys.modules[_mod_name]
 
 # Always create a fresh, private stub for these and overwrite whatever's in
@@ -83,9 +83,9 @@ def fake_structured_graph(monkeypatch):
 
 @pytest.fixture()
 def fake_routing(monkeypatch):
-    mod = types.ModuleType("src.routing")
+    mod = types.ModuleType("src.interface.routing")
     mod.clear_structured_entity_cache = MagicMock()
-    monkeypatch.setitem(sys.modules, "src.routing", mod)
+    monkeypatch.setitem(sys.modules, "src.interface.routing", mod)
     return mod.clear_structured_entity_cache
 
 

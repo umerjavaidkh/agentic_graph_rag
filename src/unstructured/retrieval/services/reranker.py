@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 from ....shared.config.settings import RERANK_BACKEND, RERANK_ENABLED, RERANK_MODEL
-from ....retrieval.reranker_registry import get_reranker_backend, register_reranker
+from ....shared.registries.reranker_registry import get_reranker_backend, register_reranker
 
 logger = logging.getLogger(__name__)
 

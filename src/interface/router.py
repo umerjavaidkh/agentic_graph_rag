@@ -8,15 +8,15 @@ import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from .unstructured.retrieval.graph import esg_agent
-from .structured.retrieval.graph import structured_agent
-from .shared.auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
-from .shared.audit import AuditEventType, record_audit_event
-from .unstructured.presentation import build_presentation
-from .shared.auth.rbac_setup import GraphRBAC
-from .shared.config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
-from .shared.feedback import resolve_query_tool
-from .shared.telemetry import clear_telemetry, get_telemetry, start_telemetry
+from ..unstructured.retrieval.graph import esg_agent
+from ..structured.retrieval.graph import structured_agent
+from ..shared.auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
+from ..shared.audit import AuditEventType, record_audit_event
+from ..unstructured.presentation import build_presentation
+from ..shared.auth.rbac_setup import GraphRBAC
+from ..shared.config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from ..shared.feedback import resolve_query_tool
+from ..shared.telemetry import clear_telemetry, get_telemetry, start_telemetry
 
 _rbac: GraphRBAC | None = None
 
@@ -38,7 +38,7 @@ def _rbac_check() -> GraphRBAC:
     if _rbac is None:
         _rbac = GraphRBAC(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     return _rbac
-from .shared.conversation import get_turn, resolve_follow_up, save_turn
+from ..shared.conversation import get_turn, resolve_follow_up, save_turn
 from .routing import (
     TOOL_TO_AGENT,
     enforce_mode,

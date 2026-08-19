@@ -25,9 +25,9 @@ from .retrieval.retriever import (
     is_visual_page_question,
 )
 from .retrieval.verification import compute_confidence
-from ..routing import document_agent_structured_guard, structured_entity_summary
+from ..interface.routing import document_agent_structured_guard, structured_entity_summary
 from ..structured.streaming import iter_structured_stream
-from ..streaming.events import stream_event
+from ..interface.streaming.events import stream_event
 
 
 def _document_prompt_name(question: str) -> str:

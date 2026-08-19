@@ -38,10 +38,10 @@ for _n in ["src.shared.auth", "src.shared.auth.roles"]:
         _stub_module(_n)
 sys.modules["src.shared.auth.roles"].UserContext = MagicMock
 
-if "src.routing" in sys.modules:
-    del sys.modules["src.routing"]
+if "src.interface.routing" in sys.modules:
+    del sys.modules["src.interface.routing"]
 
-import src.routing as routing_mod
+import src.interface.routing as routing_mod
 
 
 @pytest.fixture(autouse=True)

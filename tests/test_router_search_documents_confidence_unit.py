@@ -49,10 +49,10 @@ _structured_graph_stub.structured_agent = MagicMock()
 _unstructured_graph_stub = _stub_module("src.unstructured.retrieval.graph")
 _unstructured_graph_stub.esg_agent = MagicMock()
 
-if "src.router" in sys.modules:
-    del sys.modules["src.router"]
+if "src.interface.router" in sys.modules:
+    del sys.modules["src.interface.router"]
 
-import src.router as router_mod
+import src.interface.router as router_mod
 
 
 def test_search_documents_forwards_low_confidence_and_note(monkeypatch):

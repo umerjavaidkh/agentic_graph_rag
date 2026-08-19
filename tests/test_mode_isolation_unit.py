@@ -9,7 +9,7 @@ wrong corpus, and giving no sign the selected source had been abandoned.
 Guarding the fallback sites one at a time kept missing one, so the boundary
 is enforced in a single place and pinned here.
 """
-from src.routing import enforce_mode
+from src.interface.routing import enforce_mode
 
 
 def _result(agent: str) -> dict:

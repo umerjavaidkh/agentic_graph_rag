@@ -43,7 +43,7 @@ def _stub_module(name: str) -> types.ModuleType:
 # Drop any stale stubs a previously-collected test file may have left behind
 # for modules we need to import for real in this file.
 for _mod_name in list(sys.modules):
-    if _mod_name.startswith("src.ingestion") or _mod_name.startswith("src.unstructured.document"):
+    if _mod_name.startswith("src.pipeline.ingestion") or _mod_name.startswith("src.unstructured.document"):
         del sys.modules[_mod_name]
 
 # Always create a fresh, private stub for these and overwrite whatever's in
@@ -91,7 +91,7 @@ def teardown_module(module) -> None:
 
 
 from src.unstructured.ingestion.service import IngestionJob, IngestionManager
-from src.ingestion.job_store import InMemoryJobStore
+from src.pipeline.ingestion.job_store import InMemoryJobStore
 from src.shared.model_providers.base import ModelProvider
 from src.shared.storage.vector.memory_store import InMemoryVectorStore
 

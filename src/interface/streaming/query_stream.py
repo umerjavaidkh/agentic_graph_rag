@@ -4,10 +4,10 @@ from __future__ import annotations
 import json
 from typing import Iterator, Optional
 
-from ..shared.auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
-from ..shared.conversation import get_turn, save_turn
-from ..shared.feedback import maybe_record_retrieval_feedback, resolve_query_tool
-from ..unstructured.presentation import build_presentation
+from ...shared.auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
+from ...shared.conversation import get_turn, save_turn
+from ...shared.feedback import maybe_record_retrieval_feedback, resolve_query_tool
+from ...unstructured.presentation import build_presentation
 from ..router import _rbac_check
 from ..routing import (
     TOOL_TO_AGENT,
@@ -16,35 +16,35 @@ from ..routing import (
     resolve_mode_override,
     try_document_fallback,
 )
-from ..shared.telemetry import clear_telemetry, get_telemetry, pipeline_step, start_telemetry
-from ..unstructured.streaming import (
+from ...shared.telemetry import clear_telemetry, get_telemetry, pipeline_step, start_telemetry
+from ...unstructured.streaming import (
     _build_context_text,
     _document_max_tokens,
     _document_prompt_name,
     iter_document_stream,
 )
-from ..shared.config.prompts import load_prompt
-from ..shared.config.settings import (
+from ...shared.config.prompts import load_prompt
+from ...shared.config.settings import (
     CHAT_MODEL,
     STRUCTURED_MODEL,
     STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS,
     STRUCTURED_SYNTHESIS_MAX_TOKENS,
 )
-from ..shared.model_providers.factory import get_chat_provider
-from ..structured.retrieval.graph import (
+from ...shared.model_providers.factory import get_chat_provider
+from ...structured.retrieval.graph import (
     _build_fast_structured_answer,
     _should_fast_structured_answer,
 )
-from ..structured.retrieval.query_intent import estimate_structured_synthesis_max_tokens
-from ..unstructured.retrieval.graph import (
+from ...structured.retrieval.query_intent import estimate_structured_synthesis_max_tokens
+from ...unstructured.retrieval.graph import (
     _STRUCTURAL_FAST_MODES,
     _build_fast_unstructured_answer,
     _fix_misrouted_structured_answer,
 )
-from ..unstructured.retrieval.graph import retrieve_node as doc_retrieve_node
-from ..structured.retrieval.graph import retrieve_node as struct_retrieve_node
+from ...unstructured.retrieval.graph import retrieve_node as doc_retrieve_node
+from ...structured.retrieval.graph import retrieve_node as struct_retrieve_node
 from .events import stream_event
-from ..structured.streaming import _viz_blocks_only, iter_structured_stream
+from ...structured.streaming import _viz_blocks_only, iter_structured_stream
 
 
 def _resolve_tool(

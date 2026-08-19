@@ -14,7 +14,7 @@ and every request.
 from __future__ import annotations
 
 from ....shared.neo4j.driver import get_neo4j_driver
-from ....retrieval.strategy_registry import register_unstructured
+from ....shared.registries.strategy_registry import register_unstructured
 from ..executor import DocumentQueryExecutor
 from ..services.chapter_summary import ChapterSummaryService
 from ..services.document_resolver import DocumentResolver

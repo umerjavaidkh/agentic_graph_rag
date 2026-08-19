@@ -53,9 +53,9 @@ from ...shared.storage.blob.base import BlobStore
 from ...shared.storage.blob.factory import get_blob_store
 from ...shared.storage.vector.base import VectorStore
 from ...shared.storage.vector.factory import get_vector_store
-from ...ingestion.models import IngestionStatus
-from ...ingestion.job_store import JobStore, get_job_store
-from ...ingestion.queue import enqueue_ingest
+from ...pipeline.ingestion.models import IngestionStatus
+from ...pipeline.ingestion.job_store import JobStore, get_job_store
+from ...pipeline.ingestion.queue import enqueue_ingest
 from .triage import check_duplicate, check_structural_sanity
 
 from ...shared.auth.rbac_setup import GraphRBAC
@@ -272,7 +272,7 @@ class IngestionManager:
         except Exception:
             pass
         try:
-            from ...routing import clear_structured_entity_cache
+            from ...interface.routing import clear_structured_entity_cache
 
             clear_structured_entity_cache()
         except Exception:

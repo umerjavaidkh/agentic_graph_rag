@@ -56,15 +56,15 @@ for _mod_name in (
 _retriever_stub = _stub_module("src.structured.retrieval.retriever")
 _retriever_stub.StructuredRetriever = lambda *a, **k: MagicMock()
 
-# src.streaming.__init__ imports query_stream.py, which pulls in router.py,
+# src.interface.streaming.__init__ imports query_stream.py, which pulls in router.py,
 # routing.py, feedback_loop, conversation — none of which iter_structured_stream
 # needs. Pre-populate a stub package (real __path__, so submodule lookup on
 # disk still works) instead of letting Python run the real __init__.py.
-if "src.streaming" not in sys.modules:
-    _streaming_pkg = types.ModuleType("src.streaming")
-    _streaming_pkg.__path__ = [str(_root / "src" / "streaming")]
-    _streaming_pkg.__package__ = "src.streaming"
-    sys.modules["src.streaming"] = _streaming_pkg
+if "src.interface.streaming" not in sys.modules:
+    _streaming_pkg = types.ModuleType("src.interface.streaming")
+    _streaming_pkg.__path__ = [str(_root / "src" / "interface" / "streaming")]
+    _streaming_pkg.__package__ = "src.interface.streaming"
+    sys.modules["src.interface.streaming"] = _streaming_pkg
 
 from src.structured.streaming import iter_structured_stream
 import src.structured.streaming as structured_stream_mod

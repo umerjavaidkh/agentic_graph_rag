@@ -51,7 +51,7 @@ class _FakeBaseModel:
 # REAL models.py (no heavy deps) to get IngestionStatus.
 _root = Path(__file__).resolve().parents[1]
 
-from src.ingestion.models import IngestionStatus  # noqa: E402 – after path setup
+from src.pipeline.ingestion.models import IngestionStatus  # noqa: E402 – after path setup
 
 @dataclass
 class _IngestionJob:
@@ -214,7 +214,7 @@ def setup_module(module) -> None:
     sys.modules["src.shared.neo4j.driver"].get_neo4j_driver = MagicMock()
 
     # --- bridge/conversation stubs ---
-    for _n in ["src.bridge", "src.shared.conversation", "src.routing", "src.router"]:
+    for _n in ["src.interface.bridge", "src.shared.conversation", "src.interface.routing", "src.interface.router"]:
         if _n not in sys.modules:
             _stub_module(_n)
 
@@ -226,11 +226,11 @@ def setup_module(module) -> None:
 
     # Stub the ingestion package itself so __init__.py doesn't run,
     # but set __path__ so Python can still find sub-modules on disk.
-    _ing_pkg = _stub_module("src.ingestion")
+    _ing_pkg = _stub_module("src.pipeline.ingestion")
     _ing_pkg.IngestionManager = MagicMock()
     _ing_pkg.IngestionJob = _IngestionJob
-    _ing_pkg.__path__ = [str(_root / "src" / "ingestion")]
-    _ing_pkg.__package__ = "src.ingestion"
+    _ing_pkg.__path__ = [str(_root / "src" / "pipeline" / "ingestion")]
+    _ing_pkg.__package__ = "src.pipeline.ingestion"
 
 
 _STUBBED_MODULE_NAMES = (
@@ -246,8 +246,8 @@ _STUBBED_MODULE_NAMES = (
     "src.unstructured.document.parser_registry", "src.unstructured.document.page_vision",
     "src.unstructured.document.graph_snapshot",
     "src.unstructured.graph", "src.unstructured.graph.constants", "src.shared.neo4j.driver",
-    "src.bridge", "src.shared.conversation", "src.routing", "src.router",
-    "src.unstructured.ingestion.service", "src.ingestion",
+    "src.interface.bridge", "src.shared.conversation", "src.interface.routing", "src.interface.router",
+    "src.unstructured.ingestion.service", "src.pipeline.ingestion",
 )
 
 
@@ -275,7 +275,7 @@ class TestInMemoryJobStore:
         return _IngestionJob(id=job_id, type="unstructured", name="Test Doc")
 
     def test_save_and_get(self):
-        from src.ingestion.job_store import InMemoryJobStore
+        from src.pipeline.ingestion.job_store import InMemoryJobStore
         store = InMemoryJobStore()
         job = self._make_job()
         store.save(job)
@@ -286,12 +286,12 @@ class TestInMemoryJobStore:
         assert retrieved.name == job.name
 
     def test_get_missing_returns_none(self):
-        from src.ingestion.job_store import InMemoryJobStore
+        from src.pipeline.ingestion.job_store import InMemoryJobStore
         store = InMemoryJobStore()
         assert store.get("nonexistent") is None
 
     def test_append_and_get_logs(self):
-        from src.ingestion.job_store import InMemoryJobStore
+        from src.pipeline.ingestion.job_store import InMemoryJobStore
         store = InMemoryJobStore()
         job = self._make_job()
         store.save(job)
@@ -301,7 +301,7 @@ class TestInMemoryJobStore:
         assert logs == ["line 1", "line 2"]
 
     def test_list_ids(self):
-        from src.ingestion.job_store import InMemoryJobStore
+        from src.pipeline.ingestion.job_store import InMemoryJobStore
         store = InMemoryJobStore()
         for i in range(5):
             store.save(self._make_job(f"job_{i}"))
@@ -310,7 +310,7 @@ class TestInMemoryJobStore:
         assert "job_0" in ids
 
     def test_delete(self):
-        from src.ingestion.job_store import InMemoryJobStore
+        from src.pipeline.ingestion.job_store import InMemoryJobStore
         store = InMemoryJobStore()
         job = self._make_job()
         store.save(job)
@@ -318,7 +318,7 @@ class TestInMemoryJobStore:
         assert store.get(job.id) is None
 
     def test_status_change_persisted(self):
-        from src.ingestion.job_store import InMemoryJobStore
+        from src.pipeline.ingestion.job_store import InMemoryJobStore
         store = InMemoryJobStore()
         job = self._make_job()
         store.save(job)
@@ -351,7 +351,7 @@ class TestRedisJobStore:
         return j
 
     def test_save_and_get(self, fake_client):
-        from src.ingestion.job_store import RedisJobStore
+        from src.pipeline.ingestion.job_store import RedisJobStore
         store = RedisJobStore(fake_client)
         job = self._make_job()
         store.save(job)
@@ -363,7 +363,7 @@ class TestRedisJobStore:
         assert retrieved.version_number == job.version_number
 
     def test_logs_survive_round_trip(self, fake_client):
-        from src.ingestion.job_store import RedisJobStore
+        from src.pipeline.ingestion.job_store import RedisJobStore
         store = RedisJobStore(fake_client)
         job = self._make_job()
         store.save(job)
@@ -374,7 +374,7 @@ class TestRedisJobStore:
         assert "parsing done" in retrieved.logs
 
     def test_list_ids_deduplication(self, fake_client):
-        from src.ingestion.job_store import RedisJobStore
+        from src.pipeline.ingestion.job_store import RedisJobStore
         store = RedisJobStore(fake_client)
         job = self._make_job("dedup_job")
         store.save(job)
@@ -387,7 +387,7 @@ class TestRedisJobStore:
 
 class TestJobSerialization:
     def test_round_trip_preserves_all_fields(self):
-        from src.ingestion.job_store import job_to_dict, job_from_dict
+        from src.pipeline.ingestion.job_store import job_to_dict, job_from_dict
 
         job = _IngestionJob(
             id="ser_test_001",
@@ -425,23 +425,23 @@ class TestJobSerialization:
 class TestQueueWiring:
     def test_returns_none_when_no_redis(self):
         """When REDIS_URL is empty, enqueue_ingest should return None."""
-        import src.ingestion.queue as queue_mod
+        import src.pipeline.ingestion.queue as queue_mod
         queue_mod._queue = None  # reset singleton
-        with patch("src.ingestion.queue.get_ingest_queue", return_value=None):
+        with patch("src.pipeline.ingestion.queue.get_ingest_queue", return_value=None):
             result = queue_mod.enqueue_ingest("test_job_id")
         assert result is None
 
     def test_list_failed_jobs_returns_empty_without_redis(self):
-        import src.ingestion.queue as queue_mod
+        import src.pipeline.ingestion.queue as queue_mod
         queue_mod._queue = None
-        with patch("src.ingestion.queue.get_ingest_queue", return_value=None):
+        with patch("src.pipeline.ingestion.queue.get_ingest_queue", return_value=None):
             result = queue_mod.list_failed_jobs()
         assert result == []
 
     def test_queue_depth_returns_none_without_redis(self):
-        import src.ingestion.queue as queue_mod
+        import src.pipeline.ingestion.queue as queue_mod
         queue_mod._queue = None
-        with patch("src.ingestion.queue.get_ingest_queue", return_value=None):
+        with patch("src.pipeline.ingestion.queue.get_ingest_queue", return_value=None):
             result = queue_mod.queue_depth()
         assert result is None
 

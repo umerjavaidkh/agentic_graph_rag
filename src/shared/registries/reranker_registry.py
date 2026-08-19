@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
-    from ..unstructured.retrieval.services.reranker import RerankerBackend
+    from ...unstructured.retrieval.services.reranker import RerankerBackend
 
 _RERANKER_REGISTRY: dict[str, Callable[[], "RerankerBackend"]] = {}
 

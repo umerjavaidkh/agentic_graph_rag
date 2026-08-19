@@ -31,7 +31,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.shared.auth.roles import Role, UserContext  # noqa: E402
-from src.router import ask  # noqa: E402
+from src.interface.router import ask  # noqa: E402
 
 
 def cited_pages(sources: list[dict]) -> set[int]:

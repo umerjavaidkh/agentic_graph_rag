@@ -33,7 +33,7 @@ def get_ingest_queue() -> Optional[Any]:
     if _queue is not None:
         return _queue
 
-    from ..shared.config.settings import INGEST_QUEUE_NAME, REDIS_URL
+    from ...shared.config.settings import INGEST_QUEUE_NAME, REDIS_URL
 
     if not REDIS_URL:
         return None

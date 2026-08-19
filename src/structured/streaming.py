@@ -22,7 +22,7 @@ from .retrieval.graph import (
 from .retrieval.query_intent import estimate_structured_synthesis_max_tokens
 from .retrieval.verification import _COUNT_WORDS, compute_confidence
 from ..shared.telemetry.pipeline import record_pipeline_step
-from ..streaming.events import stream_event
+from ..interface.streaming.events import stream_event
 
 
 def _try_document_fallback_stream(

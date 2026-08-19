@@ -9,7 +9,7 @@ from langgraph.graph import END, StateGraph
 import math
 import re
 
-from ...routing import document_agent_structured_guard, has_document_cue, structured_entity_summary
+from ...interface.routing import document_agent_structured_guard, has_document_cue, structured_entity_summary
 from .retriever import (
     DocumentRAGRetriever,
     is_page_question,

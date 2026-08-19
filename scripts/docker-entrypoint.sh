@@ -15,4 +15,4 @@ echo "==> Demo data (Northwind)…"
 python scripts/init_demo_data.py
 
 echo "==> Starting API on http://0.0.0.0:8000"
-exec uvicorn src.api:app --host 0.0.0.0 --port 8000
+exec uvicorn src.interface.api:app --host 0.0.0.0 --port 8000

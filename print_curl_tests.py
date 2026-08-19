@@ -69,7 +69,7 @@ print("\n" + "="*70)
 print("RBAC CURL TEST COMMANDS")
 print("="*70)
 print("\n🚀 START THE API SERVER FIRST:")
-print("   ./venv/bin/python -m src.api")
+print("   ./venv/bin/python -m src.interface.api")
 print("\n" + "="*70 + "\n")
 
 for i, test in enumerate(tests, 1):

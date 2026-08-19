@@ -10,19 +10,19 @@ import logging
 import re
 from typing import Any, Callable, Optional
 
-from .shared.auth.roles import UserContext
-from .shared.audit import AuditEventType, record_audit_event
-from .shared.config.prompts import load_prompt
-from .shared.config.settings import (
+from ..shared.auth.roles import UserContext
+from ..shared.audit import AuditEventType, record_audit_event
+from ..shared.config.prompts import load_prompt
+from ..shared.config.settings import (
     DEFAULT_TENANT_ID,
     FAST_ROUTE_QUERIES,
     OPENAI_API_KEY,
     ROUTING_MODEL,
     estimate_route_max_tokens,
 )
-from .unstructured.graph.constants import NON_BUSINESS_LABELS
-from .shared.model_providers.factory import get_chat_provider
-from .shared.telemetry import get_telemetry, pipeline_step
+from ..unstructured.graph.constants import NON_BUSINESS_LABELS
+from ..shared.model_providers.factory import get_chat_provider
+from ..shared.telemetry import get_telemetry, pipeline_step
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def structured_entity_summary() -> str:
     if _structured_entities_cache is not None:
         return _structured_entities_cache
     try:
-        from .shared.neo4j.driver import get_neo4j_driver
+        from ..shared.neo4j.driver import get_neo4j_driver
 
         driver = get_neo4j_driver()
         with driver.session() as session:
@@ -264,7 +264,7 @@ def run_structured_autofix(question: str, user_context: Optional[UserContext]) -
         return None
     if not user_can_query_structured(user_context):
         return None
-    from .structured.retrieval.graph import structured_agent
+    from ..structured.retrieval.graph import structured_agent
 
     state: dict[str, Any] = {"question": question}
     if user_context is not None:
@@ -326,7 +326,7 @@ def try_document_fallback(
     "only take the fallback if it actually improved things" discipline used
     for the multistep/text2cypher fallback in StructuredRetriever.retrieve().
     """
-    from .unstructured.retrieval.graph import esg_agent
+    from ..unstructured.retrieval.graph import esg_agent
 
     state: dict[str, Any] = {"question": question, "skip_structured_guard": True}
     if user_context is not None:

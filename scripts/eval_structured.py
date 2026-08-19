@@ -51,7 +51,7 @@ if str(ROOT) not in sys.path:
 
 from src.shared.auth.roles import UserContext, Role  # noqa: E402
 from src.shared.neo4j.driver import get_neo4j_driver  # noqa: E402
-from src.router import ask  # noqa: E402
+from src.interface.router import ask  # noqa: E402
 
 
 @dataclass
