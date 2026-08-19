@@ -1,18 +1,8 @@
-"""The FastAPI application: lifecycle, static mount, and the routers.
+"""Process-wide singletons the routers share.
 
-The endpoints live in routes/, grouped by purpose -- pages, query, feedback,
-ingest, documents, admin. They were all in this file, so ingest, retrieval,
-feedback, audit and RBAC were interleaved across 1369 lines and neither half
-of the system could be read on its own.
-
-Nothing about the HTTP surface changed: same paths, same methods, same
-response models, checked by diffing the generated OpenAPI schema before and
-after. The routers take the thread pools and the ingestion manager from deps
-rather than building their own -- each is sized from config, so a per-router
-copy would multiply the thread count.
-
-Startup/shutdown handlers and the static mount stay here: they belong to the
-application, not to any one group of endpoints.
+The two thread pools especially MUST be created once. Each is sized from
+config, so a per-router copy would silently multiply the thread count by the
+number of routers -- a behaviour change no test would notice.
 """
 import asyncio
 import functools
@@ -80,53 +70,34 @@ from ..shared.feedback import (
     retrieval_pattern,
 )
 
-from .routes import admin, documents, feedback, ingest, pages, query
 
-logger = logging.getLogger(__name__)
-
-
-app = FastAPI(title="Agentic Graph RAG API")
+ingestion_manager = IngestionManager()
 
 
-@app.on_event("startup")
-async def _ensure_rbac_schema_initialized():
+_ingest_executor = ThreadPoolExecutor(max_workers=API_INGEST_EXECUTOR_WORKERS, thread_name_prefix="ingest")
+
+
+_query_executor = ThreadPoolExecutor(max_workers=API_QUERY_EXECUTOR_WORKERS, thread_name_prefix="query")
+
+
+async def _run_ingest_job_local(job_id: str) -> None:
+    """In-process fallback: run the job in a thread when Redis is not configured."""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(_ingest_executor, ingestion_manager.run_job, job_id)
+
+
+def _dispatch_ingest_job(
+    job_id: str, background_tasks: BackgroundTasks, *, job_timeout: str = "30m"
+) -> str:
     """
-    Auto-initialize RBAC seed schema/data in Neo4j if missing.
+    Dispatch a job to RQ workers when Redis is configured, or run it
+    locally via BackgroundTasks when it is not.  Returns the dispatch mode.
 
-    This is idempotent (Cypher uses MERGE/IF NOT EXISTS) and safe to run on each boot.
+    job_timeout only affects the RQ path — the BackgroundTasks/ThreadPoolExecutor
+    fallback has no timeout concept.
     """
-    setup_logging()
-    logger.info("Agentic Graph RAG API starting")
-    rbac = GraphRBAC(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-    try:
-        if not rbac.is_initialized():
-            rbac.setup_schema()
-    finally:
-        rbac.close()
-
-
-@app.on_event("shutdown")
-async def _close_neo4j_driver():
-    close_neo4j_driver()
-
-
-app.mount(
-    "/static",
-    StaticFiles(directory=Path(__file__).resolve().parent / "static"),
-    name="static",
-)
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
-# Order is cosmetic -- FastAPI matches on path, not registration order -- but
-# it reads the way a request flows: pages, then asking, then the pipeline.
-app.include_router(pages.router)
-app.include_router(query.router)
-app.include_router(feedback.router)
-app.include_router(ingest.router)
-app.include_router(documents.router)
-app.include_router(admin.router)
+    rq_job = enqueue_ingest(job_id, job_timeout=job_timeout)  # None when REDIS_URL not set
+    if rq_job is not None:
+        return "worker"
+    background_tasks.add_task(_run_ingest_job_local, job_id)
+    return "background_task"

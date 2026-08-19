@@ -143,9 +143,9 @@ def test_endpoint_is_registered_and_admin_gated():
     importing it here passes or fails depending on collection order.
     """
     source = (next(_p for _p in Path(__file__).resolve().parents if (_p / "src").is_dir())
-              / "src" / "interface" / "api.py").read_text()
-    decorator = '@app.delete("/documents/{logical_doc_id}")'
+              / "src" / "interface" / "routes" / "documents.py").read_text()
+    decorator = '@router.delete("/documents/{logical_doc_id}")'
     assert decorator in source, "DELETE /documents/{logical_doc_id} is not registered"
-    body = source.split(decorator, 1)[1].split("\n@app.", 1)[0]
+    body = source.split(decorator, 1)[1].split("\n@router.", 1)[0]
     assert "resolve_admin_session" in body, "the delete endpoint is not admin-gated"
     assert "delete_document" in body

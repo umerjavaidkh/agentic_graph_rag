@@ -138,7 +138,9 @@ def test_query_response_declares_claims():
     from pathlib import Path
 
     source = (next(_p for _p in Path(__file__).resolve().parents if (_p / "src").is_dir())
-              / "src" / "interface" / "api.py").read_text()
+              / "src" / "interface" / "schemas.py").read_text()
     model = source.split("class QueryResponse", 1)[1].split("\n@app.", 1)[0]
     assert "claims:" in model, "QueryResponse does not declare claims"
-    assert "claims       = result.get(\"claims\"" in source, "claims never passed through"
+    passthrough = (next(_p for _p in Path(__file__).resolve().parents if (_p / "src").is_dir())
+               / "src" / "interface" / "routes" / "query.py").read_text()
+    assert 'claims       = result.get("claims"' in passthrough, "claims never passed through"
