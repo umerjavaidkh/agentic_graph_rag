@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.shared.neo4j.driver import get_neo4j_driver  # noqa: E402
-from src.ingestion.validation import (  # noqa: E402
+from src.unstructured.ingestion.validation import (  # noqa: E402
     build_ingestion_quality_report,
     list_ingested_documents,
 )

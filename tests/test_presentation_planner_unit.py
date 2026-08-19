@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 
-from src.presentation.planner import _extract_chart_from_text, build_presentation
+from src.unstructured.presentation import _extract_chart_from_text, build_presentation
 
 
 # ── _extract_chart_from_text ─────────────────────────────────────────────

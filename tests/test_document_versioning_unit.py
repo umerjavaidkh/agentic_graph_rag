@@ -17,22 +17,22 @@ ROOT = Path(__file__).resolve().parents[1]
 def _load_versioning_module():
     import importlib
 
-    importlib.import_module("src.models")
+    importlib.import_module("src.unstructured.models")
     # Stub parent package so versioning loads without pulling in parser (fitz).
-    doc_pkg = types.ModuleType("src.document")
-    doc_pkg.__path__ = [str(ROOT / "src" / "document")]
-    doc_pkg.__package__ = "src.document"
-    sys.modules["src.document"] = doc_pkg
+    doc_pkg = types.ModuleType("src.unstructured.document")
+    doc_pkg.__path__ = [str(ROOT / "src" / "unstructured" / "document")]
+    doc_pkg.__package__ = "src.unstructured.document"
+    sys.modules["src.unstructured.document"] = doc_pkg
 
     spec = importlib.util.spec_from_file_location(
-        "src.document.versioning",
-        ROOT / "src/document/versioning.py",
-        submodule_search_locations=[str(ROOT / "src/document")],
+        "src.unstructured.document.versioning",
+        ROOT / "src/unstructured/document/versioning.py",
+        submodule_search_locations=[str(ROOT / "src/unstructured/document")],
     )
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
-    mod.__package__ = "src.document"
-    sys.modules["src.document.versioning"] = mod
+    mod.__package__ = "src.unstructured.document"
+    sys.modules["src.unstructured.document.versioning"] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -65,7 +65,7 @@ def test_build_revision_plan_ids(v, tmp_path: Path):
 
 
 def test_apply_revision_to_graph_remaps_ids(v, tmp_path: Path):
-    from src.models import DKGNode, NodeType
+    from src.unstructured.models import DKGNode, NodeType
 
     f = tmp_path / "doc.pdf"
     f.write_bytes(b"same bytes")

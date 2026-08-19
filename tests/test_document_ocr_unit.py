@@ -14,8 +14,8 @@ from unittest.mock import MagicMock
 import pytest
 
 
-import src.document.ocr as ocr_mod
-from src.document.ocr import TesseractOcrBackend, get_ocr_backend
+import src.unstructured.document.ocr as ocr_mod
+from src.unstructured.document.ocr import TesseractOcrBackend, get_ocr_backend
 
 
 @pytest.fixture(autouse=True)

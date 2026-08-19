@@ -5,7 +5,7 @@ from typing import Optional
 
 from neo4j import Driver
 
-from ....graph.constants import NON_BUSINESS_LABELS, SCHEMA_DOC_LABEL
+from ....unstructured.graph.constants import NON_BUSINESS_LABELS, SCHEMA_DOC_LABEL
 
 
 def _parse_node_type_labels(node_type: str) -> list[str]:

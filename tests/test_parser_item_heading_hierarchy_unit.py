@@ -19,10 +19,10 @@ import sys
 from pathlib import Path
 
 
-from src.document.light.parser import LightPdfParser, _PageExtract, _PdfBlock
-from src.graph.axis1_structural import Axis1StructuralBuilder
-from src.graph.chunker import StructuralChunker
-from src.models import NodeType, RelType
+from src.unstructured.document.light.parser import LightPdfParser, _PageExtract, _PdfBlock
+from src.unstructured.graph.axis1_structural import Axis1StructuralBuilder
+from src.unstructured.graph.chunker import StructuralChunker
+from src.unstructured.models import NodeType, RelType
 
 
 def _block(text: str, page: int, font_size: float) -> _PdfBlock:

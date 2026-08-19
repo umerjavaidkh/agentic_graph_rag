@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-from src.ingestion.validation import _coverage, _flag_anomalies, _page_continuity
+from src.unstructured.ingestion.validation import _coverage, _flag_anomalies, _page_continuity
 
 
 def test_coverage_percentage():

@@ -26,8 +26,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.document.purge import purge_revision  # noqa: E402
-from src.graph.constants import DOC_REVISION_LABEL  # noqa: E402
+from src.unstructured.document.purge import purge_revision  # noqa: E402
+from src.unstructured.graph.constants import DOC_REVISION_LABEL  # noqa: E402
 from src.shared.neo4j.driver import get_neo4j_driver  # noqa: E402
 from src.shared.storage.blob.factory import get_blob_store  # noqa: E402
 from src.shared.storage.vector.factory import get_vector_store  # noqa: E402

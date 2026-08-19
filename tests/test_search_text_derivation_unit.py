@@ -26,7 +26,7 @@ import pytest
 
 def _drop_fake_stubs() -> None:
     """Drop stale fake stubs another test file left in sys.modules (e.g.
-    test_scalable_pipeline_unit.py stubs src.graph/src.document as bare
+    test_scalable_pipeline_unit.py stubs src.unstructured.graph/src.unstructured.document as bare
     types.ModuleType with no __path__) — only if they're fake, never a
     genuinely-imported real module. Pytest collects every test file's
     module-level code before running any test function, so this must run
@@ -34,8 +34,8 @@ def _drop_fake_stubs() -> None:
     already used by test_parser_table_aware_unit.py/test_parser_rtldoc_
     unit.py's own _drop_fake_document_stubs."""
     for _mod_name in list(sys.modules):
-        if _mod_name == "src.graph" or _mod_name.startswith("src.graph.") \
-                or _mod_name == "src.document" or _mod_name.startswith("src.document."):
+        if _mod_name == "src.unstructured.graph" or _mod_name.startswith("src.unstructured.graph.") \
+                or _mod_name == "src.unstructured.document" or _mod_name.startswith("src.unstructured.document."):
             _mod = sys.modules[_mod_name]
             if not hasattr(_mod, "__file__") and not hasattr(_mod, "__path__"):
                 del sys.modules[_mod_name]
@@ -43,13 +43,13 @@ def _drop_fake_stubs() -> None:
 
 _drop_fake_stubs()
 
-from src.document.light.parser import LightPdfParser
-from src.graph.axis1_structural import (
+from src.unstructured.document.light.parser import LightPdfParser
+from src.unstructured.graph.axis1_structural import (
     _SEARCH_TEXT_CHAR_BUDGET,
     Axis1StructuralBuilder,
     _derive_search_text,
 )
-from src.graph.chunker import StructuralChunker
+from src.unstructured.graph.chunker import StructuralChunker
 
 
 # ── _derive_search_text (pure, isolated) ─────────────────────────────────

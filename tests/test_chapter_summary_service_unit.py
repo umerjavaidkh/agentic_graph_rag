@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.unstructured.services.chapter_summary import ChapterSummaryService
+from src.unstructured.retrieval.services.chapter_summary import ChapterSummaryService
 
 
 class _FakeSession:

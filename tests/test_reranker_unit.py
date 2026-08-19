@@ -6,7 +6,7 @@ from src.retrieval.reranker_registry import (
     list_rerankers,
     register_reranker,
 )
-from src.retrieval.unstructured.services.reranker import (
+from src.unstructured.retrieval.services.reranker import (
     CrossEncoderRerankerBackend,
     NoopRerankerBackend,
     ReciprocalRankFusionBackend,
@@ -81,7 +81,7 @@ def test_service_single_item_returns_unchanged():
 def test_cross_encoder_backend_reorders_by_relevance(monkeypatch):
     backend = CrossEncoderRerankerBackend(model_name="fake-model")
     monkeypatch.setattr(
-        "src.retrieval.unstructured.services.reranker.CrossEncoderRerankerBackend._get_model",
+        "src.unstructured.retrieval.services.reranker.CrossEncoderRerankerBackend._get_model",
         lambda self: _FakeCrossEncoder(),
     )
     items = _items(
@@ -95,7 +95,7 @@ def test_cross_encoder_backend_reorders_by_relevance(monkeypatch):
 def test_cross_encoder_backend_falls_back_when_model_unavailable(monkeypatch):
     backend = CrossEncoderRerankerBackend(model_name="does-not-exist/definitely-not-a-real-model")
     monkeypatch.setattr(
-        "src.retrieval.unstructured.services.reranker.CrossEncoderRerankerBackend._get_model",
+        "src.unstructured.retrieval.services.reranker.CrossEncoderRerankerBackend._get_model",
         lambda self: None,
     )
     items = _items("a", "b")
@@ -111,7 +111,7 @@ def test_cross_encoder_backend_falls_back_on_inference_error(monkeypatch):
             raise RuntimeError("boom")
 
     monkeypatch.setattr(
-        "src.retrieval.unstructured.services.reranker.CrossEncoderRerankerBackend._get_model",
+        "src.unstructured.retrieval.services.reranker.CrossEncoderRerankerBackend._get_model",
         lambda self: _RaisingModel(),
     )
     items = _items("a", "b")
@@ -122,7 +122,7 @@ def test_cross_encoder_backend_falls_back_on_inference_error(monkeypatch):
 def test_service_resolves_backend_from_registry_by_default(monkeypatch):
     register_reranker("service_default_test", lambda: NoopRerankerBackend())
     monkeypatch.setattr(
-        "src.retrieval.unstructured.services.reranker.RERANK_BACKEND", "service_default_test"
+        "src.unstructured.retrieval.services.reranker.RERANK_BACKEND", "service_default_test"
     )
     service = RerankerService(enabled=True)
     items = _items("a", "b")
@@ -176,7 +176,7 @@ def test_service_uses_rrf_by_default_backend_key():
 
 def test_service_falls_back_to_noop_on_unknown_backend(monkeypatch):
     monkeypatch.setattr(
-        "src.retrieval.unstructured.services.reranker.RERANK_BACKEND", "not_registered_anywhere"
+        "src.unstructured.retrieval.services.reranker.RERANK_BACKEND", "not_registered_anywhere"
     )
     service = RerankerService(enabled=True)
     items = _items("a", "b")

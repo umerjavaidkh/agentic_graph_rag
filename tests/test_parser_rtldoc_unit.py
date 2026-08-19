@@ -22,19 +22,19 @@ import pytest
 
 
 # Same fresh-registry-fixture rationale as test_document_parser_registry_unit.py
-# and test_parser_table_aware_unit.py: other test modules stub src.document*
+# and test_parser_table_aware_unit.py: other test modules stub src.unstructured.document*
 # with bare fakes at import time, which pytest collection can leave in
 # sys.modules before this file's own tests run.
 def _drop_fake_document_stubs() -> None:
     for name in list(sys.modules):
-        if name == "src.document" or name.startswith("src.document."):
+        if name == "src.unstructured.document" or name.startswith("src.unstructured.document."):
             mod = sys.modules[name]
             if getattr(mod, "__file__", None) is None and getattr(mod, "__path__", None) is None:
                 del sys.modules[name]
 
 
-from src.document.rtldoc_backend.parser import RtldocPdfParser
-from src.graph.axis1_structural import Axis1StructuralBuilder
+from src.unstructured.document.rtldoc_backend.parser import RtldocPdfParser
+from src.unstructured.graph.axis1_structural import Axis1StructuralBuilder
 
 
 def _is_heading(pdf_block, font_threshold: float, *, parser: RtldocPdfParser | None = None) -> bool:
@@ -53,16 +53,16 @@ def _is_heading(pdf_block, font_threshold: float, *, parser: RtldocPdfParser | N
 
 def test_registered_as_default_pdf_backend():
     _drop_fake_document_stubs()
-    from src.document.parser_registry import get_parser
+    from src.unstructured.document.parser_registry import get_parser
 
     parser = get_parser("doc.pdf")
     assert type(parser).__name__ == "RtldocPdfParser"
-    assert type(parser).__module__ == "src.document.rtldoc_backend.parser"
+    assert type(parser).__module__ == "src.unstructured.document.rtldoc_backend.parser"
 
 
 def test_registered_under_rtldoc_backend_qualifier():
     _drop_fake_document_stubs()
-    from src.document.parser_registry import get_parser
+    from src.unstructured.document.parser_registry import get_parser
 
     parser = get_parser("doc.pdf", backend="rtldoc")
     assert type(parser).__name__ == "RtldocPdfParser"
@@ -72,7 +72,7 @@ def test_light_and_table_aware_backends_still_available():
     """The whole point of registering rtldoc as a new backend rather than
     replacing the others in place: explicit opt-out must still work."""
     _drop_fake_document_stubs()
-    from src.document.parser_registry import get_parser
+    from src.unstructured.document.parser_registry import get_parser
 
     assert type(get_parser("doc.pdf", backend="light")).__name__ == "LightPdfParser"
     assert type(get_parser("doc.pdf", backend="table-aware")).__name__ == "TableAwarePdfParser"
@@ -225,7 +225,7 @@ def test_pymupdf_sourced_block_falls_back_to_base_heading_heuristic():
     """A block from the per-page PyMuPDF fallback path (source != 'rtldoc')
     must still go through the base font-size heuristic, not rtldoc's
     role-based one (it never had a role to begin with)."""
-    from src.document.light.parser import _PdfBlock
+    from src.unstructured.document.light.parser import _PdfBlock
 
     parser = RtldocPdfParser()
     block = _PdfBlock(text="CHAPTER ONE", page=1, bold=True, max_font_size=20.0, source="pymupdf")
@@ -266,7 +266,7 @@ def test_pymupdf_sourced_block_falls_back_to_base_heading_heuristic():
 
 
 def test_signature_marker_line_is_never_a_heading():
-    from src.document.ir import Block
+    from src.unstructured.document.ir import Block
 
     block = Block(text="/s/ MICHAEL K. WIRTH", page=121)
     assert Axis1StructuralBuilder()._is_heading(block, font_threshold=999.0) is False
@@ -276,14 +276,14 @@ def test_uppercase_heading_without_signature_marker_still_detected():
     """Sanity check the fix targets the '/s/' marker specifically, not
     all-caps text in general -- the uppercase-ratio branch must still work
     for genuine headings."""
-    from src.document.ir import Block
+    from src.unstructured.document.ir import Block
 
     block = Block(text="RISK FACTORS", page=1)
     assert Axis1StructuralBuilder()._is_heading(block, font_threshold=999.0) is True
 
 
 def test_single_line_numbered_heading_still_detected():
-    from src.document.ir import Block
+    from src.unstructured.document.ir import Block
 
     block = Block(text="4.5 Environmental Protection", page=1)
     assert Axis1StructuralBuilder()._is_heading(block, font_threshold=999.0) is True
@@ -296,14 +296,14 @@ def test_two_line_number_then_title_heading_still_detected():
     earlier, overbroad version of the stray-page-number fix (blanket
     single-line-only) silently broke every one of these into un-detected
     body text."""
-    from src.document.ir import Block
+    from src.unstructured.document.ir import Block
 
     block = Block(text="4.3.1\nINSIDER TRADING", page=7)
     assert Axis1StructuralBuilder()._is_heading(block, font_threshold=999.0) is True
 
 
 def test_split_merged_heading_block_rescues_item_heading_from_body():
-    from src.document.ir import Block
+    from src.unstructured.document.ir import Block
 
     block = Block(
         text=(
@@ -330,7 +330,7 @@ def test_split_merged_heading_block_rescues_item_heading_from_body():
 
 
 def test_split_merged_heading_blocks_expands_list_in_place():
-    from src.document.ir import Block
+    from src.unstructured.document.ir import Block
 
     long_body = (
         "Information about our Executive Officers at February 24, 2026. "
@@ -352,14 +352,14 @@ def test_split_merged_heading_blocks_expands_list_in_place():
 
 
 def test_split_does_not_fire_on_single_line_blocks():
-    from src.document.ir import Block
+    from src.unstructured.document.ir import Block
 
     block = Block(text="Item 1A. Risk Factors", page=1)
     assert Axis1StructuralBuilder()._leading_numbered_heading_split(block) is None
 
 
 def test_split_does_not_fire_without_a_numbered_prefix():
-    from src.document.ir import Block
+    from src.unstructured.document.ir import Block
 
     block = Block(
         text="Some heading-like line\nwith a second line of body text.", page=1
@@ -375,7 +375,7 @@ def test_split_does_not_fire_when_second_line_is_a_wrapped_title_continuation():
     unguarded version of this rescue split such a block in half, truncating
     the real title and turning the wrapped remainder into its own spurious
     section."""
-    from src.document.ir import Block
+    from src.unstructured.document.ir import Block
 
     block = Block(
         text="3 KEY ELEMENTS AND PRINCIPLES OF OUR\nCOMPLIANCE UNDERSTANDING",
@@ -394,15 +394,15 @@ def test_split_does_not_fire_when_second_line_is_a_wrapped_title_continuation():
 def test_falls_back_to_base_parser_entirely_when_rtldoc_not_installed():
     # Fresh, un-stubbed import of the actual class under test -- patching
     # LightPdfParser._extract_pages by string path below re-resolves
-    # src.document.light.parser from current sys.modules state, which must
+    # src.unstructured.document.light.parser from current sys.modules state, which must
     # be the SAME module object this parser's class hierarchy points to, or
     # the patch silently lands on a different (stub-polluted) copy of the
     # class and this test would exercise the real method instead of the
     # mock -- same cross-file sys.modules pollution risk documented in
     # test_parser_table_aware_unit.py.
     _drop_fake_document_stubs()
-    from src.document.light.parser import LightPdfParser as _FreshLightPdfParser
-    from src.document.rtldoc_backend.parser import RtldocPdfParser as _FreshRtldocPdfParser
+    from src.unstructured.document.light.parser import LightPdfParser as _FreshLightPdfParser
+    from src.unstructured.document.rtldoc_backend.parser import RtldocPdfParser as _FreshRtldocPdfParser
 
     parser = _FreshRtldocPdfParser()
     with patch.dict(sys.modules, {"rtldoc": None, "rtldoc.pipeline": None}):
@@ -416,8 +416,8 @@ def test_falls_back_to_base_parser_entirely_when_rtldoc_not_installed():
 
 def test_falls_back_to_base_parser_entirely_when_rtldoc_raises():
     _drop_fake_document_stubs()
-    from src.document.light.parser import LightPdfParser as _FreshLightPdfParser
-    from src.document.rtldoc_backend.parser import RtldocPdfParser as _FreshRtldocPdfParser
+    from src.unstructured.document.light.parser import LightPdfParser as _FreshLightPdfParser
+    from src.unstructured.document.rtldoc_backend.parser import RtldocPdfParser as _FreshRtldocPdfParser
 
     parser = _FreshRtldocPdfParser()
     with patch(

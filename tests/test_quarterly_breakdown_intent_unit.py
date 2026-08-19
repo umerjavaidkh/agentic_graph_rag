@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.unstructured.query_intent import is_quarterly_breakdown_question
+from src.unstructured.retrieval.query_intent import is_quarterly_breakdown_question
 
 
 @pytest.mark.parametrize(

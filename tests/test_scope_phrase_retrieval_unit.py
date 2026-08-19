@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 
-from src.retrieval.unstructured.services.ranking import RankingService
+from src.unstructured.retrieval.services.ranking import RankingService
 
 
 def _ranking() -> RankingService:

@@ -166,51 +166,51 @@ def setup_module(module) -> None:
 
     # --- document stubs ---
     # Always create fresh fake modules here (never reuse/mutate a real
-    # src.document that an earlier-collected test file may have already
+    # src.unstructured.document that an earlier-collected test file may have already
     # imported) — mutating the real module's functions in place would corrupt
     # it for every other test file that runs afterward in the same pytest
     # process. Same fix as the src.shared.auth block above.
     for _n in [
-        "src.document",
-        "src.document.versioning",
-        "src.document.light",
-        "src.document.light.parser",
-        "src.document.parser_base",
-        "src.document.parser_registry",
-        "src.document.page_vision",
-        "src.document.graph_snapshot",
-        "src.document.page_report",
-        "src.document.page_validation",
+        "src.unstructured.document",
+        "src.unstructured.document.versioning",
+        "src.unstructured.document.light",
+        "src.unstructured.document.light.parser",
+        "src.unstructured.document.parser_base",
+        "src.unstructured.document.parser_registry",
+        "src.unstructured.document.page_vision",
+        "src.unstructured.document.graph_snapshot",
+        "src.unstructured.document.page_report",
+        "src.unstructured.document.page_validation",
     ]:
         _stub_module(_n)
-    sys.modules["src.document.parser_base"].DocumentParser = object
-    sys.modules["src.document.graph_snapshot"].X1_STAGE = "x1_structural"
-    sys.modules["src.document.graph_snapshot"].X2_STAGE = "x2_semantic"
-    sys.modules["src.document.graph_snapshot"].write_snapshot = MagicMock()
-    sys.modules["src.document.page_report"].write_page_report = MagicMock()
-    sys.modules["src.document.page_validation"].check_construction_coverage = MagicMock(
+    sys.modules["src.unstructured.document.parser_base"].DocumentParser = object
+    sys.modules["src.unstructured.document.graph_snapshot"].X1_STAGE = "x1_structural"
+    sys.modules["src.unstructured.document.graph_snapshot"].X2_STAGE = "x2_semantic"
+    sys.modules["src.unstructured.document.graph_snapshot"].write_snapshot = MagicMock()
+    sys.modules["src.unstructured.document.page_report"].write_page_report = MagicMock()
+    sys.modules["src.unstructured.document.page_validation"].check_construction_coverage = MagicMock(
         return_value={"pages": [], "summary": {"page_count": 0, "avg_coverage": 0.0, "pages_failing": 0, "requires_reprocessing": False}}
     )
-    sys.modules["src.document.versioning"].resolve_logical_id = MagicMock(return_value="doc_test")
-    sys.modules["src.document.versioning"].build_revision_plan = MagicMock()
-    sys.modules["src.document.versioning"].apply_revision_to_graph = MagicMock(return_value=([], []))
-    sys.modules["src.document.versioning"].file_content_sha256 = MagicMock(return_value="abc123")
-    sys.modules["src.document.versioning"].source_file_blob_key = MagicMock(return_value="blob/key")
+    sys.modules["src.unstructured.document.versioning"].resolve_logical_id = MagicMock(return_value="doc_test")
+    sys.modules["src.unstructured.document.versioning"].build_revision_plan = MagicMock()
+    sys.modules["src.unstructured.document.versioning"].apply_revision_to_graph = MagicMock(return_value=([], []))
+    sys.modules["src.unstructured.document.versioning"].file_content_sha256 = MagicMock(return_value="abc123")
+    sys.modules["src.unstructured.document.versioning"].source_file_blob_key = MagicMock(return_value="blob/key")
     # DocumentRevisionPlan as a simple MagicMock class (exporter.py uses it only as a type annotation)
-    sys.modules["src.document.versioning"].DocumentRevisionPlan = MagicMock
+    sys.modules["src.unstructured.document.versioning"].DocumentRevisionPlan = MagicMock
 
-    sys.modules["src.document.light.parser"].LightPdfParser = MagicMock()
+    sys.modules["src.unstructured.document.light.parser"].LightPdfParser = MagicMock()
     _fake_parser_instance = MagicMock()
-    sys.modules["src.document.parser_registry"].get_parser = MagicMock(return_value=_fake_parser_instance)
-    sys.modules["src.document.parser_registry"].supported_extensions = MagicMock(return_value={".pdf"})
+    sys.modules["src.unstructured.document.parser_registry"].get_parser = MagicMock(return_value=_fake_parser_instance)
+    sys.modules["src.unstructured.document.parser_registry"].supported_extensions = MagicMock(return_value={".pdf"})
 
     # --- graph.constants / graph.driver stubs ---
-    for _n in ["src.graph", "src.graph.constants", "src.shared.neo4j.driver"]:
+    for _n in ["src.unstructured.graph", "src.unstructured.graph.constants", "src.shared.neo4j.driver"]:
         if _n not in sys.modules:
             _stub_module(_n)
-    sys.modules["src.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
-    sys.modules["src.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
-    sys.modules["src.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
+    sys.modules["src.unstructured.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
+    sys.modules["src.unstructured.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
+    sys.modules["src.unstructured.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
     sys.modules["src.shared.neo4j.driver"].get_neo4j_driver = MagicMock()
 
     # --- bridge/conversation stubs ---
@@ -218,9 +218,9 @@ def setup_module(module) -> None:
         if _n not in sys.modules:
             _stub_module(_n)
 
-    # --- src.ingestion.service stub ---
+    # --- src.unstructured.ingestion.service stub ---
     # Inject the stub service module BEFORE job_store.py is imported.
-    _svc_stub = _stub_module("src.ingestion.service")
+    _svc_stub = _stub_module("src.unstructured.ingestion.service")
     _svc_stub.IngestionJob = _IngestionJob
     _svc_stub.IngestionManager = MagicMock()
 
@@ -241,28 +241,28 @@ _STUBBED_MODULE_NAMES = (
     "src.shared.model_providers", "src.shared.model_providers.base",
     "src.shared.model_providers.factory", "src.shared.model_providers.openai_provider",
     "src.shared.auth", "src.shared.auth.rbac_setup", "src.shared.auth.roles",
-    "src.document", "src.document.versioning", "src.document.light",
-    "src.document.light.parser", "src.document.parser_base",
-    "src.document.parser_registry", "src.document.page_vision",
-    "src.document.graph_snapshot",
-    "src.graph", "src.graph.constants", "src.shared.neo4j.driver",
+    "src.unstructured.document", "src.unstructured.document.versioning", "src.unstructured.document.light",
+    "src.unstructured.document.light.parser", "src.unstructured.document.parser_base",
+    "src.unstructured.document.parser_registry", "src.unstructured.document.page_vision",
+    "src.unstructured.document.graph_snapshot",
+    "src.unstructured.graph", "src.unstructured.graph.constants", "src.shared.neo4j.driver",
     "src.bridge", "src.shared.conversation", "src.routing", "src.router",
-    "src.ingestion.service", "src.ingestion",
+    "src.unstructured.ingestion.service", "src.ingestion",
 )
 
 
 def teardown_module(module) -> None:
     """Remove this file's fake stand-ins once its own tests are done, so a
     test file collected afterward gets a clean sys.modules and can import
-    the real neo4j/fastapi/src.document/src.graph/etc. if it needs them —
+    the real neo4j/fastapi/src.unstructured.document/src.unstructured.graph/etc. if it needs them —
     otherwise whichever of those modules this file stubbed stays faked
     (or, worse, a bare non-package ModuleType with no __path__) for every
     test that runs later in the same pytest process. Same fix as
     test_ingestion_manager_di_unit.py's own teardown_module, applied here
     after this file's stub list quietly drifted out of sync with what
     src/ingestion/service.py actually imports (missing
-    src.document.graph_snapshot, source_file_blob_key, get_chat_provider)
-    and, separately, was found leaking a fake src.graph package into
+    src.unstructured.document.graph_snapshot, source_file_blob_key, get_chat_provider)
+    and, separately, was found leaking a fake src.unstructured.graph package into
     tests/test_search_text_derivation_unit.py's collection."""
     for _n in _STUBBED_MODULE_NAMES:
         sys.modules.pop(_n, None)
@@ -450,7 +450,7 @@ class TestQueueWiring:
 
 class TestAxis2ParallelNER:
     def _make_nodes(self, n: int = 5):
-        from src.models import DKGNode, NodeType
+        from src.unstructured.models import DKGNode, NodeType
         return [
             DKGNode(id=f"node_{i}", type=NodeType.SECTION,
                     title=f"Section {i}", text=f"Content for section {i}. Entity A.", order=i)
@@ -458,7 +458,7 @@ class TestAxis2ParallelNER:
         ]
 
     def test_parallel_ner_sets_entities_on_all_nodes(self):
-        from src.semantic.axis2 import Axis2Builder
+        from src.unstructured.semantic.axis2 import Axis2Builder
 
         mock_client = MagicMock()
         mock_client.chat_completion.return_value = MagicMock(
@@ -474,7 +474,7 @@ class TestAxis2ParallelNER:
 
     def test_parallel_ner_handles_llm_errors_gracefully(self):
         """If some LLM calls raise, the rest should still succeed."""
-        from src.semantic.axis2 import Axis2Builder
+        from src.unstructured.semantic.axis2 import Axis2Builder
 
         call_count = {"n": 0}
 
@@ -499,10 +499,10 @@ class TestAxis2ParallelNER:
 
     def test_llm_pair_cap_limits_candidates(self):
         """_build_llm_edges should not send more than AXIS2_MAX_LLM_PAIRS calls."""
-        import src.semantic.axis2 as axis2_mod
-        from src.semantic.axis2 import Axis2Builder
+        import src.unstructured.semantic.axis2 as axis2_mod
+        from src.unstructured.semantic.axis2 import Axis2Builder
         import numpy as np
-        from src.models import DKGNode, NodeType
+        from src.unstructured.models import DKGNode, NodeType
 
         # Patch the axis2 module's local name (captured at import time)
         original_cap = axis2_mod.AXIS2_MAX_LLM_PAIRS
@@ -535,7 +535,7 @@ class TestAxis2ParallelNER:
 
 class TestExporterBatch:
     def _make_node(self, node_id: str = "n1"):
-        from src.models import DKGNode, NodeType
+        from src.unstructured.models import DKGNode, NodeType
         node = DKGNode(id=node_id, type=NodeType.SECTION,
                        title="Test section", text="Hello world", order=0)
         node.logical_doc_id = "doc_test"
@@ -548,7 +548,7 @@ class TestExporterBatch:
         return node
 
     def test_node_to_param_dict_has_required_keys(self):
-        from src.exporter.exporter import Neo4jExporter
+        from src.unstructured.exporter.exporter import Neo4jExporter
         node = self._make_node()
         d = Neo4jExporter._node_to_param_dict(node)
         for key in ("id", "title", "search_text", "vector_id", "logical_doc_id",
@@ -560,7 +560,7 @@ class TestExporterBatch:
         (see _dual_write_chunk) -- Neo4j must never receive either as of
         the phase-3 write-side strip (docs/DESIGN_unstructured_graph_v2.md).
         search_text/blob_key_text/vector_id are what Neo4j keeps instead."""
-        from src.exporter.exporter import Neo4jExporter
+        from src.unstructured.exporter.exporter import Neo4jExporter
         node = self._make_node()
         d = Neo4jExporter._node_to_param_dict(node)
         assert "text" not in d
@@ -568,8 +568,8 @@ class TestExporterBatch:
 
     def test_node_to_param_dict_no_node_type_enum(self):
         """The dict must NOT contain NodeType enum objects — only JSON-safe values."""
-        from src.exporter.exporter import Neo4jExporter
-        from src.models import NodeType
+        from src.unstructured.exporter.exporter import Neo4jExporter
+        from src.unstructured.models import NodeType
         node = self._make_node()
         d = Neo4jExporter._node_to_param_dict(node)
         for v in d.values():
@@ -577,7 +577,7 @@ class TestExporterBatch:
 
     def test_batch_grouping_by_label(self):
         """Nodes of different labels must be grouped separately for UNWIND."""
-        from src.models import DKGNode, NodeType
+        from src.unstructured.models import DKGNode, NodeType
         from collections import defaultdict
 
         sections = [self._make_node(f"s{i}") for i in range(3)]
@@ -651,7 +651,7 @@ class _FakeVectorStore:
 
 class TestExporterDualWrite:
     def _plan(self):
-        from src.document.versioning import DocumentRevisionPlan
+        from src.unstructured.document.versioning import DocumentRevisionPlan
 
         return DocumentRevisionPlan(
             logical_id="doc_test",
@@ -665,7 +665,7 @@ class TestExporterDualWrite:
         )
 
     def _make_node(self, node_id="n1", *, text="Hello world", embedding=None, visual=None):
-        from src.models import DKGNode, NodeType
+        from src.unstructured.models import DKGNode, NodeType
 
         return DKGNode(
             id=node_id, type=NodeType.SECTION, title="T", text=text, order=0,
@@ -673,7 +673,7 @@ class TestExporterDualWrite:
         )
 
     def test_dual_write_chunk_puts_text_and_sets_blob_key(self):
-        from src.exporter.exporter import Neo4jExporter
+        from src.unstructured.exporter.exporter import Neo4jExporter
 
         blob_store, vector_store = _FakeBlobStore(), _FakeVectorStore()
         exporter = Neo4jExporter(output_dir="output/_test_dual_write", blob_store=blob_store, vector_store=vector_store)
@@ -686,7 +686,7 @@ class TestExporterDualWrite:
         assert blob_store.get(node.blob_key_text) == "Hello world"
 
     def test_dual_write_chunk_batches_embeddings(self):
-        from src.exporter.exporter import Neo4jExporter
+        from src.unstructured.exporter.exporter import Neo4jExporter
 
         blob_store, vector_store = _FakeBlobStore(), _FakeVectorStore()
         exporter = Neo4jExporter(output_dir="output/_test_dual_write", blob_store=blob_store, vector_store=vector_store)
@@ -699,7 +699,7 @@ class TestExporterDualWrite:
         assert len(vector_store.batches[0]) == 3
 
     def test_dual_write_chunk_skips_nodes_without_text_or_embedding(self):
-        from src.exporter.exporter import Neo4jExporter
+        from src.unstructured.exporter.exporter import Neo4jExporter
 
         blob_store, vector_store = _FakeBlobStore(), _FakeVectorStore()
         exporter = Neo4jExporter(output_dir="output/_test_dual_write", blob_store=blob_store, vector_store=vector_store)
@@ -713,7 +713,7 @@ class TestExporterDualWrite:
         assert vector_store.batches == []
 
     def test_node_to_param_dict_includes_blob_keys(self):
-        from src.exporter.exporter import Neo4jExporter
+        from src.unstructured.exporter.exporter import Neo4jExporter
 
         node = self._make_node()
         node.blob_key_text = "some/key/text"
@@ -723,7 +723,7 @@ class TestExporterDualWrite:
         assert d["blob_key_visual"] is None
 
     def test_exporter_defaults_to_factory_stores_when_not_injected(self, monkeypatch):
-        from src.exporter.exporter import Neo4jExporter
+        from src.unstructured.exporter.exporter import Neo4jExporter
         from src.shared.storage.blob.local_store import LocalFsBlobStore
         from src.shared.storage.vector.memory_store import InMemoryVectorStore
 
@@ -752,14 +752,14 @@ class TestExporterDualWrite:
 
 class TestExporterEdgeConfidence:
     def _edge(self, **kwargs):
-        from src.models import DKGEdge, RelType
+        from src.unstructured.models import DKGEdge, RelType
 
         defaults = dict(source_id="a", target_id="b", rel_type=RelType.CONTAINS)
         defaults.update(kwargs)
         return DKGEdge(**defaults)
 
     def test_edge_to_param_dict_has_required_keys(self):
-        from src.exporter.exporter import Neo4jExporter
+        from src.unstructured.exporter.exporter import Neo4jExporter
 
         edge = self._edge()
         d = Neo4jExporter._edge_to_param_dict(edge)
@@ -768,7 +768,7 @@ class TestExporterEdgeConfidence:
             assert key in d, f"Missing key: {key}"
 
     def test_edge_to_param_dict_defaults_extracted(self):
-        from src.exporter.exporter import Neo4jExporter
+        from src.unstructured.exporter.exporter import Neo4jExporter
 
         d = Neo4jExporter._edge_to_param_dict(self._edge())
 
@@ -777,8 +777,8 @@ class TestExporterEdgeConfidence:
 
     def test_edge_to_param_dict_no_enum_leaks_into_dict(self):
         """The dict must contain only JSON-safe values, no RelType/EdgeConfidenceTier objects."""
-        from src.exporter.exporter import Neo4jExporter
-        from src.models import EdgeConfidenceTier, RelType
+        from src.unstructured.exporter.exporter import Neo4jExporter
+        from src.unstructured.models import EdgeConfidenceTier, RelType
 
         edge = self._edge(
             rel_type=RelType.SEMANTICALLY_SIMILAR,
@@ -794,7 +794,7 @@ class TestExporterEdgeConfidence:
 
     def test_edge_to_param_dict_handles_plain_string_tier(self):
         """confidence_tier may already be a plain str (not the enum) — must not crash."""
-        from src.exporter.exporter import Neo4jExporter
+        from src.unstructured.exporter.exporter import Neo4jExporter
 
         edge = self._edge(confidence_tier="AMBIGUOUS")
         d = Neo4jExporter._edge_to_param_dict(edge)
@@ -802,8 +802,8 @@ class TestExporterEdgeConfidence:
         assert d["confidence_tier"] == "AMBIGUOUS"
 
     def test_write_edge_csvs_includes_confidence_columns(self, tmp_path, monkeypatch):
-        from src.exporter.exporter import Neo4jExporter
-        from src.models import EdgeConfidenceTier, RelType
+        from src.unstructured.exporter.exporter import Neo4jExporter
+        from src.unstructured.models import EdgeConfidenceTier, RelType
 
         # No store/vector_store injected below, so Neo4jExporter falls back to the
         # real factory defaults -- force in-memory so this doesn't require a real

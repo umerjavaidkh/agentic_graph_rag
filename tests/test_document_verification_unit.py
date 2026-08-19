@@ -18,7 +18,7 @@ import pytest
 
 
 from src.shared.model_providers.base import ModelProvider
-from src.retrieval.unstructured.verification import (
+from src.unstructured.retrieval.verification import (
     NO_CHUNKS_NOTE,
     check_answer_sanity,
     compute_confidence,
@@ -187,7 +187,7 @@ def test_compute_confidence_empty_chunks():
 
 
 def test_compute_confidence_clean_answer_no_verify_enabled(monkeypatch):
-    import src.retrieval.unstructured.verification as v
+    import src.unstructured.retrieval.verification as v
 
     monkeypatch.setattr(v, "DOCUMENT_VERIFY_ENABLED", False)
     low_confidence, note = compute_confidence(
@@ -203,7 +203,7 @@ def test_compute_confidence_clean_answer_no_verify_enabled(monkeypatch):
 
 
 def test_compute_confidence_rule_hit_skips_llm_call(monkeypatch):
-    import src.retrieval.unstructured.verification as v
+    import src.unstructured.retrieval.verification as v
 
     monkeypatch.setattr(v, "DOCUMENT_VERIFY_ENABLED", True)
     provider = FakeModelProvider('{"valid": true}')
@@ -219,7 +219,7 @@ def test_compute_confidence_rule_hit_skips_llm_call(monkeypatch):
 
 
 def test_compute_confidence_llm_gate_flags_when_enabled(monkeypatch):
-    import src.retrieval.unstructured.verification as v
+    import src.unstructured.retrieval.verification as v
 
     monkeypatch.setattr(v, "DOCUMENT_VERIFY_ENABLED", True)
     provider = FakeModelProvider('{"valid": false, "reason": "answer not backed by passages"}')
@@ -239,7 +239,7 @@ def test_compute_confidence_llm_gate_flags_when_enabled(monkeypatch):
 
 
 def test_compute_confidence_llm_gate_disabled_by_default(monkeypatch):
-    import src.retrieval.unstructured.verification as v
+    import src.unstructured.retrieval.verification as v
 
     monkeypatch.setattr(v, "DOCUMENT_VERIFY_ENABLED", False)
     provider = FakeModelProvider('{"valid": false, "reason": "should never be seen"}')

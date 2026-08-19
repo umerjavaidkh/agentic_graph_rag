@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 
 
-from src.retrieval.unstructured.services.ranking import RankingService
+from src.unstructured.retrieval.services.ranking import RankingService
 
 
 def _r() -> RankingService:
@@ -200,7 +200,7 @@ def test_no_lexical_hits_leaves_items_untouched():
 
 
 def test_quantity_question_detected():
-    from src.retrieval.unstructured.services.lexical import _QUANTITY_QUESTION_RE
+    from src.unstructured.retrieval.services.lexical import _QUANTITY_QUESTION_RE
     for q in ("How many countries used it?", "What is the number of sites?",
               "How much funding?", "total number of users"):
         assert _QUANTITY_QUESTION_RE.search(q), q
@@ -208,7 +208,7 @@ def test_quantity_question_detected():
 
 def test_non_quantity_question_not_detected():
     """The path must stay completely inert for ordinary questions."""
-    from src.retrieval.unstructured.services.lexical import _QUANTITY_QUESTION_RE
+    from src.unstructured.retrieval.services.lexical import _QUANTITY_QUESTION_RE
     for q in ("What does Figure 1 show?", "Who wrote this report?",
               "Describe the methodology"):
         assert not _QUANTITY_QUESTION_RE.search(q), q

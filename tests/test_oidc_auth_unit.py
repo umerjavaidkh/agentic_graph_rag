@@ -15,8 +15,8 @@ for _mod_name in list(sys.modules):
     if (
         _mod_name == "src.shared.auth"
         or _mod_name.startswith("src.shared.auth.")
-        or _mod_name == "src.graph"
-        or _mod_name.startswith("src.graph.")
+        or _mod_name == "src.unstructured.graph"
+        or _mod_name.startswith("src.unstructured.graph.")
         or _mod_name in ("neo4j", "neo4j.exceptions", "fastapi")
     ):
         _mod = sys.modules[_mod_name]

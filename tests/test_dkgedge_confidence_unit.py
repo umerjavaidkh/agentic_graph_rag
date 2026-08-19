@@ -15,8 +15,8 @@ import sys
 from pathlib import Path
 
 
-from src.graph.axis1_structural import Axis1StructuralBuilder
-from src.models import DKGEdge, DKGNode, EdgeConfidenceTier, NodeType, RelType
+from src.unstructured.graph.axis1_structural import Axis1StructuralBuilder
+from src.unstructured.models import DKGEdge, DKGNode, EdgeConfidenceTier, NodeType, RelType
 
 
 def test_dkgedge_defaults_to_extracted():

@@ -29,7 +29,7 @@ import pytest
 
 # ── Minimal stubs for heavy/unavailable deps — must come before src.* imports ─
 # Mirrors tests/test_scalable_pipeline_unit.py's stubbing style. Unlike that
-# file, we deliberately do NOT stub src.ingestion.service, src.document.parser*,
+# file, we deliberately do NOT stub src.unstructured.ingestion.service, src.unstructured.document.parser*,
 # src.shared.model_providers*, or src.shared.storage* — this test exercises the REAL
 # IngestionManager and proves DI works, so those must be real.
 
@@ -43,7 +43,7 @@ def _stub_module(name: str) -> types.ModuleType:
 # Drop any stale stubs a previously-collected test file may have left behind
 # for modules we need to import for real in this file.
 for _mod_name in list(sys.modules):
-    if _mod_name.startswith("src.ingestion") or _mod_name.startswith("src.document"):
+    if _mod_name.startswith("src.ingestion") or _mod_name.startswith("src.unstructured.document"):
         del sys.modules[_mod_name]
 
 # Always create a fresh, private stub for these and overwrite whatever's in
@@ -64,8 +64,8 @@ _stub_module("fastapi").UploadFile = MagicMock()
 _stub_module("src.shared.auth")
 _stub_module("src.shared.auth.rbac_setup").GraphRBAC = MagicMock()
 
-_stub_module("src.graph")
-_graph_constants = _stub_module("src.graph.constants")
+_stub_module("src.unstructured.graph")
+_graph_constants = _stub_module("src.unstructured.graph.constants")
 _graph_constants.DOC_REVISION_LABEL = "DocRevision"
 _graph_constants.DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
 _graph_constants.DOCUMENT_ROOT_CYPHER = "Document|Book"
@@ -74,14 +74,14 @@ _stub_module("src.shared.neo4j.driver").get_neo4j_driver = MagicMock()
 _STUBBED_MODULE_NAMES = (
     "neo4j", "neo4j.exceptions", "fastapi",
     "src.shared.auth.rbac_setup", "src.shared.auth",
-    "src.shared.neo4j.driver", "src.graph.constants", "src.graph",
+    "src.shared.neo4j.driver", "src.unstructured.graph.constants", "src.unstructured.graph",
 )
 
 
 def teardown_module(module) -> None:
     """Remove this file's fake stand-ins once its own tests are done, so a
     test file collected afterward gets a clean sys.modules and can import
-    the real neo4j/fastapi/src.shared.auth/src.graph if it needs them — otherwise
+    the real neo4j/fastapi/src.shared.auth/src.unstructured.graph if it needs them — otherwise
     whichever of those modules this file stubbed stays faked for every test
     that runs later in the same pytest process, an import-order-dependent
     failure mode that only shows up in a full-suite run, never a
@@ -90,7 +90,7 @@ def teardown_module(module) -> None:
         sys.modules.pop(_n, None)
 
 
-from src.ingestion.service import IngestionJob, IngestionManager
+from src.unstructured.ingestion.service import IngestionJob, IngestionManager
 from src.ingestion.job_store import InMemoryJobStore
 from src.shared.model_providers.base import ModelProvider
 from src.shared.storage.vector.memory_store import InMemoryVectorStore
@@ -112,7 +112,7 @@ class FakeParser:
         return [], []
 
     def parse_ir(self, source):
-        from src.document.ir import DocumentIR
+        from src.unstructured.document.ir import DocumentIR
 
         self.parsed_sources.append(str(source))
         return DocumentIR(source_name=Path(source).stem, page_count=0).finalize()
@@ -212,7 +212,7 @@ class InMemoryBlobStoreForTest:
 
 
 def test_process_unstructured_uses_injected_parser(tmp_input_file, monkeypatch):
-    import src.ingestion.service as service_mod
+    import src.unstructured.ingestion.service as service_mod
 
     monkeypatch.setattr(service_mod, "OPENAI_API_KEY", "")
     monkeypatch.setattr(service_mod, "AUTO_LOAD_TO_NEO4J", False)
@@ -227,7 +227,7 @@ def test_process_unstructured_uses_injected_parser(tmp_input_file, monkeypatch):
 
 
 def test_process_unstructured_uses_injected_exporter_factory(tmp_input_file, monkeypatch):
-    import src.ingestion.service as service_mod
+    import src.unstructured.ingestion.service as service_mod
 
     monkeypatch.setattr(service_mod, "OPENAI_API_KEY", "")
     monkeypatch.setattr(service_mod, "AUTO_LOAD_TO_NEO4J", False)
@@ -242,7 +242,7 @@ def test_process_unstructured_uses_injected_exporter_factory(tmp_input_file, mon
 
 
 def test_process_unstructured_uses_injected_graph_service(tmp_input_file, monkeypatch):
-    import src.ingestion.service as service_mod
+    import src.unstructured.ingestion.service as service_mod
 
     monkeypatch.setattr(service_mod, "OPENAI_API_KEY", "")
     monkeypatch.setattr(service_mod, "AUTO_LOAD_TO_NEO4J", False)
@@ -289,7 +289,7 @@ def test_manager_defaults_are_settings_driven_factories(monkeypatch):
 
 
 def test_process_unstructured_rejects_unsupported_extension(monkeypatch):
-    import src.ingestion.service as service_mod
+    import src.unstructured.ingestion.service as service_mod
 
     monkeypatch.setattr(service_mod, "OPENAI_API_KEY", "")
     monkeypatch.setattr(service_mod, "AUTO_LOAD_TO_NEO4J", False)
@@ -307,7 +307,7 @@ def test_process_unstructured_rejects_unsupported_extension(monkeypatch):
 
 
 def test_cleanup_job_inputs_skips_unowned_path(monkeypatch, tmp_input_file):
-    import src.ingestion.service as service_mod
+    import src.unstructured.ingestion.service as service_mod
 
     monkeypatch.setattr(service_mod, "CLEANUP_TMP_INGEST", True)
     manager = _make_manager(FakeParser())
@@ -321,7 +321,7 @@ def test_cleanup_job_inputs_skips_unowned_path(monkeypatch, tmp_input_file):
 
 
 def test_cleanup_job_inputs_deletes_owned_path(monkeypatch, tmp_input_file):
-    import src.ingestion.service as service_mod
+    import src.unstructured.ingestion.service as service_mod
 
     monkeypatch.setattr(service_mod, "CLEANUP_TMP_INGEST", True)
     manager = _make_manager(FakeParser())
@@ -350,7 +350,7 @@ def _real_pdf_bytes() -> bytes:
 def _make_corpus_manager(monkeypatch, *, enqueue_calls=None):
     """IngestionManager with Neo4j/OpenAI disabled and enqueue_ingest faked
     out (real enqueue_ingest would try a real Redis connection)."""
-    import src.ingestion.service as service_mod
+    import src.unstructured.ingestion.service as service_mod
 
     monkeypatch.setattr(service_mod, "OPENAI_API_KEY", "")
     monkeypatch.setattr(service_mod, "AUTO_LOAD_TO_NEO4J", False)
@@ -448,7 +448,7 @@ def test_process_corpus_manifest_rejects_relative_path(tmp_path, monkeypatch):
 
 
 def test_process_corpus_respects_max_files_cap(tmp_path, monkeypatch):
-    import src.ingestion.service as service_mod
+    import src.unstructured.ingestion.service as service_mod
 
     (tmp_path / "a.pdf").write_bytes(_real_pdf_bytes())
     (tmp_path / "b.pdf").write_bytes(_real_pdf_bytes())
@@ -464,7 +464,7 @@ def test_process_corpus_respects_max_files_cap(tmp_path, monkeypatch):
 
 def test_process_corpus_falls_back_to_synchronous_run_when_no_queue(tmp_path, monkeypatch):
     """enqueue_ingest returning None (no Redis) must trigger manager.run_job(child_id)."""
-    import src.ingestion.service as service_mod
+    import src.unstructured.ingestion.service as service_mod
 
     (tmp_path / "good.pdf").write_bytes(_real_pdf_bytes())
     monkeypatch.setattr(service_mod, "OPENAI_API_KEY", "")

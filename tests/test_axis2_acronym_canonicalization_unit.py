@@ -39,8 +39,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from src.models import DKGNode, NodeType
-from src.semantic.axis2 import (
+from src.unstructured.models import DKGNode, NodeType
+from src.unstructured.semantic.axis2 import (
     Axis2Builder,
     _acronym_letters,
     _canonicalize_entities,

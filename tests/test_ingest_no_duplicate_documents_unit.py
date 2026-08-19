@@ -7,7 +7,7 @@ within one logical id, so nothing expired anything.
 """
 from pathlib import Path
 
-from src.document.versioning import build_revision_plan
+from src.unstructured.document.versioning import build_revision_plan
 
 
 def _plan(tmp_path: Path, doc_key: str, *, logical_id: str | None = None):
@@ -61,7 +61,7 @@ class _FakeSession:
 
 
 def _exporter():
-    from src.exporter.exporter import Neo4jExporter
+    from src.unstructured.exporter.exporter import Neo4jExporter
 
     return Neo4jExporter.__new__(Neo4jExporter)
 

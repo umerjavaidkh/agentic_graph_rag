@@ -19,8 +19,8 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.unstructured.services.graph_seeds import GraphSeedService, _document_filter
-from src.retrieval.unstructured.services.ranking import RankingService
+from src.unstructured.retrieval.services.graph_seeds import GraphSeedService, _document_filter
+from src.unstructured.retrieval.services.ranking import RankingService
 
 
 class _FakeSession:
@@ -59,7 +59,7 @@ def test_document_filter_uses_the_given_alias():
 
 
 def test_vector_seed_passes_document_id_param(service, monkeypatch):
-    from src.retrieval.unstructured.services import graph_seeds as graph_seeds_mod
+    from src.unstructured.retrieval.services import graph_seeds as graph_seeds_mod
 
     monkeypatch.setattr(graph_seeds_mod, "VECTOR_STORE_BACKEND", "memory")
     session = _FakeSession([])
@@ -71,7 +71,7 @@ def test_vector_seed_passes_document_id_param(service, monkeypatch):
 
 
 def test_vector_seed_unscoped_when_no_document_id(service, monkeypatch):
-    from src.retrieval.unstructured.services import graph_seeds as graph_seeds_mod
+    from src.unstructured.retrieval.services import graph_seeds as graph_seeds_mod
 
     monkeypatch.setattr(graph_seeds_mod, "VECTOR_STORE_BACKEND", "memory")
     session = _FakeSession([])
@@ -86,7 +86,7 @@ def test_vector_seed_overfetches_from_index_when_scoping(service, monkeypatch):
     runs, so scoping must request a larger candidate pool from the index
     itself (not just cap the final output), or a document's real matches
     could be crowded out of the unfiltered global top-K entirely."""
-    from src.retrieval.unstructured.services import graph_seeds as graph_seeds_mod
+    from src.unstructured.retrieval.services import graph_seeds as graph_seeds_mod
 
     monkeypatch.setattr(graph_seeds_mod, "VECTOR_STORE_BACKEND", "memory")
 

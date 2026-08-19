@@ -27,7 +27,7 @@ def _stub_module(name: str) -> types.ModuleType:
 
 
 for _mod_name in list(sys.modules):
-    if _mod_name.startswith("src.ingestion") or _mod_name.startswith("src.document"):
+    if _mod_name.startswith("src.ingestion") or _mod_name.startswith("src.unstructured.document"):
         del sys.modules[_mod_name]
 
 # Always create a fresh, private stub for these and overwrite whatever's in
@@ -47,8 +47,8 @@ _stub_module("fastapi").UploadFile = MagicMock()
 _stub_module("src.shared.auth")
 _stub_module("src.shared.auth.rbac_setup").GraphRBAC = MagicMock()
 
-_stub_module("src.graph")
-_graph_constants = _stub_module("src.graph.constants")
+_stub_module("src.unstructured.graph")
+_graph_constants = _stub_module("src.unstructured.graph.constants")
 _graph_constants.DOC_REVISION_LABEL = "DocRevision"
 _graph_constants.DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
 _graph_constants.DOCUMENT_ROOT_CYPHER = "Document|Book"
@@ -57,7 +57,7 @@ _stub_module("src.shared.neo4j.driver").get_neo4j_driver = MagicMock()
 _STUBBED_MODULE_NAMES = (
     "neo4j", "neo4j.exceptions", "fastapi",
     "src.shared.auth.rbac_setup", "src.shared.auth",
-    "src.shared.neo4j.driver", "src.graph.constants", "src.graph",
+    "src.shared.neo4j.driver", "src.unstructured.graph.constants", "src.unstructured.graph",
 )
 
 
@@ -69,7 +69,7 @@ def teardown_module(module) -> None:
         sys.modules.pop(_n, None)
 
 
-from src.ingestion.service import IngestionManager
+from src.unstructured.ingestion.service import IngestionManager
 
 
 @pytest.fixture()

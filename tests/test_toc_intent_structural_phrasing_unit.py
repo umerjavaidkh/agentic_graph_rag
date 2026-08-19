@@ -23,8 +23,8 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.unstructured.query_intent import is_toc_question
-from src.retrieval.unstructured.toc_retrieval import include_in_outline_fallback
+from src.unstructured.retrieval.query_intent import is_toc_question
+from src.unstructured.retrieval.toc_retrieval import include_in_outline_fallback
 
 
 @pytest.mark.parametrize("query", [

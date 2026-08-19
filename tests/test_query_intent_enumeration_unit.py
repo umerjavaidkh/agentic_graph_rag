@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 
-from src.retrieval.unstructured.query_intent import is_enumeration_question
+from src.unstructured.retrieval.query_intent import is_enumeration_question
 
 
 def test_original_literal_phrases_still_match():

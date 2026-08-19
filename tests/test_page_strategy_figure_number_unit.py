@@ -23,12 +23,12 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.unstructured.query_intent import is_page_question, is_visual_page_question
-from src.retrieval.unstructured.strategies.page import PageStrategy
-from src.retrieval.unstructured.services.document_resolver import DocumentResolver
-from src.retrieval.unstructured.services.formatter import ResponseFormatter
-from src.retrieval.unstructured.services.graph_seeds import GraphSeedService
-from src.retrieval.unstructured.services.ranking import RankingService
+from src.unstructured.retrieval.query_intent import is_page_question, is_visual_page_question
+from src.unstructured.retrieval.strategies.page import PageStrategy
+from src.unstructured.retrieval.services.document_resolver import DocumentResolver
+from src.unstructured.retrieval.services.formatter import ResponseFormatter
+from src.unstructured.retrieval.services.graph_seeds import GraphSeedService
+from src.unstructured.retrieval.services.ranking import RankingService
 
 
 class _FakeResult:

@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 
-from src.models import DKGNode, NodeType
+from src.unstructured.models import DKGNode, NodeType
 
 
 def _node(entity_types: dict | None = None) -> DKGNode:
@@ -46,14 +46,14 @@ def _node(entity_types: dict | None = None) -> DKGNode:
 
 
 def test_param_dict_includes_entity_types():
-    from src.exporter.exporter import Neo4jExporter
+    from src.unstructured.exporter.exporter import Neo4jExporter
 
     d = Neo4jExporter._node_to_param_dict(_node({"u.s.": "LOCATION", "chevron": "ORG"}))
     assert "entity_types" in d
 
 
 def test_param_dict_entity_types_round_trips_as_json():
-    from src.exporter.exporter import Neo4jExporter
+    from src.unstructured.exporter.exporter import Neo4jExporter
 
     types = {"u.s.": "LOCATION", "chevron": "ORG"}
     d = Neo4jExporter._node_to_param_dict(_node(types))
@@ -64,7 +64,7 @@ def test_param_dict_entity_types_is_a_string_not_a_map():
     """Neo4j rejects a nested map as a property value -- writing the dict
     directly would fail at ingestion time, not here, so assert the encoding
     explicitly."""
-    from src.exporter.exporter import Neo4jExporter
+    from src.unstructured.exporter.exporter import Neo4jExporter
 
     d = Neo4jExporter._node_to_param_dict(_node({"u.s.": "LOCATION"}))
     assert isinstance(d["entity_types"], str)
@@ -74,7 +74,7 @@ def test_node_without_entity_types_serializes_to_empty_object():
     """Nodes from a path that never ran typed NER must still produce a
     valid, decodable value rather than null -- readers can then treat
     "no types" uniformly instead of special-casing a missing property."""
-    from src.exporter.exporter import Neo4jExporter
+    from src.unstructured.exporter.exporter import Neo4jExporter
 
     d = Neo4jExporter._node_to_param_dict(_node())
     assert json.loads(d["entity_types"]) == {}
@@ -85,8 +85,8 @@ def test_entity_types_round_trip_preserves_axis2_type_behavior():
     out of storage must reach the same typed-canonicalization result as the
     original in-memory ingestion. Decoding the stored JSON and re-attaching
     it must keep "apple" the ORG distinct from "apple" the CONCEPT."""
-    from src.exporter.exporter import Neo4jExporter
-    from src.semantic.axis2 import _resolve_canonical_entities
+    from src.unstructured.exporter.exporter import Neo4jExporter
+    from src.unstructured.semantic.axis2 import _resolve_canonical_entities
 
     a = DKGNode(id="a", type=NodeType.SECTION, title="a", text="x", order=0)
     a.entities = ["apple"]
@@ -112,7 +112,7 @@ def _csv_exporter(tmp_path):
     """Exporter with only the CSV-writing state initialized -- the real
     constructor also wires up blob/vector stores, which these path-level
     writer tests neither use nor should require."""
-    from src.exporter.exporter import Neo4jExporter
+    from src.unstructured.exporter.exporter import Neo4jExporter
 
     exporter = Neo4jExporter.__new__(Neo4jExporter)
     exporter.out = tmp_path

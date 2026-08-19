@@ -8,11 +8,11 @@ import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from .retrieval.unstructured.graph import esg_agent
+from .unstructured.retrieval.graph import esg_agent
 from .retrieval.structured.graph import structured_agent
 from .shared.auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
 from .shared.audit import AuditEventType, record_audit_event
-from .presentation import build_presentation
+from .unstructured.presentation import build_presentation
 from .shared.auth.rbac_setup import GraphRBAC
 from .shared.config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 from .shared.feedback import resolve_query_tool

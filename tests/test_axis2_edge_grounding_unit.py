@@ -17,9 +17,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from src.models import DKGNode, NodeType
-from src.semantic import axis2 as axis2_module
-from src.semantic.axis2 import Axis2Builder
+from src.unstructured.models import DKGNode, NodeType
+from src.unstructured.semantic import axis2 as axis2_module
+from src.unstructured.semantic.axis2 import Axis2Builder
 
 
 def _embedded_node(node_id: str, embedding: list[float]) -> DKGNode:

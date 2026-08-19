@@ -41,12 +41,12 @@ sys.modules["src.shared.auth.roles"].DEFAULT_PUBLIC_CONTEXT = MagicMock(role=Mag
 # router.py imports `structured_agent`/`esg_agent` directly from the real
 # graph modules at module level — stub both wholesale rather than importing
 # the real (heavy) LangGraph pipelines (same reasoning as the query_data test).
-for _n in ["src.retrieval.structured.graph", "src.retrieval.unstructured.graph"]:
+for _n in ["src.retrieval.structured.graph", "src.unstructured.retrieval.graph"]:
     if _n in sys.modules:
         del sys.modules[_n]
 _structured_graph_stub = _stub_module("src.retrieval.structured.graph")
 _structured_graph_stub.structured_agent = MagicMock()
-_unstructured_graph_stub = _stub_module("src.retrieval.unstructured.graph")
+_unstructured_graph_stub = _stub_module("src.unstructured.retrieval.graph")
 _unstructured_graph_stub.esg_agent = MagicMock()
 
 if "src.router" in sys.modules:

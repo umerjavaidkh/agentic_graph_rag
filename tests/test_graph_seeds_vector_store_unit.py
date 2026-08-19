@@ -27,9 +27,9 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.unstructured.services import graph_seeds as graph_seeds_mod
-from src.retrieval.unstructured.services.graph_seeds import GraphSeedService
-from src.retrieval.unstructured.services.ranking import RankingService
+from src.unstructured.retrieval.services import graph_seeds as graph_seeds_mod
+from src.unstructured.retrieval.services.graph_seeds import GraphSeedService
+from src.unstructured.retrieval.services.ranking import RankingService
 
 
 class _FakeSession:

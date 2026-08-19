@@ -18,8 +18,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from src.models import DKGNode, NodeType
-from src.semantic.axis2 import Axis2Builder, _is_entity_grounded
+from src.unstructured.models import DKGNode, NodeType
+from src.unstructured.semantic.axis2 import Axis2Builder, _is_entity_grounded
 
 
 def _section_node(node_id: str, text: str) -> DKGNode:

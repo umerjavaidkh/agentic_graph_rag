@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 
 
-from src.graph.axis1_structural import Axis1StructuralBuilder
-from src.models import DKGEdge, DKGNode, NodeType, RelType
+from src.unstructured.graph.axis1_structural import Axis1StructuralBuilder
+from src.unstructured.models import DKGEdge, DKGNode, NodeType, RelType
 
 
 def _section(node_id: str, text: str, order: int = 0) -> DKGNode:

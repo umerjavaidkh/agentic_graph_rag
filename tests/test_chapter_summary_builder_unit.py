@@ -18,8 +18,8 @@ from unittest.mock import MagicMock
 import pytest
 
 
-from src.models import DKGEdge, DKGNode, NodeType, RelType
-from src.semantic.chapter_summary import ChapterSummaryBuilder
+from src.unstructured.models import DKGEdge, DKGNode, NodeType, RelType
+from src.unstructured.semantic.chapter_summary import ChapterSummaryBuilder
 
 
 def _builder() -> ChapterSummaryBuilder:
@@ -119,7 +119,7 @@ def test_no_client_returns_nodes_unchanged():
 
 
 def test_context_length_is_capped(monkeypatch):
-    import src.semantic.chapter_summary as mod
+    import src.unstructured.semantic.chapter_summary as mod
 
     monkeypatch.setattr(mod, "CHAPTER_SUMMARY_MAX_CONTEXT_CHARS", 100)
     monkeypatch.setattr(mod, "CHAPTER_SUMMARY_SECTION_EXCERPT_CHARS", 50)

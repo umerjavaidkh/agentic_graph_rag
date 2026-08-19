@@ -22,12 +22,12 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.unstructured.strategies.box import BoxStrategy
-from src.retrieval.unstructured.services.document_resolver import DocumentResolver
-from src.retrieval.unstructured.services.formatter import ResponseFormatter
-from src.retrieval.unstructured.services.graph_seeds import GraphSeedService
-from src.retrieval.unstructured.executor import DocumentQueryExecutor
-from src.retrieval.unstructured.services.ranking import RankingService
+from src.unstructured.retrieval.strategies.box import BoxStrategy
+from src.unstructured.retrieval.services.document_resolver import DocumentResolver
+from src.unstructured.retrieval.services.formatter import ResponseFormatter
+from src.unstructured.retrieval.services.graph_seeds import GraphSeedService
+from src.unstructured.retrieval.executor import DocumentQueryExecutor
+from src.unstructured.retrieval.services.ranking import RankingService
 
 
 class _FakeSession:

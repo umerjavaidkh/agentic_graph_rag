@@ -33,8 +33,8 @@ from pathlib import Path
 import pytest
 
 
-from src.document.versioning import extract_filing_date_from_filename
-from src.retrieval.unstructured.query_intent import is_filing_date_question
+from src.unstructured.document.versioning import extract_filing_date_from_filename
+from src.unstructured.retrieval.query_intent import is_filing_date_question
 
 
 @pytest.mark.parametrize("query", [

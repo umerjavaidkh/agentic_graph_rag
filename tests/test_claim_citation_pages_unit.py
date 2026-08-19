@@ -49,17 +49,17 @@ sys.modules["src.shared.auth.roles"].DEFAULT_PUBLIC_CONTEXT = MagicMock(role=Mag
 # would otherwise need a live Neo4j driver/RBAC/schema chain to construct.
 # Not exercised by _generate_document_answer (only retrieve_node uses
 # `retriever`) -- stub the class to a no-op constructor.
-for _mod_name in ("src.retrieval.unstructured.graph", "src.retrieval.unstructured.retriever"):
+for _mod_name in ("src.unstructured.retrieval.graph", "src.unstructured.retrieval.retriever"):
     if _mod_name in sys.modules:
         del sys.modules[_mod_name]
-_retriever_stub = _stub_module("src.retrieval.unstructured.retriever")
+_retriever_stub = _stub_module("src.unstructured.retrieval.retriever")
 _retriever_stub.DocumentRAGRetriever = lambda *a, **k: MagicMock()
 _retriever_stub.is_page_question = lambda q: False
 _retriever_stub.is_synthesis_question = lambda q: False
 _retriever_stub.is_toc_question = lambda q: False
 _retriever_stub.is_visual_page_question = lambda q: False
 
-import src.retrieval.unstructured.graph as graph_module
+import src.unstructured.retrieval.graph as graph_module
 _chunk_page = graph_module._chunk_page
 _chunk_page_end = graph_module._chunk_page_end
 _claim_citations = graph_module._claim_citations

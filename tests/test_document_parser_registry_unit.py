@@ -16,10 +16,10 @@ import pytest
 @pytest.fixture()
 def parser_registry():
     """
-    Fresh, un-stubbed src.document.parser_registry.
+    Fresh, un-stubbed src.unstructured.document.parser_registry.
 
     Other test modules in this suite (e.g. test_scalable_pipeline_unit.py)
-    replace src.document* with MagicMocks at *import* time, and pytest
+    replace src.unstructured.document* with MagicMocks at *import* time, and pytest
     imports every test module during collection before running any test —
     so if this module were imported at collection time, a later-collected
     file's stubbing would overwrite attributes on the same shared module
@@ -27,22 +27,22 @@ def parser_registry():
     time, after all collection has finished) sidesteps that.
     """
     for name in list(sys.modules):
-        if name == "src.document" or name.startswith("src.document."):
+        if name == "src.unstructured.document" or name.startswith("src.unstructured.document."):
             del sys.modules[name]
-    module = importlib.import_module("src.document.parser_registry")
+    module = importlib.import_module("src.unstructured.document.parser_registry")
     return module
 
 
 @pytest.fixture()
 def light_pdf_parser_cls(parser_registry):
-    from src.document.light.parser import LightPdfParser
+    from src.unstructured.document.light.parser import LightPdfParser
 
     return LightPdfParser
 
 
 @pytest.fixture()
 def rtldoc_pdf_parser_cls(parser_registry):
-    from src.document.rtldoc_backend.parser import RtldocPdfParser
+    from src.unstructured.document.rtldoc_backend.parser import RtldocPdfParser
 
     return RtldocPdfParser
 

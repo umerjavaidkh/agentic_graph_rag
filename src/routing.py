@@ -20,7 +20,7 @@ from .shared.config.settings import (
     ROUTING_MODEL,
     estimate_route_max_tokens,
 )
-from .graph.constants import NON_BUSINESS_LABELS
+from .unstructured.graph.constants import NON_BUSINESS_LABELS
 from .shared.model_providers.factory import get_chat_provider
 from .shared.telemetry import get_telemetry, pipeline_step
 
@@ -326,7 +326,7 @@ def try_document_fallback(
     "only take the fallback if it actually improved things" discipline used
     for the multistep/text2cypher fallback in StructuredRetriever.retrieve().
     """
-    from .retrieval.unstructured.graph import esg_agent
+    from .unstructured.retrieval.graph import esg_agent
 
     state: dict[str, Any] = {"question": question, "skip_structured_guard": True}
     if user_context is not None:

@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.unstructured.query_intent import is_overview_question, is_synthesis_question
+from src.unstructured.retrieval.query_intent import is_overview_question, is_synthesis_question
 
 
 @pytest.mark.parametrize("query", [

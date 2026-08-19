@@ -29,7 +29,7 @@ def run_ingest_job(job_id: str) -> None:
     and can be unit-tested without RQ.
     """
     from .job_store import get_job_store
-    from .service import IngestionManager
+    from ..unstructured.ingestion.service import IngestionManager
 
     store = get_job_store()
     job = store.get(job_id)

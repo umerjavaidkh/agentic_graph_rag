@@ -20,8 +20,8 @@ import sys
 from pathlib import Path
 
 
-from src.document.ir import Block, DocumentIR, PageBlock
-from src.document.light.parser import LightPdfParser, _PageExtract, _PdfBlock
+from src.unstructured.document.ir import Block, DocumentIR, PageBlock
+from src.unstructured.document.light.parser import LightPdfParser, _PageExtract, _PdfBlock
 
 
 def _parser() -> LightPdfParser:

@@ -14,8 +14,8 @@ import fitz
 import pytest
 
 
-import src.document.light.parser as parser_mod
-from src.document.light.parser import LightPdfParser
+import src.unstructured.document.light.parser as parser_mod
+from src.unstructured.document.light.parser import LightPdfParser
 
 
 def _blank_page():

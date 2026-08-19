@@ -1,0 +1,345 @@
+"""
+Build a dynamic presentation payload from answer + sources + retrieval meta.
+
+Block types: markdown, table, chart — extensible via BLOCK_BUILDERS.
+Visual page queries use markdown from stored visual_content (no binary image serving).
+"""
+from __future__ import annotations
+
+import re
+from typing import Any, Callable, Optional
+
+from .document.page_numbers import parse_page_number_from_query
+from ..presentation.structured_planner import build_structured_presentation
+from .document.page_vision import compact_visual_content
+from .retrieval.visual_retrieval import wants_page_text
+
+# ── Intent detectors (extensible) ─────────────────────────────
+
+_VISUAL_QUERY = re.compile(
+    r"\bvisual\s+content\b|"
+    r"\b(?:show|display|see|fetch|get)\s+(?:the\s+)?(?:image|picture|photo|figure|page|pdf)\b|"
+    r"\b(?:show\s+all|all|every|list|each)\s+(?:\w+\s+){0,3}"
+    r"(?:images?|figures?|figs?\.?|photos?|pictures?|visuals?)\b|"
+    r"\b(?:image|picture|photo|screenshot|figure)\s+(?:of|from|on)\b|"
+    r"\bshow\s+page\b|\bsee\s+page\b|\bdisplay\s+page\b|"
+    r"\bwhole\s+page\b|\bfull\s+page\b|\bentire\s+page\b|"
+    r"\bpdf\s+page\s+\d+"
+    r"|\b(?:logo|icon)\s+(?:only|image)\b|\b(?:only|just)\s+(?:the\s+)?(?:logo|icon)\b",
+    re.I,
+)
+_TEXT_ONLY = re.compile(
+    r"\b(?:text\s+only|only\s+text|no\s+image|without\s+image|don'?t\s+show\s+image)\b",
+    re.I,
+)
+_PIPE_TABLE_ROW = re.compile(r"^\s*\|.+\|\s*$")
+_LABELED_PERCENT_ITEM_RE = re.compile(
+    r"\*\*(?P<label>[^*]{2,80})\*\*\s*:?\s*[^%\n]{0,120}?(?P<value>\d+(?:\.\d+)?)\s*%",
+)
+
+
+def wants_page_visual(question: str) -> bool:
+    """True when the user asks about figures/visuals (answered via visual_content text)."""
+    if _TEXT_ONLY.search(question):
+        return False
+    return bool(_VISUAL_QUERY.search(question))
+
+
+# Backward-compatible alias
+wants_page_image = wants_page_visual
+
+
+def _extract_markdown_tables(text: str) -> list[dict]:
+    """Parse GitHub-style pipe tables from answer text."""
+    tables: list[dict] = []
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        if not _PIPE_TABLE_ROW.match(lines[i]):
+            i += 1
+            continue
+        block: list[str] = []
+        while i < len(lines) and _PIPE_TABLE_ROW.match(lines[i]):
+            block.append(lines[i])
+            i += 1
+        if len(block) < 2:
+            continue
+        rows_raw = [[c.strip() for c in ln.strip("|").split("|")] for ln in block]
+        sep_idx = None
+        for j, row in enumerate(rows_raw):
+            if all(re.match(r"^:?-+:?$", c) for c in row if c):
+                sep_idx = j
+                break
+        if sep_idx == 0 and len(rows_raw) > 2:
+            headers = rows_raw[0]
+            data_rows = [r for k, r in enumerate(rows_raw) if k != 0 and k != sep_idx]
+        else:
+            headers = rows_raw[0]
+            data_rows = rows_raw[1:]
+        if headers and data_rows:
+            tables.append({"headers": headers, "rows": data_rows})
+    return tables
+
+
+def _extract_chart_from_text(text: str) -> Optional[dict]:
+    """Build a bar chart only from genuinely labeled values — a bold label
+    immediately paired with a percentage, e.g. "**CET1 Capital Ratio**:
+    4.5%". A bare scan for "any N%" appearing anywhere in narrative prose
+    (the previous approach) has no real label for each number, so it fell
+    back to meaningless "Item 1"/"Item 2" placeholders — a chart nobody
+    can read, generated from unrelated figures scattered across a prose
+    answer explaining several different concepts, not a real comparison
+    dataset. Requiring a paired label means: no real label, no chart,
+    rather than a chart with fake ones.
+    """
+    labeled: list[tuple[str, float]] = []
+    seen: set[str] = set()
+    for m in _LABELED_PERCENT_ITEM_RE.finditer(text):
+        label = m.group("label").strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        labeled.append((label, float(m.group("value"))))
+    if len(labeled) < 2:
+        return None
+    labeled = labeled[:12]
+    return {
+        "chartType": "bar",
+        "labels": [l for l, _ in labeled],
+        "values": [v for _, v in labeled],
+        "title": "Values from answer",
+    }
+
+
+def _short_visual_blurb(src: dict) -> str:
+    """One-line summary for list UI — not the full vision dump."""
+    visual = compact_visual_content((src.get("visual_content") or "").strip())
+    blob = visual.lower()
+    if "logo" in blob or "brand" in blob or "emblem" in blob:
+        return "Logo / brand mark"
+    if "diagram" in blob or "flowchart" in blob:
+        return "Diagram"
+    if "chart" in blob or "graph" in blob:
+        return "Chart"
+    if "table" in blob:
+        return "Table"
+    kind = (src.get("region_kind") or "figure").strip()
+    if kind:
+        return kind.replace("_", " ").title()
+    first = visual.split("\n", 1)[0].strip()
+    if len(first) > 100:
+        first = first[:97] + "…"
+    return first or "Figure"
+
+
+def _visual_markdown_blocks_from_sources(
+    sources: list[dict],
+    question: str,
+    force: bool = False,
+    retrieved_context: Optional[dict] = None,
+    query_type: Optional[str] = None,
+) -> list[dict]:
+    """Markdown blocks from ingested visual_content (no JPEG URLs)."""
+    blocks: list[dict] = []
+    want = force or wants_page_visual(question)
+    if not want:
+        return blocks
+
+    ctx = retrieved_context or {}
+    mode = ctx.get("mode") or ""
+    page_text_mode = mode == "page_text"
+    pin_pdf = ctx.get("pdf_page")
+    list_all_visuals = bool(
+        re.search(
+            r"\b(?:show\s+all|all|every|list|each)\s+(?:\w+\s+){0,3}"
+            r"(?:images?|figures?|figs?\.?|photos?|pictures?|visuals?)\b",
+            question,
+            re.I,
+        )
+    )
+    single_visual = (
+        ctx.get("single_visual")
+        or (
+            mode != "page_visual_list"
+            and not list_all_visuals
+            and (mode == "page_lookup" or query_type == "page")
+            and wants_page_visual(question)
+            and not page_text_mode
+            and not wants_page_text(question)
+        )
+    )
+    if pin_pdf is None and single_visual:
+        pin_pdf, _ = parse_page_number_from_query(question)
+
+    seen_ids: set[str] = set()
+    for src in sources:
+        if pin_pdf is not None:
+            sp = src.get("pdf_page")
+            if sp is not None and int(sp) != int(pin_pdf):
+                continue
+        visual = compact_visual_content((src.get("visual_content") or "").strip())
+        if not visual:
+            continue
+        sid = src.get("id") or visual[:80]
+        if sid in seen_ids:
+            continue
+        seen_ids.add(sid)
+        title = src.get("title") or "Figure"
+        doc_p = src.get("document_page")
+        pdf_p = src.get("pdf_page")
+        kind = src.get("region_kind")
+        caption = title
+        if kind:
+            caption = f"{title} ({kind})"
+        if doc_p and str(doc_p) != str(pdf_p):
+            caption = f"{caption} — printed {doc_p}, PDF {pdf_p}"
+        elif pdf_p:
+            caption = f"{caption} — PDF page {pdf_p}"
+        blocks.append({
+            "type": "markdown",
+            "content": f"### {caption}\n\n{visual}",
+        })
+        if single_visual:
+            break
+    return blocks
+
+
+def _page_visual_list_blocks(
+    sources: list[dict],
+    ctx: dict,
+) -> list[dict]:
+    """List figures on a page using visual_content text only."""
+    blocks: list[dict] = []
+    pdf_p = ctx.get("pdf_page")
+    doc_p = ctx.get("document_page")
+    items = [s for s in sources if (s.get("visual_content") or "").strip()]
+    if not items:
+        return blocks
+
+    header = f"**Visuals on PDF page {pdf_p}** ({len(items)} found)"
+    if doc_p and pdf_p and str(doc_p) != str(pdf_p):
+        header += f"\n\n_Printed page **{doc_p}**._"
+    blocks.append({"type": "markdown", "content": header})
+
+    seen_ids: set[str] = set()
+    for i, src in enumerate(items, 1):
+        sid = src.get("id") or str(i)
+        if sid in seen_ids:
+            continue
+        seen_ids.add(sid)
+        title = src.get("title") or f"Figure {i}"
+        blurb = _short_visual_blurb(src)
+        visual = compact_visual_content((src.get("visual_content") or "").strip())
+        blocks.append({
+            "type": "markdown",
+            "content": f"\n{i}. **{title}** — _{blurb}_\n\n{visual}",
+        })
+    return blocks
+
+
+def _table_blocks_from_answer(answer: str) -> list[dict]:
+    blocks: list[dict] = []
+    for idx, tbl in enumerate(_extract_markdown_tables(answer)):
+        blocks.append({
+            "type": "table",
+            "title": f"Table {idx + 1}" if idx else None,
+            "headers": tbl["headers"],
+            "rows": tbl["rows"],
+        })
+    return blocks
+
+
+def _chart_blocks_from_answer(answer: str) -> list[dict]:
+    chart = _extract_chart_from_text(answer)
+    if not chart:
+        return []
+    return [{"type": "chart", **chart}]
+
+
+def _markdown_block(answer: str, tables_found: bool) -> dict:
+    text = answer
+    if tables_found:
+        lines = []
+        for ln in answer.splitlines():
+            if _PIPE_TABLE_ROW.match(ln):
+                continue
+            if ln.strip().startswith("|---"):
+                continue
+            lines.append(ln)
+        text = "\n".join(lines).strip()
+    return {"type": "markdown", "content": text or answer}
+
+
+def _has_tabular_sources(sources: list[dict]) -> bool:
+    return sum(1 for s in sources if isinstance(s.get("raw"), dict)) >= 2
+
+
+def build_presentation(
+    question: str,
+    answer: str,
+    sources: list[dict],
+    retrieved_context: Optional[dict] = None,
+    query_type: Optional[str] = None,
+    agent: Optional[str] = None,
+) -> dict:
+    """
+    Returns { kind, blocks } for the chat UI.
+    """
+    if agent in ("structured",) or _has_tabular_sources(sources):
+        structured = build_structured_presentation(question, answer, sources)
+        if structured:
+            return structured
+
+    ctx = retrieved_context or {}
+    mode = ctx.get("mode") or ""
+    blocks: list[dict] = []
+
+    if mode == "page_visual_list":
+        blocks = _page_visual_list_blocks(sources, ctx)
+        kinds = {b["type"] for b in blocks}
+        return {
+            "kind": "mixed" if len(kinds) > 1 else (next(iter(kinds)) if kinds else "plain"),
+            "blocks": blocks,
+        }
+
+    text_only = bool(_TEXT_ONLY.search(question)) or wants_page_text(question)
+    page_text_mode = mode == "page_text"
+    visual_query_type = query_type in ("page", "visual_scene", "figure_caption")
+    visual_mode = mode in (
+        "unified_visual", "page_lookup", "page_visual_list",
+        "visual_scene", "caption_figure", "structural_page_visual",
+    )
+    wants_visual = wants_page_visual(question)
+    force_visual = not text_only and not page_text_mode and wants_visual
+
+    blocks.extend(
+        _visual_markdown_blocks_from_sources(
+            sources,
+            question,
+            force=force_visual or visual_mode or visual_query_type,
+            retrieved_context=ctx,
+            query_type=query_type,
+        )
+    )
+
+    table_blocks = _table_blocks_from_answer(answer)
+
+    chart_blocks: list[dict] = []
+    if agent != "structured" and not _has_tabular_sources(sources) and not table_blocks:
+        chart_blocks = _chart_blocks_from_answer(answer)
+
+    # The synthesized answer text is always shown — a chart/table is a
+    # supplement, never a silent replacement. Previously this markdown
+    # block was only appended when `blocks` was still empty, so extracting
+    # a chart or table from the answer would make the real text answer
+    # vanish from the response entirely (not just visually de-emphasized —
+    # absent from presentation.blocks), while the chart above it was
+    # frequently the more misleading of the two (see
+    # _extract_chart_from_text's docstring).
+    blocks.append(_markdown_block(answer, bool(table_blocks)))
+    blocks.extend(table_blocks)
+    blocks.extend(chart_blocks)
+
+    kinds = {b["type"] for b in blocks}
+    kind = "mixed" if len(kinds) > 1 else (next(iter(kinds)) if kinds else "plain")
+    return {"kind": kind, "blocks": blocks}

@@ -20,7 +20,7 @@ def _stub_module(name: str) -> types.ModuleType:
     return mod
 
 
-# Importing src.ingestion.triage runs src/ingestion/__init__.py, which imports
+# Importing src.unstructured.ingestion.triage runs src/ingestion/__init__.py, which imports
 # service.py, which needs fastapi/neo4j — neither installed in this env, and
 # triage.py itself has no real dependency on them. Minimal stubs, same
 # convention as tests/test_ingestion_manager_di_unit.py.
@@ -40,15 +40,15 @@ for _n in ["src.shared.auth", "src.shared.auth.rbac_setup"]:
         _stub_module(_n)
 sys.modules["src.shared.auth.rbac_setup"].GraphRBAC = MagicMock()
 
-for _n in ["src.graph", "src.graph.constants", "src.shared.neo4j.driver"]:
+for _n in ["src.unstructured.graph", "src.unstructured.graph.constants", "src.shared.neo4j.driver"]:
     if _n not in sys.modules:
         _stub_module(_n)
-sys.modules["src.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
-sys.modules["src.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
-sys.modules["src.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
+sys.modules["src.unstructured.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
+sys.modules["src.unstructured.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
+sys.modules["src.unstructured.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
 sys.modules["src.shared.neo4j.driver"].get_neo4j_driver = MagicMock()
 
-from src.ingestion.triage import check_duplicate, check_structural_sanity
+from src.unstructured.ingestion.triage import check_duplicate, check_structural_sanity
 
 
 # ── check_structural_sanity ──────────────────────────────────────────────────

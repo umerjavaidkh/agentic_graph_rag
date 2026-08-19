@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 
-from src.document.patterns import (
+from src.unstructured.document.patterns import (
     clean_heading_text,
     continuation_base_title,
     number_depth,

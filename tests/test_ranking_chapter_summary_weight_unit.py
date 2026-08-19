@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.unstructured.services.ranking import RankingService
+from src.unstructured.retrieval.services.ranking import RankingService
 
 
 def _chapter_summary_hit(score: float = 0.9) -> dict:

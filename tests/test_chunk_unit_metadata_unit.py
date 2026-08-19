@@ -26,8 +26,8 @@ import sys
 from pathlib import Path
 
 
-from src.graph.axis1_structural import _link_continuations, _stamp_section_paths
-from src.models import DKGEdge, DKGNode, NodeType, RelType
+from src.unstructured.graph.axis1_structural import _link_continuations, _stamp_section_paths
+from src.unstructured.models import DKGEdge, DKGNode, NodeType, RelType
 
 
 def _node(node_id: str, title: str, node_type=NodeType.SECTION) -> DKGNode:

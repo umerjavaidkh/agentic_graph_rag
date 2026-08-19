@@ -26,9 +26,9 @@ from unittest.mock import MagicMock
 import pytest
 
 
-from src.retrieval.unstructured.services.document_resolver import DocumentResolver
-from src.retrieval.unstructured.services.graph_seeds import GraphSeedService
-from src.retrieval.unstructured.services.ranking import RankingService
+from src.unstructured.retrieval.services.document_resolver import DocumentResolver
+from src.unstructured.retrieval.services.graph_seeds import GraphSeedService
+from src.unstructured.retrieval.services.ranking import RankingService
 
 
 @pytest.fixture()

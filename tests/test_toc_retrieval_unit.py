@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 
-from src.retrieval.unstructured.toc_retrieval import (
+from src.unstructured.retrieval.toc_retrieval import (
     include_in_outline_fallback,
     score_page_text_as_toc,
     stitch_toc_run,

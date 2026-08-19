@@ -40,8 +40,8 @@ class _FakeHDBSCAN:
 
 sys.modules["hdbscan"].HDBSCAN = _FakeHDBSCAN
 
-from src.models import DKGNode, EdgeConfidenceTier, NodeType, RelType
-from src.semantic.axis2 import (
+from src.unstructured.models import DKGNode, EdgeConfidenceTier, NodeType, RelType
+from src.unstructured.semantic.axis2 import (
     SAME_CATEGORY_CONFIDENCE,
     Axis2Builder,
 )

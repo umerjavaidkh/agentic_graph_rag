@@ -9,7 +9,7 @@ cover's "2021" on PDF 2 (a year matching the bare-digit pattern).
 "Page A" cannot be navigated to and cannot be checked by a reader, so a
 citation to it is worth no more than no citation at all.
 """
-from src.document.page_numbers import label_to_number, reconcile_page_labels
+from src.unstructured.document.page_numbers import label_to_number, reconcile_page_labels
 
 
 def _godata_pages():

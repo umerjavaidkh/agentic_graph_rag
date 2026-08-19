@@ -7,7 +7,7 @@ from typing import Iterator, Optional
 from ..shared.auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
 from ..shared.conversation import get_turn, save_turn
 from ..shared.feedback import maybe_record_retrieval_feedback, resolve_query_tool
-from ..presentation import build_presentation
+from ..unstructured.presentation import build_presentation
 from ..router import _rbac_check
 from ..routing import (
     TOOL_TO_AGENT,
@@ -17,7 +17,7 @@ from ..routing import (
     try_document_fallback,
 )
 from ..shared.telemetry import clear_telemetry, get_telemetry, pipeline_step, start_telemetry
-from .document import (
+from ..unstructured.streaming import (
     _build_context_text,
     _document_max_tokens,
     _document_prompt_name,
@@ -36,12 +36,12 @@ from ..retrieval.structured.graph import (
     _should_fast_structured_answer,
 )
 from ..retrieval.structured.query_intent import estimate_structured_synthesis_max_tokens
-from ..retrieval.unstructured.graph import (
+from ..unstructured.retrieval.graph import (
     _STRUCTURAL_FAST_MODES,
     _build_fast_unstructured_answer,
     _fix_misrouted_structured_answer,
 )
-from ..retrieval.unstructured.graph import retrieve_node as doc_retrieve_node
+from ..unstructured.retrieval.graph import retrieve_node as doc_retrieve_node
 from ..retrieval.structured.graph import retrieve_node as struct_retrieve_node
 from .events import stream_event
 from .structured import _viz_blocks_only, iter_structured_stream

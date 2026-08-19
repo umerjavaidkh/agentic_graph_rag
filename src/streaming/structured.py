@@ -12,7 +12,7 @@ from ..shared.config.settings import (
     STRUCTURED_SYNTHESIS_MAX_TOKENS,
 )
 from ..shared.model_providers.factory import get_chat_provider
-from ..presentation import build_presentation
+from ..unstructured.presentation import build_presentation
 from ..presentation.structured_planner import build_structured_presentation
 from ..retrieval.structured.graph import (
     _build_fast_structured_answer,
@@ -37,7 +37,7 @@ def _try_document_fallback_stream(
     of streaming a worse guess. Returns the small buffered event list plus
     the rest of the generator so nothing already consumed is lost.
     """
-    from .document import iter_document_stream  # lazy: avoids document.py <-> structured.py cycle
+    from ..unstructured.streaming import iter_document_stream  # lazy: avoids document.py <-> structured.py cycle
 
     gen = iter_document_stream(
         question,

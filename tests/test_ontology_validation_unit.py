@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 
-from src.document.ontology_validation import (
+from src.unstructured.document.ontology_validation import (
     _entity_centered_window,
     _shared_entity_texts,
     ONTOLOGY_ACCURACY_TARGET,

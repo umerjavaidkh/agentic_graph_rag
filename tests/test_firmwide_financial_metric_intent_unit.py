@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 
-from src.retrieval.unstructured.query_intent import (
+from src.unstructured.retrieval.query_intent import (
     is_firmwide_financial_metric_question,
 )
 

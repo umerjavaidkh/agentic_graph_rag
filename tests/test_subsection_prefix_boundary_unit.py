@@ -36,7 +36,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from src.retrieval.unstructured.strategies.subsection import (
+from src.unstructured.retrieval.strategies.subsection import (
     SubsectionStrategy,
     _PREFIX_BOUNDARY_CYPHER,
 )

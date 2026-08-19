@@ -5,7 +5,7 @@ Deleting only the Neo4j half is what left 50,642 orphaned blob objects and
 """
 from pathlib import Path
 
-from src.document.purge import delete_document
+from src.unstructured.document.purge import delete_document
 
 
 class _FakeResult:

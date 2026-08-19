@@ -14,15 +14,15 @@ import pytest
 
 def _drop_fake_document_stubs() -> None:
     """Drop stale fake stubs another test file left in sys.modules (e.g.
-    test_scalable_pipeline_unit.py stubs src.document.parser_registry as a
+    test_scalable_pipeline_unit.py stubs src.unstructured.document.parser_registry as a
     bare types.ModuleType with a mocked get_parser) — only if they're fake,
     never a genuinely-imported real module. Pytest collects every test
     file's module-level code before running any test function, so this
-    must run at TEST-CALL time (inside each test that imports src.document.*
+    must run at TEST-CALL time (inside each test that imports src.unstructured.document.*
     locally), not just once at this file's own import time.
     """
     for _mod_name in list(sys.modules):
-        if _mod_name == "src.document" or _mod_name.startswith("src.document."):
+        if _mod_name == "src.unstructured.document" or _mod_name.startswith("src.unstructured.document."):
             _mod = sys.modules[_mod_name]
             if not hasattr(_mod, "__file__") and not hasattr(_mod, "__path__"):
                 del sys.modules[_mod_name]
@@ -30,7 +30,7 @@ def _drop_fake_document_stubs() -> None:
 
 _drop_fake_document_stubs()
 
-from src.document.table_aware.parser import TableAwarePdfParser
+from src.unstructured.document.table_aware.parser import TableAwarePdfParser
 
 
 @pytest.mark.parametrize(
@@ -53,17 +53,17 @@ def test_looks_like_table_fragment(text, expected):
 
 def test_registered_under_table_aware_backend():
     # Deliberately checks type name/module rather than isinstance()/type() is:
-    # _drop_fake_document_stubs() forces a fresh re-import of src.document.*,
+    # _drop_fake_document_stubs() forces a fresh re-import of src.unstructured.document.*,
     # which can produce a TableAwarePdfParser class object distinct (by
     # identity) from the one imported at this file's top — a duplicate-
     # module-object artifact of cross-file sys.modules stub pollution during
     # pytest collection, not a real behavioral difference.
     _drop_fake_document_stubs()
-    from src.document.parser_registry import get_parser
+    from src.unstructured.document.parser_registry import get_parser
 
     parser = get_parser("doc.pdf", backend="table-aware")
     assert type(parser).__name__ == "TableAwarePdfParser"
-    assert type(parser).__module__ == "src.document.table_aware.parser"
+    assert type(parser).__module__ == "src.unstructured.document.table_aware.parser"
 
 
 def test_light_backend_unaffected():
@@ -74,11 +74,11 @@ def test_light_backend_unaffected():
     # value would make this test depend on ambient state instead of the
     # registry's own explicit-backend resolution behavior.
     _drop_fake_document_stubs()
-    from src.document.parser_registry import get_parser
+    from src.unstructured.document.parser_registry import get_parser
 
     parser = get_parser("doc.pdf", backend="light")
     assert type(parser).__name__ == "LightPdfParser"
-    assert type(parser).__module__ == "src.document.light.parser"
+    assert type(parser).__module__ == "src.unstructured.document.light.parser"
 
 
 # ── geometric table-region veto ──────────────────────────────────────────
@@ -160,7 +160,7 @@ def test_dense_graphics_page_skips_find_tables_entirely(monkeypatch):
     a real table page — even a dense financial-filing one — had ~194).
     Skip find_tables() entirely above a generous ceiling instead of calling
     into a known-pathological path."""
-    from src.document.table_aware.parser import _MAX_PAGE_DRAWINGS_FOR_TABLE_DETECTION
+    from src.unstructured.document.table_aware.parser import _MAX_PAGE_DRAWINGS_FOR_TABLE_DETECTION
 
     class _DenseGraphicsPage:
         def get_drawings(self):
@@ -204,7 +204,7 @@ def test_parses_real_sample_pdf_without_error():
 
 
 def _make_extract(page_num, blocks_data):
-    from src.document.light.parser import _PageExtract, _PdfBlock
+    from src.unstructured.document.light.parser import _PageExtract, _PdfBlock
 
     blocks = [
         _PdfBlock(text=text, page=page_num, bbox=[10.0, y0, 200.0, y0 + 10.0])
@@ -265,8 +265,8 @@ def test_repeated_header_veto_wired_into_is_heading():
     """is_repeated_header now travels via Block.extra (_block_to_ir),
     read by Axis1StructuralBuilder's single collapsed _is_heading rather
     than a per-class TableAwarePdfParser._is_heading override."""
-    from src.document.light.parser import _PdfBlock
-    from src.graph.axis1_structural import Axis1StructuralBuilder
+    from src.unstructured.document.light.parser import _PdfBlock
+    from src.unstructured.graph.axis1_structural import Axis1StructuralBuilder
 
     block = _PdfBlock(text="Table of Contents", page=5, bbox=[10.0, 20.0, 200.0, 30.0])
     block.is_repeated_header = True

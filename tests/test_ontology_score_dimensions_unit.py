@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 
 
-from src.document.ontology_validation import (
+from src.unstructured.document.ontology_validation import (
     _wilson_interval,
     score_axis1_structural_invariants,
 )

@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 
-from src.document.graph_snapshot import (
+from src.unstructured.document.graph_snapshot import (
     X1_STAGE,
     X2_STAGE,
     build_snapshot,
@@ -28,7 +28,7 @@ from src.document.graph_snapshot import (
     read_snapshot,
     write_snapshot,
 )
-from src.models import DKGEdge, DKGNode, EdgeConfidenceTier, NodeType, RelType
+from src.unstructured.models import DKGEdge, DKGNode, EdgeConfidenceTier, NodeType, RelType
 
 
 class _FakeBlobStore:

@@ -28,11 +28,11 @@ import sys
 from pathlib import Path
 
 
-from src.retrieval.unstructured.services.document_resolver import DocumentResolver
-from src.retrieval.unstructured.services.formatter import ResponseFormatter, access_denied_response
-from src.retrieval.unstructured.services.graph_seeds import GraphSeedService
-from src.retrieval.unstructured.services.lexical import LexicalService
-from src.retrieval.unstructured.services.ranking import RankingService
+from src.unstructured.retrieval.services.document_resolver import DocumentResolver
+from src.unstructured.retrieval.services.formatter import ResponseFormatter, access_denied_response
+from src.unstructured.retrieval.services.graph_seeds import GraphSeedService
+from src.unstructured.retrieval.services.lexical import LexicalService
+from src.unstructured.retrieval.services.ranking import RankingService
 
 QUESTIONS = [
     "What is the electronic version ISBN of the Go.Data annual report 2021?",

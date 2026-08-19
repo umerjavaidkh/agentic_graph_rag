@@ -20,7 +20,7 @@ from .models import IngestionStatus
 
 # Import IngestionJob lazily to avoid circular imports.
 def _job_class():
-    from .service import IngestionJob
+    from ..unstructured.ingestion.service import IngestionJob
     return IngestionJob
 
 

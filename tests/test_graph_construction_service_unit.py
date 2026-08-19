@@ -15,9 +15,9 @@ import sys
 from pathlib import Path
 
 
-from src.document.ir import DocumentIR
-from src.graph.chunker import Chunk
-from src.graph.construction_service import GraphConstructionService
+from src.unstructured.document.ir import DocumentIR
+from src.unstructured.graph.chunker import Chunk
+from src.unstructured.graph.construction_service import GraphConstructionService
 
 
 class FakeChunker:
@@ -95,9 +95,9 @@ def test_defaults_wire_up_real_classes():
     Axis1StructuralBuilder / Axis2IdeaBuilder implementations -- this only
     checks wiring (construction doesn't touch the network), not behavior,
     which the golden-output and axis2 tests already cover elsewhere."""
-    from src.graph.axis1_structural import Axis1StructuralBuilder
-    from src.graph.chunker import StructuralChunker
-    from src.semantic.axis2 import Axis2Builder, Axis2IdeaBuilder
+    from src.unstructured.graph.axis1_structural import Axis1StructuralBuilder
+    from src.unstructured.graph.chunker import StructuralChunker
+    from src.unstructured.semantic.axis2 import Axis2Builder, Axis2IdeaBuilder
 
     assert Axis2IdeaBuilder is Axis2Builder
 

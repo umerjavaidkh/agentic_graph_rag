@@ -29,8 +29,8 @@ import pytest
 
 
 from src.shared.config.settings import AXIS2_NER_BATCH_SIZE
-from src.models import DKGNode, NodeType
-from src.semantic.axis2 import Axis2Builder
+from src.unstructured.models import DKGNode, NodeType
+from src.unstructured.semantic.axis2 import Axis2Builder
 
 
 def _section_node(node_id: str, text: str = "some physics text") -> DKGNode:
@@ -180,7 +180,7 @@ def test_chunk_results_from_different_batches_are_merged_not_overwritten(monkeyp
     processed and merged independently) -- force that by capping the batch
     size to 1 chunk/call, then confirm the second batch's result for this
     node doesn't silently overwrite the first's."""
-    monkeypatch.setattr("src.semantic.axis2.AXIS2_NER_BATCH_SIZE", 1)
+    monkeypatch.setattr("src.unstructured.semantic.axis2.AXIS2_NER_BATCH_SIZE", 1)
     chunk_size = Axis2Builder._NER_CHUNK_CHARS
     long_text = ("word " * (chunk_size // 4)) + "uniqueterm"
     node = _section_node("n0", text=long_text)
@@ -236,7 +236,7 @@ def test_batch_json_failure_recovers_via_split_retry_instead_of_losing_everythin
     in the initial call regardless of the current AXIS2_NER_BATCH_SIZE
     default -- the scenario under test is the split-retry itself, not the
     initial batching."""
-    monkeypatch.setattr("src.semantic.axis2.AXIS2_NER_BATCH_SIZE", 4)
+    monkeypatch.setattr("src.unstructured.semantic.axis2.AXIS2_NER_BATCH_SIZE", 4)
     nodes = [
         _section_node("n0", text="alpha particle decay"),
         _section_node("n1", text="beta decay process"),

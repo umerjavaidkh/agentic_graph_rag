@@ -45,7 +45,7 @@ import sys
 from pathlib import Path
 
 
-from src.retrieval.unstructured.services.document_resolver import _WORD_BOUNDARY_PATTERN
+from src.unstructured.retrieval.services.document_resolver import _WORD_BOUNDARY_PATTERN
 
 
 def _matches(text: str, term: str) -> bool:

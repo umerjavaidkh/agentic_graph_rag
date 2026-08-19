@@ -57,8 +57,8 @@ class _FakeHDBSCAN:
 
 sys.modules["hdbscan"].HDBSCAN = _FakeHDBSCAN
 
-from src.models import DKGEdge, DKGNode, NodeType, RelType
-from src.semantic.axis2 import Axis2Builder
+from src.unstructured.models import DKGEdge, DKGNode, NodeType, RelType
+from src.unstructured.semantic.axis2 import Axis2Builder
 
 
 def _builder() -> Axis2Builder:

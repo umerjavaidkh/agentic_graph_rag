@@ -9,7 +9,7 @@ import re
 from collections import OrderedDict
 from typing import Any, Optional
 
-from ...retrieval.unstructured.visual_retrieval import extract_visual_focus_terms
+from ...unstructured.retrieval.visual_retrieval import extract_visual_focus_terms
 from .clarification import match_clarification_choice
 
 # thread_id -> last critical turn snapshot.

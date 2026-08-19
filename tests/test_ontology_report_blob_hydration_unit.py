@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 
 
-from src.document import ontology_report as ontology_report_mod
-from src.document.ontology_report import _sample_edges, _sample_entities
+from src.unstructured.document import ontology_report as ontology_report_mod
+from src.unstructured.document.ontology_report import _sample_edges, _sample_entities
 
 
 class _FakeSession:

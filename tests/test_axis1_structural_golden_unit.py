@@ -36,9 +36,9 @@ import pytest
 
 _root = Path(__file__).resolve().parents[1]
 
-from src.document.light.parser import LightPdfParser
-from src.graph.axis1_structural import Axis1StructuralBuilder
-from src.graph.chunker import StructuralChunker
+from src.unstructured.document.light.parser import LightPdfParser
+from src.unstructured.graph.axis1_structural import Axis1StructuralBuilder
+from src.unstructured.graph.chunker import StructuralChunker
 
 _ALL_FIXTURES = [
     ("rag_document", "sample_data_to_test/unstructured/rag_document.pdf"),

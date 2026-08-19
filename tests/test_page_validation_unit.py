@@ -13,9 +13,9 @@ import sys
 from pathlib import Path
 
 
-from src.document.ir import DocumentIR, PageBlock
-from src.document.page_validation import check_construction_coverage, score_page, summarize_pages
-from src.models import DKGNode, NodeType
+from src.unstructured.document.ir import DocumentIR, PageBlock
+from src.unstructured.document.page_validation import check_construction_coverage, score_page, summarize_pages
+from src.unstructured.models import DKGNode, NodeType
 
 
 def test_full_coverage_page_passes():

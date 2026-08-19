@@ -6,7 +6,7 @@ previous text and embedding set behind. Measured on the dev instance before
 the fix: Neo4j held 2 revisions, the blob store 51,406 objects across 23, and
 Qdrant 6,509 points across 18.
 """
-from src.document.purge import (
+from src.unstructured.document.purge import (
     purge_revision,
     revision_blob_keys,
     revision_blob_prefixes,

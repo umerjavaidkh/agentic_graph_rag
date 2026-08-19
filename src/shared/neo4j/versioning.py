@@ -1,6 +1,6 @@
 """Cypher helpers for ACTIVE revision-scoped retrieval."""
 
-from ...graph.constants import DOCUMENT_ROOT_CYPHER
+from ...unstructured.graph.constants import DOCUMENT_ROOT_CYPHER
 
 LIFECYCLE_ACTIVE = "ACTIVE"
 

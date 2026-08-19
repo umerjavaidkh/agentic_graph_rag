@@ -11,8 +11,8 @@ import sys
 from pathlib import Path
 
 
-from src.document.ir import DocumentIR, PageBlock
-from src.graph.chunker import Chunk, StructuralChunker
+from src.unstructured.document.ir import DocumentIR, PageBlock
+from src.unstructured.graph.chunker import Chunk, StructuralChunker
 
 
 def test_structural_chunker_one_chunk_per_page():

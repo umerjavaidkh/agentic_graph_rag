@@ -43,8 +43,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from src.models import DKGNode, NodeType
-from src.semantic.axis2 import (
+from src.unstructured.models import DKGNode, NodeType
+from src.unstructured.semantic.axis2 import (
     Axis2Builder,
     _ANCHOR_DISTINCTIVENESS_MIN_ENTITIES,
     _ANCHOR_SECONDARY_WEIGHT,
@@ -241,7 +241,7 @@ def test_floor_removes_generic_edges_without_gutting_specific_ones():
 
     edges = _builder()._build_entity_edges(nodes)
 
-    from src.semantic.axis2 import _entity_base_text
+    from src.unstructured.semantic.axis2 import _entity_base_text
     generic_only = [
         e for e in edges
         if all(_entity_base_text(s) in generic for s in e.properties["shared_entities"])

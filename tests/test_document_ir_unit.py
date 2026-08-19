@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 
-from src.document.ir import Block, DocumentIR, PageBlock
+from src.unstructured.document.ir import Block, DocumentIR, PageBlock
 
 
 def test_block_defaults():
@@ -91,7 +91,7 @@ def test_finalize_returns_self_for_chaining():
 
 
 def test_ir_module_has_no_storage_layer_imports():
-    import src.document.ir as ir_module
+    import src.unstructured.document.ir as ir_module
 
     src_text = Path(ir_module.__file__).read_text()
     for forbidden in ("neo4j", "qdrant", "minio", "boto3", "Neo4jDriver"):

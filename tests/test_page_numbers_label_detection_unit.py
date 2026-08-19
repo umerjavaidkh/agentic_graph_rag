@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 
-from src.document.page_numbers import detect_document_page_label
+from src.unstructured.document.page_numbers import detect_document_page_label
 
 
 def test_none_for_empty_text():

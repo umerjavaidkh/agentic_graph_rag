@@ -24,8 +24,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from src.models import DKGNode, NodeType
-from src.semantic.axis2 import (
+from src.unstructured.models import DKGNode, NodeType
+from src.unstructured.semantic.axis2 import (
     Axis2Builder,
     _ENTITY_FUZZY_CLUSTER_MAX_VOCAB,
     _canonicalize_entities,
