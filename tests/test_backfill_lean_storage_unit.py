@@ -10,7 +10,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-_root = Path(__file__).resolve().parents[1]
+# Repo root located by searching upward for src/, not by counting parents:
+# a fixed index silently points at the wrong directory the moment this
+# file changes nesting depth.
+_root = next(p for p in Path(__file__).resolve().parents if (p / "src").is_dir())
 _scripts = _root / "scripts"
 if str(_scripts) not in sys.path:
     sys.path.insert(0, str(_scripts))

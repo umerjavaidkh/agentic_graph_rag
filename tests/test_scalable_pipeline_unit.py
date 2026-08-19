@@ -49,7 +49,10 @@ class _FakeBaseModel:
 # Provide a minimal IngestionJob so job_store and tests can use it without
 # pulling in the full fastapi/neo4j import chain via service.py. We load the
 # REAL models.py (no heavy deps) to get IngestionStatus.
-_root = Path(__file__).resolve().parents[1]
+# Repo root located by searching upward for src/, not by counting parents:
+# a fixed index silently points at the wrong directory the moment this
+# file changes nesting depth.
+_root = next(p for p in Path(__file__).resolve().parents if (p / "src").is_dir())
 
 from src.pipeline.ingestion.models import IngestionStatus  # noqa: E402 – after path setup
 

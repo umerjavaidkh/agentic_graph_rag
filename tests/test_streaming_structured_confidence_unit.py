@@ -19,7 +19,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
+# Repo root located by searching upward for src/, not by counting parents:
+# a fixed index silently points at the wrong directory the moment this
+# file changes nesting depth.
+_root = next(p for p in Path(__file__).resolve().parents if (p / "src").is_dir())
 
 
 def _stub_module(name: str) -> types.ModuleType:
