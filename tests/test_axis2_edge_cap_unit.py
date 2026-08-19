@@ -71,7 +71,7 @@ class _FakeHDBSCAN:
 
 sys.modules["hdbscan"].HDBSCAN = _FakeHDBSCAN
 
-from src.config.settings import AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
+from src.shared.config.settings import AXIS2_MAX_SIMILARITY_EDGES_PER_NODE
 from src.models import DKGNode, NodeType
 from src.semantic.axis2 import Axis2Builder
 

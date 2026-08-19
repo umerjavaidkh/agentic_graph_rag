@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 
-from src.storage.hydrator import BlobHydrator, CachingHydrator, get_hydrator
+from src.shared.storage.hydrator import BlobHydrator, CachingHydrator, get_hydrator
 
 
 class _FakeBlobStore:
@@ -59,7 +59,7 @@ def test_hydrate_batch_maps_each_key_independently():
 def test_default_constructor_resolves_real_blob_store(monkeypatch):
     """No-arg construction must resolve via get_blob_store(), same DI
     pattern as GraphConstructionService's own defaults."""
-    import src.storage.hydrator as hydrator_mod
+    import src.shared.storage.hydrator as hydrator_mod
 
     sentinel = _FakeBlobStore({"k": "v"})
     monkeypatch.setattr(hydrator_mod, "get_blob_store", lambda: sentinel)
@@ -113,25 +113,25 @@ def test_caching_hydrator_evicts_lru_beyond_max_entries():
 
 
 def test_get_hydrator_returns_caching_variant_when_enabled(monkeypatch):
-    import src.storage.hydrator as hydrator_mod
+    import src.shared.storage.hydrator as hydrator_mod
 
     monkeypatch.setattr(hydrator_mod, "_hydrator_singleton", None)
-    monkeypatch.setattr("src.config.settings.HYDRATOR_CACHE", True)
+    monkeypatch.setattr("src.shared.config.settings.HYDRATOR_CACHE", True)
     assert isinstance(get_hydrator(), CachingHydrator)
     monkeypatch.setattr(hydrator_mod, "_hydrator_singleton", None)
 
 
 def test_get_hydrator_returns_plain_variant_when_disabled(monkeypatch):
-    import src.storage.hydrator as hydrator_mod
+    import src.shared.storage.hydrator as hydrator_mod
 
     monkeypatch.setattr(hydrator_mod, "_hydrator_singleton", None)
-    monkeypatch.setattr("src.config.settings.HYDRATOR_CACHE", False)
+    monkeypatch.setattr("src.shared.config.settings.HYDRATOR_CACHE", False)
     assert type(get_hydrator()) is BlobHydrator
     monkeypatch.setattr(hydrator_mod, "_hydrator_singleton", None)
 
 
 def test_get_hydrator_is_a_singleton(monkeypatch):
-    import src.storage.hydrator as hydrator_mod
+    import src.shared.storage.hydrator as hydrator_mod
 
     monkeypatch.setattr(hydrator_mod, "_hydrator_singleton", None)
     assert get_hydrator() is get_hydrator()

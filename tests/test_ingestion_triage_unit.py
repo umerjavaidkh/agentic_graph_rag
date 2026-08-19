@@ -35,18 +35,18 @@ if "neo4j.exceptions" not in sys.modules:
 sys.modules["neo4j"].GraphDatabase = MagicMock()
 sys.modules["neo4j.exceptions"].ClientError = type("ClientError", (Exception,), {"message": "", "code": ""})
 
-for _n in ["src.auth", "src.auth.rbac_setup"]:
+for _n in ["src.shared.auth", "src.shared.auth.rbac_setup"]:
     if _n not in sys.modules:
         _stub_module(_n)
-sys.modules["src.auth.rbac_setup"].GraphRBAC = MagicMock()
+sys.modules["src.shared.auth.rbac_setup"].GraphRBAC = MagicMock()
 
-for _n in ["src.graph", "src.graph.constants", "src.graph.driver"]:
+for _n in ["src.graph", "src.graph.constants", "src.shared.neo4j.driver"]:
     if _n not in sys.modules:
         _stub_module(_n)
 sys.modules["src.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
 sys.modules["src.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
 sys.modules["src.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
-sys.modules["src.graph.driver"].get_neo4j_driver = MagicMock()
+sys.modules["src.shared.neo4j.driver"].get_neo4j_driver = MagicMock()
 
 from src.ingestion.triage import check_duplicate, check_structural_sanity
 

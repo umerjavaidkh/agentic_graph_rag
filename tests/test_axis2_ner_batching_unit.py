@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 import pytest
 
 
-from src.config.settings import AXIS2_NER_BATCH_SIZE
+from src.shared.config.settings import AXIS2_NER_BATCH_SIZE
 from src.models import DKGNode, NodeType
 from src.semantic.axis2 import Axis2Builder
 

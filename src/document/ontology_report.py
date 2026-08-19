@@ -12,10 +12,10 @@ from __future__ import annotations
 import random
 from typing import Optional
 
-from ..config.settings import CHAT_MODEL
-from ..model_providers.factory import get_chat_provider
-from ..storage.blob.factory import get_blob_store
-from ..storage.hydrator import get_hydrator
+from ..shared.config.settings import CHAT_MODEL
+from ..shared.model_providers.factory import get_chat_provider
+from ..shared.storage.blob.factory import get_blob_store
+from ..shared.storage.hydrator import get_hydrator
 from .ontology_validation import (
     ONTOLOGY_ACCURACY_TARGET,
     extract_toc_ground_truth,

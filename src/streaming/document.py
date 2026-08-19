@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from typing import Any, Iterator, Optional
 
-from ..auth.roles import UserContext
-from ..config.prompts import load_prompt
-from ..config.settings import (
+from ..shared.auth.roles import UserContext
+from ..shared.config.prompts import load_prompt
+from ..shared.config.settings import (
     CHAT_MODEL,
     DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS,
     DOCUMENT_SYNTHESIS_MAX_TOKENS,
 )
-from ..model_providers.factory import get_chat_provider
+from ..shared.model_providers.factory import get_chat_provider
 from ..presentation import build_presentation
 from ..retrieval.unstructured.graph import (
     _STRUCTURAL_FAST_MODES,

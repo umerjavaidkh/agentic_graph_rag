@@ -13,7 +13,7 @@ and every request.
 """
 from __future__ import annotations
 
-from ....graph.driver import get_neo4j_driver
+from ....shared.neo4j.driver import get_neo4j_driver
 from ...strategy_registry import register_unstructured
 from ..executor import DocumentQueryExecutor
 from ..services.chapter_summary import ChapterSummaryService

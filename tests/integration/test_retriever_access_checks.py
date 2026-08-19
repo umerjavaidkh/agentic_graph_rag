@@ -6,8 +6,8 @@ This test verifies the access check BEFORE data retrieval, without needing
 actual data in the knowledge graphs.
 """
 
-from src.auth.roles import UserContext, validate_role
-from src.auth.rbac_setup import GraphRBAC
+from src.shared.auth.roles import UserContext, validate_role
+from src.shared.auth.rbac_setup import GraphRBAC
 
 
 def test_retriever_access_checks():

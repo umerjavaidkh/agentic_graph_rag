@@ -20,7 +20,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from ....config.settings import RERANK_BACKEND, RERANK_ENABLED, RERANK_MODEL
+from ....shared.config.settings import RERANK_BACKEND, RERANK_ENABLED, RERANK_MODEL
 from ...reranker_registry import get_reranker_backend, register_reranker
 
 logger = logging.getLogger(__name__)

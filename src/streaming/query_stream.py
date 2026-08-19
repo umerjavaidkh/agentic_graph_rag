@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 from typing import Iterator, Optional
 
-from ..auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
-from ..conversation import get_turn, save_turn
-from ..feedback_loop import maybe_record_retrieval_feedback, resolve_query_tool
+from ..shared.auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
+from ..shared.conversation import get_turn, save_turn
+from ..shared.feedback import maybe_record_retrieval_feedback, resolve_query_tool
 from ..presentation import build_presentation
 from ..router import _rbac_check
 from ..routing import (
@@ -16,21 +16,21 @@ from ..routing import (
     resolve_mode_override,
     try_document_fallback,
 )
-from ..telemetry import clear_telemetry, get_telemetry, pipeline_step, start_telemetry
+from ..shared.telemetry import clear_telemetry, get_telemetry, pipeline_step, start_telemetry
 from .document import (
     _build_context_text,
     _document_max_tokens,
     _document_prompt_name,
     iter_document_stream,
 )
-from ..config.prompts import load_prompt
-from ..config.settings import (
+from ..shared.config.prompts import load_prompt
+from ..shared.config.settings import (
     CHAT_MODEL,
     STRUCTURED_MODEL,
     STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS,
     STRUCTURED_SYNTHESIS_MAX_TOKENS,
 )
-from ..model_providers.factory import get_chat_provider
+from ..shared.model_providers.factory import get_chat_provider
 from ..retrieval.structured.graph import (
     _build_fast_structured_answer,
     _should_fast_structured_answer,

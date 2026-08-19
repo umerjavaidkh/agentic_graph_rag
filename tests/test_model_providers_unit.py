@@ -26,9 +26,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
-from src.model_providers._shim import ShimResponse, ShimUsage
-from src.model_providers.anthropic_provider import AnthropicProvider, _split_system
-from src.model_providers.gemini_provider import GeminiProvider, _to_gemini_contents
+from src.shared.model_providers._shim import ShimResponse, ShimUsage
+from src.shared.model_providers.anthropic_provider import AnthropicProvider, _split_system
+from src.shared.model_providers.gemini_provider import GeminiProvider, _to_gemini_contents
 
 
 # ── Shim shape ────────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ def test_gemini_embeddings_not_implemented():
 # ── Factory: provider/key resolution (the actual bug this fixes) ───────
 
 def _reset_factory_singletons():
-    import src.model_providers.factory as factory
+    import src.shared.model_providers.factory as factory
 
     factory._chat_provider_singleton = None
     factory._embedding_provider_singleton = None
@@ -202,12 +202,12 @@ def test_get_chat_provider_resolves_correct_class_and_key(
     model_provider, expected_class, expected_key_attr, monkeypatch
 ):
     _reset_factory_singletons()
-    monkeypatch.setattr("src.config.settings.MODEL_PROVIDER", model_provider)
-    monkeypatch.setattr("src.config.settings.OPENAI_API_KEY", "openai-key")
-    monkeypatch.setattr("src.config.settings.ANTHROPIC_API_KEY", "anthropic-key")
-    monkeypatch.setattr("src.config.settings.GOOGLE_API_KEY", "google-key")
+    monkeypatch.setattr("src.shared.config.settings.MODEL_PROVIDER", model_provider)
+    monkeypatch.setattr("src.shared.config.settings.OPENAI_API_KEY", "openai-key")
+    monkeypatch.setattr("src.shared.config.settings.ANTHROPIC_API_KEY", "anthropic-key")
+    monkeypatch.setattr("src.shared.config.settings.GOOGLE_API_KEY", "google-key")
 
-    from src.model_providers.factory import get_chat_provider
+    from src.shared.model_providers.factory import get_chat_provider
 
     provider = get_chat_provider()
     assert type(provider).__name__ == expected_class
@@ -216,10 +216,10 @@ def test_get_chat_provider_resolves_correct_class_and_key(
 
 def test_get_chat_provider_is_a_cached_singleton(monkeypatch):
     _reset_factory_singletons()
-    monkeypatch.setattr("src.config.settings.MODEL_PROVIDER", "openai")
-    monkeypatch.setattr("src.config.settings.OPENAI_API_KEY", "openai-key")
+    monkeypatch.setattr("src.shared.config.settings.MODEL_PROVIDER", "openai")
+    monkeypatch.setattr("src.shared.config.settings.OPENAI_API_KEY", "openai-key")
 
-    from src.model_providers.factory import get_chat_provider
+    from src.shared.model_providers.factory import get_chat_provider
 
     first = get_chat_provider()
     second = get_chat_provider()
@@ -233,10 +233,10 @@ def test_get_embedding_provider_always_openai_regardless_of_model_provider(monke
     index has a fixed dimension, so embedding-provider swapping is out of
     scope by design, not an oversight."""
     _reset_factory_singletons()
-    monkeypatch.setattr("src.config.settings.MODEL_PROVIDER", "anthropic")
-    monkeypatch.setattr("src.config.settings.OPENAI_API_KEY", "openai-key")
+    monkeypatch.setattr("src.shared.config.settings.MODEL_PROVIDER", "anthropic")
+    monkeypatch.setattr("src.shared.config.settings.OPENAI_API_KEY", "openai-key")
 
-    from src.model_providers.factory import get_embedding_provider
+    from src.shared.model_providers.factory import get_embedding_provider
 
     provider = get_embedding_provider()
     assert type(provider).__name__ == "OpenAIProvider"
@@ -244,7 +244,7 @@ def test_get_embedding_provider_always_openai_regardless_of_model_provider(monke
 
 
 def test_get_model_provider_rejects_unsupported_name():
-    from src.model_providers.factory import get_model_provider
+    from src.shared.model_providers.factory import get_model_provider
 
     with pytest.raises(ValueError):
         get_model_provider("not-a-real-provider")

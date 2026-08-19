@@ -21,8 +21,8 @@ import json
 import re
 from typing import Optional
 
-from ...config.prompts import load_prompt
-from ...config.settings import DOCUMENT_VERIFY_ENABLED, DOCUMENT_VERIFY_MAX_TOKENS
+from ...shared.config.prompts import load_prompt
+from ...shared.config.settings import DOCUMENT_VERIFY_ENABLED, DOCUMENT_VERIFY_MAX_TOKENS
 from .query_intent import is_enumeration_question
 
 MAX_VERIFY_CHUNKS = 8  # sample cap sent to the LLM cross-check

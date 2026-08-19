@@ -22,12 +22,12 @@ from typing import Any, Callable, Optional, TypeVar
 
 from neo4j import Driver
 
-from ....auth.roles import UserContext
-from ....config.settings import (
+from ....shared.auth.roles import UserContext
+from ....shared.config.settings import (
     RETRIEVAL_CANDIDATE_POOL,
 )
-from ....feedback_loop import get_feedback_routing
-from ....telemetry.pipeline import record_pipeline_step
+from ....shared.feedback import get_feedback_routing
+from ....shared.telemetry.pipeline import record_pipeline_step
 from ..constants import (
     _FULLTEXT_LIMIT,
     _GRAPH_1HOP_LIMIT,

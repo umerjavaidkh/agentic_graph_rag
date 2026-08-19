@@ -30,7 +30,7 @@ import pytest
 # ── Minimal stubs for heavy/unavailable deps — must come before src.* imports ─
 # Mirrors tests/test_scalable_pipeline_unit.py's stubbing style. Unlike that
 # file, we deliberately do NOT stub src.ingestion.service, src.document.parser*,
-# src.model_providers*, or src.storage* — this test exercises the REAL
+# src.shared.model_providers*, or src.shared.storage* — this test exercises the REAL
 # IngestionManager and proves DI works, so those must be real.
 
 
@@ -61,27 +61,27 @@ _stub_module("neo4j.exceptions").ClientError = type("ClientError", (Exception,),
 
 _stub_module("fastapi").UploadFile = MagicMock()
 
-_stub_module("src.auth")
-_stub_module("src.auth.rbac_setup").GraphRBAC = MagicMock()
+_stub_module("src.shared.auth")
+_stub_module("src.shared.auth.rbac_setup").GraphRBAC = MagicMock()
 
 _stub_module("src.graph")
 _graph_constants = _stub_module("src.graph.constants")
 _graph_constants.DOC_REVISION_LABEL = "DocRevision"
 _graph_constants.DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
 _graph_constants.DOCUMENT_ROOT_CYPHER = "Document|Book"
-_stub_module("src.graph.driver").get_neo4j_driver = MagicMock()
+_stub_module("src.shared.neo4j.driver").get_neo4j_driver = MagicMock()
 
 _STUBBED_MODULE_NAMES = (
     "neo4j", "neo4j.exceptions", "fastapi",
-    "src.auth.rbac_setup", "src.auth",
-    "src.graph.driver", "src.graph.constants", "src.graph",
+    "src.shared.auth.rbac_setup", "src.shared.auth",
+    "src.shared.neo4j.driver", "src.graph.constants", "src.graph",
 )
 
 
 def teardown_module(module) -> None:
     """Remove this file's fake stand-ins once its own tests are done, so a
     test file collected afterward gets a clean sys.modules and can import
-    the real neo4j/fastapi/src.auth/src.graph if it needs them — otherwise
+    the real neo4j/fastapi/src.shared.auth/src.graph if it needs them — otherwise
     whichever of those modules this file stubbed stays faked for every test
     that runs later in the same pytest process, an import-order-dependent
     failure mode that only shows up in a full-suite run, never a
@@ -92,8 +92,8 @@ def teardown_module(module) -> None:
 
 from src.ingestion.service import IngestionJob, IngestionManager
 from src.ingestion.job_store import InMemoryJobStore
-from src.model_providers.base import ModelProvider
-from src.storage.vector.memory_store import InMemoryVectorStore
+from src.shared.model_providers.base import ModelProvider
+from src.shared.storage.vector.memory_store import InMemoryVectorStore
 
 
 # ── Fakes proving each dependency is swappable ───────────────────────────────
@@ -268,8 +268,8 @@ def test_manager_defaults_are_settings_driven_factories(monkeypatch):
     # get_model_provider()/get_blob_store()/get_vector_store() defaults.
     # Force the in-memory/local defaults so this doesn't require a real Qdrant/
     # MinIO endpoint when the local/deployed .env configures those backends.
-    import src.config.settings as settings_mod
-    import src.storage.vector.factory as vector_factory_mod
+    import src.shared.config.settings as settings_mod
+    import src.shared.storage.vector.factory as vector_factory_mod
 
     monkeypatch.setattr(settings_mod, "VECTOR_STORE_BACKEND", "memory")
     vector_factory_mod._store_singleton = None

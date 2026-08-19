@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 from fastapi import UploadFile
 from neo4j.exceptions import ClientError
 
-from ..config.settings import (
+from ..shared.config.settings import (
     AUTO_LOAD_TO_NEO4J,
     CHAT_PROVIDER_API_KEY,
     CLEANUP_TMP_INGEST,
@@ -44,22 +44,22 @@ from ..document.versioning import (
 )
 from ..document.parser_base import DocumentParser
 from ..document.parser_registry import get_parser, supported_extensions
-from ..model_providers.base import ModelProvider
-from ..model_providers.factory import get_chat_provider
+from ..shared.model_providers.base import ModelProvider
+from ..shared.model_providers.factory import get_chat_provider
 from ..models import NodeType
 from ..exporter.exporter import Neo4jExporter
 from ..models import DKGEdge, DKGNode
-from ..storage.blob.base import BlobStore
-from ..storage.blob.factory import get_blob_store
-from ..storage.vector.base import VectorStore
-from ..storage.vector.factory import get_vector_store
+from ..shared.storage.blob.base import BlobStore
+from ..shared.storage.blob.factory import get_blob_store
+from ..shared.storage.vector.base import VectorStore
+from ..shared.storage.vector.factory import get_vector_store
 from .models import IngestionStatus
 from .job_store import JobStore, get_job_store
 from .queue import enqueue_ingest
 from .triage import check_duplicate, check_structural_sanity
 
-from ..auth.rbac_setup import GraphRBAC
-from ..graph.driver import get_neo4j_driver
+from ..shared.auth.rbac_setup import GraphRBAC
+from ..shared.neo4j.driver import get_neo4j_driver
 
 if TYPE_CHECKING:
     from ..graph.construction_service import GraphConstructionService
@@ -288,7 +288,7 @@ class IngestionManager:
                 self._log(job, "RBAC schema already present; skipping setup")
                 return
             self._log(job, "RBAC schema missing; running setup")
-            rbac.setup_schema("src/auth/rbac_schema.cypher")
+            rbac.setup_schema()
         finally:
             rbac.close()
 

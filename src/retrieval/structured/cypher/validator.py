@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from ....config.settings import MULTI_TENANCY_ENABLED
+from ....shared.config.settings import MULTI_TENANCY_ENABLED
 from .tenant_injection import missing_tenant_filter_issue
 
 # Schema-agnostic hints when a query executes but returns no rows.

@@ -28,14 +28,14 @@ def _reset_singleton():
 
 
 def test_factory_returns_none_when_backend_is_none(monkeypatch):
-    import src.config.settings as settings_mod
+    import src.shared.config.settings as settings_mod
 
     monkeypatch.setattr(settings_mod, "PDF_OCR_BACKEND", "none")
     assert get_ocr_backend() is None
 
 
 def test_factory_returns_none_when_pytesseract_unavailable(monkeypatch):
-    import src.config.settings as settings_mod
+    import src.shared.config.settings as settings_mod
 
     monkeypatch.setattr(settings_mod, "PDF_OCR_BACKEND", "tesseract")
     monkeypatch.setattr(
@@ -50,7 +50,7 @@ def test_factory_returns_none_when_pytesseract_unavailable(monkeypatch):
 
 
 def test_factory_caches_singleton(monkeypatch):
-    import src.config.settings as settings_mod
+    import src.shared.config.settings as settings_mod
 
     monkeypatch.setattr(settings_mod, "PDF_OCR_BACKEND", "none")
     first = get_ocr_backend()
@@ -60,7 +60,7 @@ def test_factory_caches_singleton(monkeypatch):
 
 
 def test_factory_builds_tesseract_backend_when_available(monkeypatch):
-    import src.config.settings as settings_mod
+    import src.shared.config.settings as settings_mod
 
     fake_backend = MagicMock()
     monkeypatch.setattr(settings_mod, "PDF_OCR_BACKEND", "tesseract")

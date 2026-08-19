@@ -5,7 +5,7 @@ test_retriever_rbac.py — Test retriever access control with different roles.
 Tests that retrievers enforce access checks before querying.
 """
 
-from src.auth.roles import UserContext, validate_role
+from src.shared.auth.roles import UserContext, validate_role
 from src.retrieval.structured.retriever import StructuredRetriever
 from src.retrieval.unstructured.retriever import DocumentRAGRetriever
 

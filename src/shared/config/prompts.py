@@ -2,7 +2,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
+# src/shared/config/prompts.py -> parents[2] is src/, where the
+# templates live. Deliberately not derived from PROJECT_ROOT: prompts
+# ship inside the package, not beside it.
+PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
 
 @lru_cache(maxsize=None)

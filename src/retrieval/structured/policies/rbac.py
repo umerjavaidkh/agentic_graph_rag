@@ -1,7 +1,7 @@
 """RBAC cache for structured knowledge area."""
 from __future__ import annotations
 
-from ....auth.rbac_setup import GraphRBAC
+from ....shared.auth.rbac_setup import GraphRBAC
 
 
 class StructuredRbac:

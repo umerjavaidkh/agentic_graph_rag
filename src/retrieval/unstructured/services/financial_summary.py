@@ -17,7 +17,7 @@ question shape these sections are noise.
 from __future__ import annotations
 
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
-from ....graph.tenancy import tenant_filter
+from ....shared.neo4j.tenancy import tenant_filter
 from ..cypher_scope import _doc_scope_cypher
 
 # Case-insensitive title fragments that mark an authoritative firmwide summary

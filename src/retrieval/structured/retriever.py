@@ -9,18 +9,18 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ...auth.rbac_setup import GraphRBAC
-from ...auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
-from ...config.settings import (
+from ...shared.auth.rbac_setup import GraphRBAC
+from ...shared.auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
+from ...shared.config.settings import (
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
     STRUCTURED_ALWAYS_MULTISTEP_PLAN,
     STRUCTURED_EMPTY_MULTISTEP_FALLBACK,
 )
-from ...graph.driver import get_neo4j_driver
+from ...shared.neo4j.driver import get_neo4j_driver
 from ..strategy_registry import get_structured, register_structured
-from ...telemetry import pipeline_step
+from ...shared.telemetry import pipeline_step
 from .cypher.generator import OpenAICypherGenerator
 from .cypher.pipeline import Text2CypherPipeline
 from .formatting.chunks import format_response
@@ -28,7 +28,7 @@ from .multistep.executor import MultiStepExecutor
 from .multistep.planner import MultiStepPlanner
 from .policies.clarification import needs_clarification
 from .policies.rbac import StructuredRbac
-from ...feedback_loop import get_feedback_routing
+from ...shared.feedback import get_feedback_routing
 from .query_intent import likely_needs_multistep_plan
 from .schema.provider import SchemaProvider
 from .strategies.multistep import MultiStepStrategy

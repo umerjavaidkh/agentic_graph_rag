@@ -3,16 +3,16 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ....auth.rbac_setup import GraphRBAC
-from ....auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
-from ....config.settings import (
+from ....shared.auth.rbac_setup import GraphRBAC
+from ....shared.auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
+from ....shared.config.settings import (
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USER,
     RETRIEVAL_FINAL_LIMIT,
 )
-from ....graph.driver import get_neo4j_driver
-from ....telemetry.context import TelemetryEvent, get_telemetry
+from ....shared.neo4j.driver import get_neo4j_driver
+from ....shared.telemetry.context import TelemetryEvent, get_telemetry
 from ...strategy_registry import get_unstructured
 from ..executor import DocumentQueryExecutor
 from ..query_intent import (

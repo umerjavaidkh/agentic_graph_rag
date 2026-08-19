@@ -12,8 +12,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 
-from src.storage.vector.memory_store import InMemoryVectorStore
-from src.storage.vector.factory import get_vector_store
+from src.shared.storage.vector.memory_store import InMemoryVectorStore
+from src.shared.storage.vector.factory import get_vector_store
 
 
 def test_query_ranks_by_cosine_similarity():
@@ -82,8 +82,8 @@ def test_factory_defaults_to_memory_backend(monkeypatch):
     # VECTOR_STORE_BACKEND defaults to "memory" (settings.py) when unset; force it
     # here so the test is isolated from whatever backend the local/deployed .env
     # actually configures (e.g. VECTOR_STORE_BACKEND=qdrant in a real deployment).
-    import src.config.settings as settings_mod
-    import src.storage.vector.factory as factory_mod
+    import src.shared.config.settings as settings_mod
+    import src.shared.storage.vector.factory as factory_mod
 
     monkeypatch.setattr(settings_mod, "VECTOR_STORE_BACKEND", "memory")
     factory_mod._store_singleton = None
@@ -127,9 +127,9 @@ def _install_fake_qdrant_sdk() -> MagicMock:
 def _reload_qdrant_store():
     import importlib
 
-    if "src.storage.vector.qdrant_store" in sys.modules:
-        importlib.reload(sys.modules["src.storage.vector.qdrant_store"])
-    import src.storage.vector.qdrant_store as mod
+    if "src.shared.storage.vector.qdrant_store" in sys.modules:
+        importlib.reload(sys.modules["src.shared.storage.vector.qdrant_store"])
+    import src.shared.storage.vector.qdrant_store as mod
 
     return mod
 

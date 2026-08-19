@@ -10,10 +10,10 @@ import logging
 import re
 from typing import Any, Callable, Optional
 
-from .auth.roles import UserContext
-from .audit import AuditEventType, record_audit_event
-from .config.prompts import load_prompt
-from .config.settings import (
+from .shared.auth.roles import UserContext
+from .shared.audit import AuditEventType, record_audit_event
+from .shared.config.prompts import load_prompt
+from .shared.config.settings import (
     DEFAULT_TENANT_ID,
     FAST_ROUTE_QUERIES,
     OPENAI_API_KEY,
@@ -21,8 +21,8 @@ from .config.settings import (
     estimate_route_max_tokens,
 )
 from .graph.constants import NON_BUSINESS_LABELS
-from .model_providers.factory import get_chat_provider
-from .telemetry import get_telemetry, pipeline_step
+from .shared.model_providers.factory import get_chat_provider
+from .shared.telemetry import get_telemetry, pipeline_step
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def structured_entity_summary() -> str:
     if _structured_entities_cache is not None:
         return _structured_entities_cache
     try:
-        from .graph.driver import get_neo4j_driver
+        from .shared.neo4j.driver import get_neo4j_driver
 
         driver = get_neo4j_driver()
         with driver.session() as session:

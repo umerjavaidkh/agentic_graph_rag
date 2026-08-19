@@ -30,13 +30,13 @@ if "neo4j" not in sys.modules:
 sys.modules["neo4j"].GraphDatabase = MagicMock()
 sys.modules["neo4j"].Driver = MagicMock
 
-for _n in ["src.auth", "src.auth.rbac_setup", "src.auth.roles"]:
+for _n in ["src.shared.auth", "src.shared.auth.rbac_setup", "src.shared.auth.roles"]:
     if _n not in sys.modules:
         _stub_module(_n)
-sys.modules["src.auth.rbac_setup"].GraphRBAC = MagicMock()
-sys.modules["src.auth.rbac_setup"].initialize_rbac_schema = MagicMock()
-sys.modules["src.auth.roles"].UserContext = MagicMock
-sys.modules["src.auth.roles"].DEFAULT_PUBLIC_CONTEXT = MagicMock(role=MagicMock(value="public"))
+sys.modules["src.shared.auth.rbac_setup"].GraphRBAC = MagicMock()
+sys.modules["src.shared.auth.rbac_setup"].initialize_rbac_schema = MagicMock()
+sys.modules["src.shared.auth.roles"].UserContext = MagicMock
+sys.modules["src.shared.auth.roles"].DEFAULT_PUBLIC_CONTEXT = MagicMock(role=MagicMock(value="public"))
 
 # router.py imports `structured_agent`/`esg_agent` directly from the real
 # graph modules at module level — stub both wholesale rather than importing

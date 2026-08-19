@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import logging
 
-from ....config.settings import EMBEDDING_MODEL, VECTOR_STORE_BACKEND
-from ....graph.tenancy import tenant_filter
-from ....graph.versioning import lifecycle_active
-from ....storage.hydrator import get_hydrator
-from ....storage.vector.factory import get_vector_store
+from ....shared.config.settings import EMBEDDING_MODEL, VECTOR_STORE_BACKEND
+from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.neo4j.versioning import lifecycle_active
+from ....shared.storage.hydrator import get_hydrator
+from ....shared.storage.vector.factory import get_vector_store
 from ..constants import _GRAPH_REL_TYPES, _TEXT_NODE_LABELS
-from ....model_providers.factory import get_embedding_provider
+from ....shared.model_providers.factory import get_embedding_provider
 from .ranking import RankingService
 
 

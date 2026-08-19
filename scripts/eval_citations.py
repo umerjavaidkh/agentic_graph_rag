@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.auth.roles import Role, UserContext  # noqa: E402
+from src.shared.auth.roles import Role, UserContext  # noqa: E402
 from src.router import ask  # noqa: E402
 
 

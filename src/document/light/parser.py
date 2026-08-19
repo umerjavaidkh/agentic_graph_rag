@@ -14,7 +14,7 @@ import re
 
 import fitz
 
-from ...config.settings import (
+from ...shared.config.settings import (
     PDF_ENABLE_OCR,
     PDF_ENABLE_PDFPLUMBER,
     PDF_LOW_TEXT_CHARS,

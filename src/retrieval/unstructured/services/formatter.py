@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ....auth.rbac_setup import GraphRBAC
-from ....auth.roles import UserContext
-from ....config.settings import DOCUMENT_KNOWLEDGE_AREA_ID
+from ....shared.auth.rbac_setup import GraphRBAC
+from ....shared.auth.roles import UserContext
+from ....shared.config.settings import DOCUMENT_KNOWLEDGE_AREA_ID
 
 
 def access_denied_response(rbac: GraphRBAC, query: str, ctx: UserContext) -> Optional[dict[str, Any]]:

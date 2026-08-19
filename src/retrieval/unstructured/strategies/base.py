@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Optional, Protocol
 
-from ....auth.roles import UserContext
+from ....shared.auth.roles import UserContext
 
 
 class UnstructuredStrategy(Protocol):

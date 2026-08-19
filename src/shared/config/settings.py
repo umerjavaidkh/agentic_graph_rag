@@ -4,8 +4,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BASE_DIR = Path(__file__).resolve().parents[1]  # src/
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# Anchored on this file's depth: src/shared/config/settings.py.
+# These indices decide where the app READS AND WRITES -- blob store,
+# feedback and audit dirs all hang off PROJECT_ROOT -- and a wrong index
+# does not raise, it silently relocates them inside the source tree.
+BASE_DIR = Path(__file__).resolve().parents[2]      # src/
+PROJECT_ROOT = Path(__file__).resolve().parents[3]  # repo root
 
 # openai | anthropic (alias: claude) | gemini (alias: google) — see
 # model_providers/factory.py's get_chat_provider(). Only affects chat/

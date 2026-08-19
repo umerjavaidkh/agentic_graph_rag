@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from typing import Optional, Protocol
 
-from ....config.prompts import load_prompt
-from ....config.settings import (
+from ....shared.config.prompts import load_prompt
+from ....shared.config.settings import (
     CHAT_MODEL,
     STRUCTURED_MODEL,
     STRUCTURED_TEXT2CYPHER_MAX_TOKENS,
 )
-from ....model_providers.factory import get_chat_provider
+from ....shared.model_providers.factory import get_chat_provider
 from ..query_intent import analytics_result_limit
 
 LLM_MODEL = STRUCTURED_MODEL or CHAT_MODEL

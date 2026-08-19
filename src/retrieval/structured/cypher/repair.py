@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from collections import deque
 
-from ....config.settings import MULTI_TENANCY_ENABLED
+from ....shared.config.settings import MULTI_TENANCY_ENABLED
 from .tenant_injection import inject_tenant_filters
 
 

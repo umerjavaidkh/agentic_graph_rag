@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 
-from src.model_providers.base import ModelProvider
+from src.shared.model_providers.base import ModelProvider
 from src.retrieval.structured.verification import (
     check_answer_sanity,
     compute_confidence,

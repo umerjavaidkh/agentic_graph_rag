@@ -1,7 +1,7 @@
 """Shared limits and graph traversal constants for document RAG."""
 from __future__ import annotations
 
-from ...config.settings import RETRIEVAL_CANDIDATE_POOL
+from ...shared.config.settings import RETRIEVAL_CANDIDATE_POOL
 
 GRAPH_REL_TYPES = (
     "SEMANTICALLY_SIMILAR",

@@ -6,8 +6,8 @@ from typing import Optional
 
 from pydantic import ValidationError
 
-from ....config.prompts import load_prompt
-from ....config.settings import (
+from ....shared.config.prompts import load_prompt
+from ....shared.config.settings import (
     CHAT_MODEL,
     STRUCTURED_MODEL,
     STRUCTURED_PLAN_MAX_TOKENS,
@@ -19,7 +19,7 @@ from ....config.settings import (
     STRUCTURED_PLAN_TOKENS_MEDIUM,
     STRUCTURED_PLAN_TOKENS_SMALL,
 )
-from ....model_providers.factory import get_chat_provider
+from ....shared.model_providers.factory import get_chat_provider
 from .context import extract_json
 from .models import MultiStepPlan
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
-from ..config.settings import (
+from ..shared.config.settings import (
     OPENAI_API_KEY,
     VISION_DPI,
     VISION_IMAGE_DETAIL,
@@ -21,7 +21,7 @@ from ..config.settings import (
     VISION_MODEL,
     VISION_SELECTIVE,
 )
-from ..model_providers.openai_provider import OpenAIProvider
+from ..shared.model_providers.openai_provider import OpenAIProvider
 from ..models import DKGNode, NodeType
 
 VISION_SYSTEM = """You are a document page analyst. Describe ONLY what is visible on the page image.

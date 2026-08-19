@@ -6,17 +6,17 @@ Uses the structured retriever and synthesizes a natural-language answer.
 
 from langgraph.graph import END, StateGraph
 
-from ...telemetry import pipeline_step, record_pipeline_step
+from ...shared.telemetry import pipeline_step, record_pipeline_step
 from .retriever import StructuredRetriever
-from ...config.prompts import load_prompt
-from ...config.settings import (
+from ...shared.config.prompts import load_prompt
+from ...shared.config.settings import (
     STRUCTURED_FAST_ANSWER,
     STRUCTURED_MODEL,
     STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS,
     STRUCTURED_SYNTHESIS_MAX_TOKENS,
 )
 from .query_intent import estimate_structured_synthesis_max_tokens
-from ...model_providers.factory import get_chat_provider
+from ...shared.model_providers.factory import get_chat_provider
 from .query_intent import analytics_result_limit
 from .state import StructuredState
 from .verification import _COUNT_WORDS, compute_confidence

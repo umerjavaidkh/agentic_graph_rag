@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from ..config.settings import PDF_PARSER_BACKEND
+from ..shared.config.settings import PDF_PARSER_BACKEND
 from .light.parser import LightPdfParser
 from .parser_base import DocumentParser
 from .rtldoc_backend.parser import RtldocPdfParser

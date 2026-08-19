@@ -33,10 +33,10 @@ if "neo4j" not in sys.modules:
 sys.modules["neo4j"].GraphDatabase = MagicMock()
 sys.modules["neo4j"].Driver = object
 
-for _n in ["src.auth", "src.auth.roles"]:
+for _n in ["src.shared.auth", "src.shared.auth.roles"]:
     if _n not in sys.modules:
         _stub_module(_n)
-sys.modules["src.auth.roles"].UserContext = MagicMock
+sys.modules["src.shared.auth.roles"].UserContext = MagicMock
 
 if "src.routing" in sys.modules:
     del sys.modules["src.routing"]
@@ -67,7 +67,7 @@ def _fake_driver(labels):
 def test_excludes_document_graph_labels(monkeypatch):
     labels = ["Product", "Order", "Customer", "Document", "Section", "Page", "DocumentLogical", "DocRevision"]
     fake_driver = _fake_driver(labels)
-    monkeypatch.setattr("src.graph.driver.get_neo4j_driver", lambda: fake_driver)
+    monkeypatch.setattr("src.shared.neo4j.driver.get_neo4j_driver", lambda: fake_driver)
 
     summary = routing_mod.structured_entity_summary()
 
@@ -82,7 +82,7 @@ def test_falls_back_to_generic_string_on_error(monkeypatch):
     def _boom():
         raise RuntimeError("no db")
 
-    monkeypatch.setattr("src.graph.driver.get_neo4j_driver", _boom)
+    monkeypatch.setattr("src.shared.neo4j.driver.get_neo4j_driver", _boom)
 
     summary = routing_mod.structured_entity_summary()
 
@@ -96,7 +96,7 @@ def test_caches_across_calls(monkeypatch):
         call_count["n"] += 1
         return _fake_driver(["Product"])
 
-    monkeypatch.setattr("src.graph.driver.get_neo4j_driver", _get_driver)
+    monkeypatch.setattr("src.shared.neo4j.driver.get_neo4j_driver", _get_driver)
 
     first = routing_mod.structured_entity_summary()
     second = routing_mod.structured_entity_summary()
@@ -106,7 +106,7 @@ def test_caches_across_calls(monkeypatch):
 
 
 def test_no_hardcoded_domain_vocabulary_in_tool_descriptions(monkeypatch):
-    monkeypatch.setattr("src.graph.driver.get_neo4j_driver", lambda: _fake_driver(["Product", "Order"]))
+    monkeypatch.setattr("src.shared.neo4j.driver.get_neo4j_driver", lambda: _fake_driver(["Product", "Order"]))
 
     tools = routing_mod._build_mcp_route_tools()
     descriptions = " ".join(t["function"]["description"] for t in tools)

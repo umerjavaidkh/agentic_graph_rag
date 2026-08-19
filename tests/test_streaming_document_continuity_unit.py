@@ -40,13 +40,13 @@ if "neo4j" not in sys.modules:
 sys.modules["neo4j"].GraphDatabase = MagicMock()
 sys.modules["neo4j"].Driver = MagicMock
 
-for _n in ["src.auth", "src.auth.rbac_setup", "src.auth.roles"]:
+for _n in ["src.shared.auth", "src.shared.auth.rbac_setup", "src.shared.auth.roles"]:
     if _n not in sys.modules:
         _stub_module(_n)
-sys.modules["src.auth.rbac_setup"].GraphRBAC = MagicMock()
-sys.modules["src.auth.rbac_setup"].initialize_rbac_schema = MagicMock()
-sys.modules["src.auth.roles"].UserContext = MagicMock
-sys.modules["src.auth.roles"].DEFAULT_PUBLIC_CONTEXT = MagicMock(role=MagicMock(value="public"))
+sys.modules["src.shared.auth.rbac_setup"].GraphRBAC = MagicMock()
+sys.modules["src.shared.auth.rbac_setup"].initialize_rbac_schema = MagicMock()
+sys.modules["src.shared.auth.roles"].UserContext = MagicMock
+sys.modules["src.shared.auth.roles"].DEFAULT_PUBLIC_CONTEXT = MagicMock(role=MagicMock(value="public"))
 
 for _n in ["src.retrieval.structured.graph", "src.retrieval.unstructured.graph"]:
     if _n in sys.modules:
@@ -68,7 +68,7 @@ _unstructured_graph_stub.retrieve_node = MagicMock()
 # empty modules and never undoes it -- that stub lingers in sys.modules for
 # the rest of the pytest process. Force a fresh, real import of the whole
 # src.document tree here rather than picking up that stale stub (same fix
-# pattern as the src.auth/src.document blocks in that file itself: never
+# pattern as the src.shared.auth/src.document blocks in that file itself: never
 # trust another test's mutation of a shared module).
 for _mod_name in list(sys.modules):
     if _mod_name == "src.document" or _mod_name.startswith("src.document."):

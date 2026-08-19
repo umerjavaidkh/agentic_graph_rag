@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ....auth.roles import UserContext
-from ....telemetry import pipeline_step
+from ....shared.auth.roles import UserContext
+from ....shared.telemetry import pipeline_step
 from ..cypher.pipeline import Text2CypherPipeline
 from ..formatting.chunks import format_response
 

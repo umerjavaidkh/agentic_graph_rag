@@ -32,7 +32,7 @@ if str(ROOT) not in sys.path:
 
 from src.document.ontology_report import run_for_doc  # noqa: E402
 from src.document.ontology_validation import ONTOLOGY_ACCURACY_TARGET  # noqa: E402
-from src.graph.driver import get_neo4j_driver  # noqa: E402
+from src.shared.neo4j.driver import get_neo4j_driver  # noqa: E402
 from src.ingestion.validation import list_ingested_documents  # noqa: E402
 
 

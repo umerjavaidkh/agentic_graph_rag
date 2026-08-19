@@ -37,27 +37,27 @@ for _mod_name in list(sys.modules):
 # UploadFile class in place if some other test file already real-imported
 # it first, corrupting it for every test that runs afterward in the same
 # process — an import-order-dependent bug (mirrors the one this file itself
-# used to have with src.auth.rbac_setup, caught via full-suite runs, not
+# used to have with src.shared.auth.rbac_setup, caught via full-suite runs, not
 # single-file ones).
 _stub_module("neo4j").GraphDatabase = MagicMock()
 _stub_module("neo4j.exceptions").ClientError = type("ClientError", (Exception,), {"message": "", "code": ""})
 
 _stub_module("fastapi").UploadFile = MagicMock()
 
-_stub_module("src.auth")
-_stub_module("src.auth.rbac_setup").GraphRBAC = MagicMock()
+_stub_module("src.shared.auth")
+_stub_module("src.shared.auth.rbac_setup").GraphRBAC = MagicMock()
 
 _stub_module("src.graph")
 _graph_constants = _stub_module("src.graph.constants")
 _graph_constants.DOC_REVISION_LABEL = "DocRevision"
 _graph_constants.DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
 _graph_constants.DOCUMENT_ROOT_CYPHER = "Document|Book"
-_stub_module("src.graph.driver").get_neo4j_driver = MagicMock()
+_stub_module("src.shared.neo4j.driver").get_neo4j_driver = MagicMock()
 
 _STUBBED_MODULE_NAMES = (
     "neo4j", "neo4j.exceptions", "fastapi",
-    "src.auth.rbac_setup", "src.auth",
-    "src.graph.driver", "src.graph.constants", "src.graph",
+    "src.shared.auth.rbac_setup", "src.shared.auth",
+    "src.shared.neo4j.driver", "src.graph.constants", "src.graph",
 )
 
 

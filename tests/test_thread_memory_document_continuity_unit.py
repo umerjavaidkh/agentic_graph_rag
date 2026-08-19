@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 
-from src.conversation.thread_memory import extract_critical_from_result, resolve_follow_up
+from src.shared.conversation.thread_memory import extract_critical_from_result, resolve_follow_up
 
 
 def _result(document_id="stratec-compliance-policy-2025", document_title="STRATEC Policy", **rc_extra):

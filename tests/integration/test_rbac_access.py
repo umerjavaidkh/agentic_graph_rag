@@ -5,8 +5,8 @@ test_rbac_access.py — Test graph-based RBAC with different user roles.
 Tests access control WITHOUT re-ingesting actual data.
 """
 
-from src.auth.roles import UserContext, validate_role
-from src.auth.rbac_setup import GraphRBAC
+from src.shared.auth.roles import UserContext, validate_role
+from src.shared.auth.rbac_setup import GraphRBAC
 
 
 def test_rbac_access():

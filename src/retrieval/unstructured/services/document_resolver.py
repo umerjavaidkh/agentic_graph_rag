@@ -17,8 +17,8 @@ from ....graph.constants import (
     DOCUMENT_LOGICAL_LABEL,
     DOCUMENT_ROOT_CYPHER,
 )
-from ....graph.tenancy import tenant_filter
-from ....graph.versioning import lifecycle_active
+from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.neo4j.versioning import lifecycle_active
 from ..cypher_scope import _clean_doc_title
 from ..query_intent import KEYWORD_STOP as _KEYWORD_STOP
 from ..text_utils import _query_anchor_terms

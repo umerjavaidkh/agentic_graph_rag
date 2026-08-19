@@ -10,13 +10,13 @@ from typing import Optional
 
 from .retrieval.unstructured.graph import esg_agent
 from .retrieval.structured.graph import structured_agent
-from .auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
-from .audit import AuditEventType, record_audit_event
+from .shared.auth.roles import UserContext, DEFAULT_PUBLIC_CONTEXT
+from .shared.audit import AuditEventType, record_audit_event
 from .presentation import build_presentation
-from .auth.rbac_setup import GraphRBAC
-from .config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
-from .feedback_loop import resolve_query_tool
-from .telemetry import clear_telemetry, get_telemetry, start_telemetry
+from .shared.auth.rbac_setup import GraphRBAC
+from .shared.config.settings import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from .shared.feedback import resolve_query_tool
+from .shared.telemetry import clear_telemetry, get_telemetry, start_telemetry
 
 _rbac: GraphRBAC | None = None
 
@@ -38,7 +38,7 @@ def _rbac_check() -> GraphRBAC:
     if _rbac is None:
         _rbac = GraphRBAC(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     return _rbac
-from .conversation import get_turn, resolve_follow_up, save_turn
+from .shared.conversation import get_turn, resolve_follow_up, save_turn
 from .routing import (
     TOOL_TO_AGENT,
     enforce_mode,

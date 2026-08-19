@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ....auth.roles import UserContext
-from ....graph.tenancy import tenant_filter
-from ....graph.versioning import lifecycle_active
-from ....storage.hydrator import get_hydrator
+from ....shared.auth.roles import UserContext
+from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.neo4j.versioning import lifecycle_active
+from ....shared.storage.hydrator import get_hydrator
 from ..cypher_scope import _node_scope_cypher
 from ..executor import DocumentQueryExecutor
 from ..query_intent import is_toc_question

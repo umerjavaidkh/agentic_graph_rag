@@ -26,10 +26,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ....auth.roles import UserContext
+from ....shared.auth.roles import UserContext
 from ....document.versioning import extract_filing_date_from_filename
 from ....graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
-from ....graph.tenancy import tenant_filter
+from ....shared.neo4j.tenancy import tenant_filter
 from ..services.document_resolver import DocumentResolver
 from ..services.formatter import ResponseFormatter
 

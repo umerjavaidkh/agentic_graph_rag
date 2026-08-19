@@ -6,6 +6,6 @@ of MODEL_PROVIDER; see graph_seeds.py's get_embedding().
 """
 from __future__ import annotations
 
-from ...model_providers.factory import get_chat_provider
+from ...shared.model_providers.factory import get_chat_provider
 
 provider = get_chat_provider()

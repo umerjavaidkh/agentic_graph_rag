@@ -4,14 +4,14 @@ from __future__ import annotations
 import json
 from typing import Any, Iterator, Optional
 
-from ..auth.roles import UserContext
-from ..config.prompts import load_prompt
-from ..config.settings import (
+from ..shared.auth.roles import UserContext
+from ..shared.config.prompts import load_prompt
+from ..shared.config.settings import (
     STRUCTURED_MODEL,
     STRUCTURED_SYNTHESIS_LONG_MAX_TOKENS,
     STRUCTURED_SYNTHESIS_MAX_TOKENS,
 )
-from ..model_providers.factory import get_chat_provider
+from ..shared.model_providers.factory import get_chat_provider
 from ..presentation import build_presentation
 from ..presentation.structured_planner import build_structured_presentation
 from ..retrieval.structured.graph import (
@@ -21,7 +21,7 @@ from ..retrieval.structured.graph import (
 )
 from ..retrieval.structured.query_intent import estimate_structured_synthesis_max_tokens
 from ..retrieval.structured.verification import _COUNT_WORDS, compute_confidence
-from ..telemetry.pipeline import record_pipeline_step
+from ..shared.telemetry.pipeline import record_pipeline_step
 from .events import stream_event
 
 

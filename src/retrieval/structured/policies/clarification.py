@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, Optional
 
-from ....conversation.clarification import format_clarification_answer
+from ....shared.conversation.clarification import format_clarification_answer
 
 # Words that mean "aggregate something" rather than naming the something.
 _AGGREGATE_WORDS = frozenset({

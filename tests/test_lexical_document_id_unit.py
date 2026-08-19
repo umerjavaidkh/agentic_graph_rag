@@ -20,14 +20,14 @@ import pytest
 
 
 # A previously-collected test file (e.g. test_ingestion_manager_di_unit.py)
-# may have stubbed src.graph.constants/src.graph.driver/src.auth* with bare
+# may have stubbed src.graph.constants/src.shared.neo4j.driver/src.shared.auth* with bare
 # fakes to avoid needing a real Neo4j/RBAC setup for its own tests — this
 # file needs the REAL src.graph.constants (lexical.py imports
 # DOCUMENT_ROOT_CYPHER from it). Only clear entries that are actually fake
 # stubs (a hand-built types.ModuleType has neither __file__ nor __path__);
 # mirrors test_rbac_setup_unit.py's identical guard.
 for _mod_name in list(sys.modules):
-    if _mod_name.startswith("src.auth") or _mod_name.startswith("src.graph"):
+    if _mod_name.startswith("src.shared.auth") or _mod_name.startswith("src.graph"):
         _mod = sys.modules[_mod_name]
         if getattr(_mod, "__file__", None) is None and getattr(_mod, "__path__", None) is None:
             del sys.modules[_mod_name]

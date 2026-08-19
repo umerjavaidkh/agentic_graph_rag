@@ -36,10 +36,10 @@ def _stub_module(name: str) -> types.ModuleType:
 _stub_module("neo4j").GraphDatabase = MagicMock()
 sys.modules["neo4j"].Driver = MagicMock
 
-_stub_module("src.auth")
-_stub_module("src.auth.rbac_setup").GraphRBAC = MagicMock()
-sys.modules["src.auth.rbac_setup"].initialize_rbac_schema = MagicMock()
-_auth_roles = _stub_module("src.auth.roles")
+_stub_module("src.shared.auth")
+_stub_module("src.shared.auth.rbac_setup").GraphRBAC = MagicMock()
+sys.modules["src.shared.auth.rbac_setup"].initialize_rbac_schema = MagicMock()
+_auth_roles = _stub_module("src.shared.auth.roles")
 _auth_roles.UserContext = MagicMock
 _auth_roles.DEFAULT_PUBLIC_CONTEXT = MagicMock(role=MagicMock(value="public"))
 

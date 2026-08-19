@@ -90,11 +90,11 @@ def purge_revision(
     removed = {"blobs": 0, "vectors": 0, "errors": []}
 
     if blob_store is None:
-        from ..storage.blob.factory import get_blob_store
+        from ..shared.storage.blob.factory import get_blob_store
 
         blob_store = get_blob_store()
     if vector_store is None:
-        from ..storage.vector.factory import get_vector_store
+        from ..shared.storage.vector.factory import get_vector_store
 
         vector_store = get_vector_store()
 

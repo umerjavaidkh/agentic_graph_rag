@@ -7,8 +7,8 @@ from typing import Any, Callable, Optional
 
 from neo4j import Driver
 
-from ....auth.roles import UserContext
-from ....config.settings import STRUCTURED_MULTISTEP_STEP_ATTEMPTS
+from ....shared.auth.roles import UserContext
+from ....shared.config.settings import STRUCTURED_MULTISTEP_STEP_ATTEMPTS
 from ..cypher.generator import CypherGenerator, regenerate_for_issue
 from ..cypher.repair import normalize_generated_cypher
 from ..cypher.validator import (

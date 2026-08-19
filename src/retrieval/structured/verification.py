@@ -18,8 +18,8 @@ import json
 import re
 from typing import Optional
 
-from ...config.prompts import load_prompt
-from ...config.settings import STRUCTURED_VERIFY_ENABLED, STRUCTURED_VERIFY_MAX_TOKENS
+from ...shared.config.prompts import load_prompt
+from ...shared.config.settings import STRUCTURED_VERIFY_ENABLED, STRUCTURED_VERIFY_MAX_TOKENS
 
 MAX_VERIFY_ROWS = 8  # sample cap sent to the LLM cross-check
 MAX_CELL_CHARS = 200  # per-value truncation to bound prompt size

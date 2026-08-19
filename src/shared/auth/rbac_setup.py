@@ -7,13 +7,21 @@ This module provides:
 3. Query builders that enforce role-based filtering at the database level
 """
 
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 from neo4j import Driver
 
 from ..config.settings import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
-from ..graph.driver import get_neo4j_driver
-from ..graph.tenancy import tenant_filter
+from ..neo4j.driver import get_neo4j_driver
+from ..neo4j.tenancy import tenant_filter
+
+
+# The schema ships beside this module. Defaulting to the string
+# "src/auth/rbac_schema.cypher" made loading depend on the process
+# working directory -- it worked only because the container entrypoint
+# does `cd /app` first, and broke silently anywhere else.
+DEFAULT_SCHEMA_FILE = Path(__file__).resolve().parent / "rbac_schema.cypher"
 
 
 class GraphRBAC:
@@ -28,11 +36,12 @@ class GraphRBAC:
     ):
         self.driver = driver or get_neo4j_driver(uri, user, password)
 
-    def setup_schema(self, cypher_file: str = "src/auth/rbac_schema.cypher"):
+    def setup_schema(self, cypher_file: str | None = None):
         """
         Load and execute RBAC schema setup from Cypher file.
         Creates: User, Role, KnowledgeArea, Document, Policy, Entity nodes + relationships.
         """
+        cypher_file = cypher_file or DEFAULT_SCHEMA_FILE
         try:
             with open(cypher_file, 'r') as f:
                 cypher = f.read()
@@ -232,11 +241,11 @@ def initialize_rbac_schema(
     uri: str = NEO4J_URI,
     user: str = NEO4J_USER,
     password: str = NEO4J_PASSWORD,
-    cypher_file: str = "src/auth/rbac_schema.cypher"
+    cypher_file: str | None = None
 ) -> bool:
     """Initialize RBAC schema from Cypher file."""
     rbac = GraphRBAC(uri, user, password)
-    success = rbac.setup_schema(cypher_file)
+    success = rbac.setup_schema(cypher_file or DEFAULT_SCHEMA_FILE)
     rbac.close()
     return success
 

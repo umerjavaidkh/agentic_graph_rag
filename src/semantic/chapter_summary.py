@@ -20,15 +20,15 @@ from __future__ import annotations
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-from ..config.prompts import load_prompt
-from ..config.settings import (
+from ..shared.config.prompts import load_prompt
+from ..shared.config.settings import (
     CHAPTER_SUMMARY_CONCURRENCY,
     CHAPTER_SUMMARY_MAX_CONTEXT_CHARS,
     CHAPTER_SUMMARY_MAX_TOKENS,
     CHAPTER_SUMMARY_MODEL,
     CHAPTER_SUMMARY_SECTION_EXCERPT_CHARS,
 )
-from ..model_providers.factory import get_chat_provider
+from ..shared.model_providers.factory import get_chat_provider
 from ..models import DKGEdge, DKGNode, NodeType, RelType
 
 

@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from ...conversation.clarification import format_clarification_answer
+from ...shared.conversation.clarification import format_clarification_answer
 
 
 _SECTION_NUM_RE = re.compile(r"\b(\d+(?:\.\d+){1,3})\b")

@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ....auth.roles import UserContext
+from ....shared.auth.roles import UserContext
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
-from ....graph.tenancy import tenant_filter
-from ....storage.hydrator import get_hydrator
+from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.storage.hydrator import get_hydrator
 from ..cypher_scope import _doc_scope_cypher
 from ..executor import DocumentQueryExecutor
 from ..services.document_resolver import DocumentResolver

@@ -263,7 +263,7 @@ def get_job_store() -> JobStore:
     if _store_singleton is not None:
         return _store_singleton
 
-    from ..config.settings import REDIS_URL
+    from ..shared.config.settings import REDIS_URL
     if REDIS_URL:
         try:
             import redis as _redis

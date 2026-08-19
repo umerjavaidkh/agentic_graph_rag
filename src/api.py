@@ -12,8 +12,8 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException,
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from .graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
-from .graph.driver import close_neo4j_driver, get_neo4j_driver
-from .graph.tenancy import tenant_filter
+from .shared.neo4j.driver import close_neo4j_driver, get_neo4j_driver
+from .shared.neo4j.tenancy import tenant_filter
 from .document.graph_snapshot import (
     X1_STAGE,
     X2_STAGE,
@@ -23,16 +23,16 @@ from .document.graph_snapshot import (
 )
 from .document.purge import delete_document
 from .document.versioning import source_file_blob_key
-from .storage.blob.factory import get_blob_store
+from .shared.storage.blob.factory import get_blob_store
 from pydantic import BaseModel, Field
 
-from .audit import AuditEventType, get_audit_store, record_audit_event
+from .shared.audit import AuditEventType, get_audit_store, record_audit_event
 from .bridge import ask
-from .conversation import clear_turn
+from .shared.conversation import clear_turn
 from .logging_config import setup_logging
-from .auth.rbac_setup import GraphRBAC
-from .auth.oidc import auth_public_config, resolve_admin_session, resolve_scoped_thread_id, resolve_user_context
-from .config.settings import (
+from .shared.auth.rbac_setup import GraphRBAC
+from .shared.auth.oidc import auth_public_config, resolve_admin_session, resolve_scoped_thread_id, resolve_user_context
+from .shared.config.settings import (
     ALLOW_CYPHER_INGEST,
     ALLOW_DB_RESET,
     API_INGEST_EXECUTOR_WORKERS,
@@ -56,7 +56,7 @@ from .ingestion.service import IngestionManager
 from .ingestion.job_store import get_job_store
 from .ingestion.queue import enqueue_ingest, list_failed_jobs, queue_depth
 from .ingestion.validation import build_ingestion_quality_report, list_ingested_documents
-from .feedback_loop import (
+from .shared.feedback import (
     best_mode_for_question,
     build_dashboard_overview,
     get_feedback_store,
@@ -114,7 +114,7 @@ async def _ensure_rbac_schema_initialized():
     rbac = GraphRBAC(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     try:
         if not rbac.is_initialized():
-            rbac.setup_schema(str(PROJECT_ROOT / "src" / "auth" / "rbac_schema.cypher"))
+            rbac.setup_schema()
     finally:
         rbac.close()
 

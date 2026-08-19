@@ -29,7 +29,7 @@ import pytest
 # executes, so stubbing sys.modules here at import time would leak into every
 # other file's test-execution phase until this file's own tests finished and
 # teardown_module ran below — a collection-vs-execution ordering bug that
-# corrupted src.model_providers.factory (get_chat_provider etc. resolved to
+# corrupted src.shared.model_providers.factory (get_chat_provider etc. resolved to
 # this file's MagicMock) for any test file whose tests ran before this file's
 # position in the suite. setup_module() runs immediately before this file's
 # own first test executes, matching teardown_module's timing.
@@ -138,38 +138,38 @@ def setup_module(module) -> None:
 
     # --- model_providers stubs ---
     for _n in [
-        "src.model_providers",
-        "src.model_providers.base",
-        "src.model_providers.factory",
-        "src.model_providers.openai_provider",
+        "src.shared.model_providers",
+        "src.shared.model_providers.base",
+        "src.shared.model_providers.factory",
+        "src.shared.model_providers.openai_provider",
     ]:
         if _n not in sys.modules:
             _stub_module(_n)
     _factory_mock = MagicMock()
-    sys.modules["src.model_providers.base"].ModelProvider = object
-    sys.modules["src.model_providers.factory"].get_model_provider = _factory_mock
-    sys.modules["src.model_providers.factory"].get_chat_provider = _factory_mock
-    sys.modules["src.model_providers.factory"].get_embedding_provider = _factory_mock
-    sys.modules["src.model_providers"].get_model_provider = _factory_mock
+    sys.modules["src.shared.model_providers.base"].ModelProvider = object
+    sys.modules["src.shared.model_providers.factory"].get_model_provider = _factory_mock
+    sys.modules["src.shared.model_providers.factory"].get_chat_provider = _factory_mock
+    sys.modules["src.shared.model_providers.factory"].get_embedding_provider = _factory_mock
+    sys.modules["src.shared.model_providers"].get_model_provider = _factory_mock
 
     # --- auth stubs ---
-    # Always create fresh fake modules here (never reuse/mutate a real src.auth
+    # Always create fresh fake modules here (never reuse/mutate a real src.shared.auth
     # that an earlier-collected test file may have already imported) — mutating
     # the real module's classes in place would corrupt it for every other test
     # file that runs afterward in the same pytest process.
-    for _n in ["src.auth", "src.auth.rbac_setup", "src.auth.roles"]:
+    for _n in ["src.shared.auth", "src.shared.auth.rbac_setup", "src.shared.auth.roles"]:
         _stub_module(_n)
-    sys.modules["src.auth.rbac_setup"].GraphRBAC = MagicMock()
-    sys.modules["src.auth.roles"].Role = MagicMock()
-    sys.modules["src.auth.roles"].UserContext = MagicMock()
-    sys.modules["src.auth.roles"].validate_role = MagicMock()
+    sys.modules["src.shared.auth.rbac_setup"].GraphRBAC = MagicMock()
+    sys.modules["src.shared.auth.roles"].Role = MagicMock()
+    sys.modules["src.shared.auth.roles"].UserContext = MagicMock()
+    sys.modules["src.shared.auth.roles"].validate_role = MagicMock()
 
     # --- document stubs ---
     # Always create fresh fake modules here (never reuse/mutate a real
     # src.document that an earlier-collected test file may have already
     # imported) — mutating the real module's functions in place would corrupt
     # it for every other test file that runs afterward in the same pytest
-    # process. Same fix as the src.auth block above.
+    # process. Same fix as the src.shared.auth block above.
     for _n in [
         "src.document",
         "src.document.versioning",
@@ -205,16 +205,16 @@ def setup_module(module) -> None:
     sys.modules["src.document.parser_registry"].supported_extensions = MagicMock(return_value={".pdf"})
 
     # --- graph.constants / graph.driver stubs ---
-    for _n in ["src.graph", "src.graph.constants", "src.graph.driver"]:
+    for _n in ["src.graph", "src.graph.constants", "src.shared.neo4j.driver"]:
         if _n not in sys.modules:
             _stub_module(_n)
     sys.modules["src.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
     sys.modules["src.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
     sys.modules["src.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
-    sys.modules["src.graph.driver"].get_neo4j_driver = MagicMock()
+    sys.modules["src.shared.neo4j.driver"].get_neo4j_driver = MagicMock()
 
     # --- bridge/conversation stubs ---
-    for _n in ["src.bridge", "src.conversation", "src.routing", "src.router"]:
+    for _n in ["src.bridge", "src.shared.conversation", "src.routing", "src.router"]:
         if _n not in sys.modules:
             _stub_module(_n)
 
@@ -238,15 +238,15 @@ _STUBBED_MODULE_NAMES = (
     "fastapi", "fastapi.responses", "fastapi.staticfiles",
     "pydantic", "openai", "langgraph", "langgraph.graph",
     "sklearn", "sklearn.cluster",
-    "src.model_providers", "src.model_providers.base",
-    "src.model_providers.factory", "src.model_providers.openai_provider",
-    "src.auth", "src.auth.rbac_setup", "src.auth.roles",
+    "src.shared.model_providers", "src.shared.model_providers.base",
+    "src.shared.model_providers.factory", "src.shared.model_providers.openai_provider",
+    "src.shared.auth", "src.shared.auth.rbac_setup", "src.shared.auth.roles",
     "src.document", "src.document.versioning", "src.document.light",
     "src.document.light.parser", "src.document.parser_base",
     "src.document.parser_registry", "src.document.page_vision",
     "src.document.graph_snapshot",
-    "src.graph", "src.graph.constants", "src.graph.driver",
-    "src.bridge", "src.conversation", "src.routing", "src.router",
+    "src.graph", "src.graph.constants", "src.shared.neo4j.driver",
+    "src.bridge", "src.shared.conversation", "src.routing", "src.router",
     "src.ingestion.service", "src.ingestion",
 )
 
@@ -724,14 +724,14 @@ class TestExporterDualWrite:
 
     def test_exporter_defaults_to_factory_stores_when_not_injected(self, monkeypatch):
         from src.exporter.exporter import Neo4jExporter
-        from src.storage.blob.local_store import LocalFsBlobStore
-        from src.storage.vector.memory_store import InMemoryVectorStore
+        from src.shared.storage.blob.local_store import LocalFsBlobStore
+        from src.shared.storage.vector.memory_store import InMemoryVectorStore
 
         # Force the local/memory defaults so this doesn't depend on whatever
         # backend the local/deployed .env actually configures (e.g. minio/qdrant).
-        import src.config.settings as settings_mod
-        import src.storage.blob.factory as blob_factory_mod
-        import src.storage.vector.factory as vector_factory_mod
+        import src.shared.config.settings as settings_mod
+        import src.shared.storage.blob.factory as blob_factory_mod
+        import src.shared.storage.vector.factory as vector_factory_mod
 
         monkeypatch.setattr(settings_mod, "BLOB_STORE_BACKEND", "local")
         monkeypatch.setattr(settings_mod, "VECTOR_STORE_BACKEND", "memory")
@@ -808,8 +808,8 @@ class TestExporterEdgeConfidence:
         # No store/vector_store injected below, so Neo4jExporter falls back to the
         # real factory defaults -- force in-memory so this doesn't require a real
         # Qdrant endpoint when the local/deployed .env configures that backend.
-        import src.config.settings as settings_mod
-        import src.storage.vector.factory as vector_factory_mod
+        import src.shared.config.settings as settings_mod
+        import src.shared.storage.vector.factory as vector_factory_mod
 
         monkeypatch.setattr(settings_mod, "VECTOR_STORE_BACKEND", "memory")
         vector_factory_mod._store_singleton = None

@@ -16,8 +16,8 @@ import sys
 from pathlib import Path
 
 
-from src.storage.vector import memory_store as memory_store_mod
-from src.storage.vector.memory_store import InMemoryVectorStore
+from src.shared.storage.vector import memory_store as memory_store_mod
+from src.shared.storage.vector.memory_store import InMemoryVectorStore
 
 
 def test_no_warning_below_threshold(caplog):

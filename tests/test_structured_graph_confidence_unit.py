@@ -35,19 +35,19 @@ for _n in ["langgraph", "langgraph.graph"]:
 sys.modules["langgraph.graph"].StateGraph = MagicMock()
 sys.modules["langgraph.graph"].END = MagicMock()
 
-# state.py needs auth.roles.UserContext -> real src.auth.__init__ pulls in
+# state.py needs auth.roles.UserContext -> real src.shared.auth.__init__ pulls in
 # rbac_setup.py -> real `neo4j` (not installed in this env). Stub minimally.
 if "neo4j" not in sys.modules:
     _stub_module("neo4j")
 sys.modules["neo4j"].GraphDatabase = MagicMock()
 sys.modules["neo4j"].Driver = MagicMock
 
-for _n in ["src.auth", "src.auth.rbac_setup", "src.auth.roles"]:
+for _n in ["src.shared.auth", "src.shared.auth.rbac_setup", "src.shared.auth.roles"]:
     if _n not in sys.modules:
         _stub_module(_n)
-sys.modules["src.auth.rbac_setup"].GraphRBAC = MagicMock()
-sys.modules["src.auth.rbac_setup"].initialize_rbac_schema = MagicMock()
-sys.modules["src.auth.roles"].UserContext = MagicMock
+sys.modules["src.shared.auth.rbac_setup"].GraphRBAC = MagicMock()
+sys.modules["src.shared.auth.rbac_setup"].initialize_rbac_schema = MagicMock()
+sys.modules["src.shared.auth.roles"].UserContext = MagicMock
 
 # graph.py also does `retriever = StructuredRetriever()` at module level,
 # which would otherwise need a live Neo4j driver, RBAC, schema provider,

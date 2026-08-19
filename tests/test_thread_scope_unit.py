@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.auth.thread_scope import scoped_thread_id
+from src.shared.auth.thread_scope import scoped_thread_id
 
 
 class TestThreadScope(unittest.TestCase):

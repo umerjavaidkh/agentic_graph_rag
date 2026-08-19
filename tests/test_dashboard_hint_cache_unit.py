@@ -15,10 +15,10 @@ import sys
 from pathlib import Path
 
 
-from src.feedback_loop import dashboard as dashboard_mod
-from src.feedback_loop.config import FeedbackConfig
-from src.feedback_loop.dashboard import build_dashboard_overview
-from src.feedback_loop.models import RetrievalFeedbackEvent
+from src.shared.feedback import dashboard as dashboard_mod
+from src.shared.feedback.config import FeedbackConfig
+from src.shared.feedback.dashboard import build_dashboard_overview
+from src.shared.feedback.models import RetrievalFeedbackEvent
 
 
 class _FakeStore:

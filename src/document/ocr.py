@@ -54,7 +54,7 @@ def get_ocr_backend() -> Optional[OcrBackend]:
     if _backend_resolved:
         return _backend_singleton
 
-    from ..config.settings import PDF_OCR_BACKEND
+    from ..shared.config.settings import PDF_OCR_BACKEND
 
     _backend_resolved = True
     if PDF_OCR_BACKEND == "tesseract":

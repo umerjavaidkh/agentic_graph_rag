@@ -22,16 +22,16 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..graph.driver import get_neo4j_driver
+from ..shared.neo4j.driver import get_neo4j_driver
 
-from ..config.settings import NEO4J_WRITE_BATCH
+from ..shared.config.settings import NEO4J_WRITE_BATCH
 from ..document.versioning import DocumentRevisionPlan
 from ..graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
 from ..models import DKGNode, DKGEdge, EdgeConfidenceTier, NodeType, RelType
-from ..storage.blob.base import BlobStore
-from ..storage.blob.factory import get_blob_store
-from ..storage.vector.base import VectorStore
-from ..storage.vector.factory import get_vector_store
+from ..shared.storage.blob.base import BlobStore
+from ..shared.storage.blob.factory import get_blob_store
+from ..shared.storage.vector.base import VectorStore
+from ..shared.storage.vector.factory import get_vector_store
 
 
 OUTPUT_DIR = Path("output")

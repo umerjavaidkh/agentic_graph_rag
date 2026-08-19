@@ -5,8 +5,8 @@ from typing import Callable, Optional
 
 from neo4j import Driver
 
-from ....auth.roles import UserContext
-from ....config.settings import (
+from ....shared.auth.roles import UserContext
+from ....shared.config.settings import (
     STRUCTURED_FALLBACK_MODEL,
     STRUCTURED_CYPHER_MAX_ATTEMPTS,
     STRUCTURED_CYPHER_SQL_LLM_RETRIES,
@@ -15,7 +15,7 @@ from ....config.settings import (
     STRUCTURED_TEXT2CYPHER_LONG_QUERY_CHARS,
     STRUCTURED_TEXT2CYPHER_MAX_TOKENS,
 )
-from ....telemetry.context import TelemetryEvent, get_telemetry
+from ....shared.telemetry.context import TelemetryEvent, get_telemetry
 from ..executor import StructuredCypherExecutor
 from ..formatting.chunks import rows_to_chunks
 from ..neo4j_sanitize import sanitize_row

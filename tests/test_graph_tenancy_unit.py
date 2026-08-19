@@ -15,8 +15,8 @@ import sys
 from pathlib import Path
 
 
-import src.graph.tenancy as tenancy_mod
-from src.graph.tenancy import tenant_filter
+import src.shared.neo4j.tenancy as tenancy_mod
+from src.shared.neo4j.tenancy import tenant_filter
 
 
 def test_tenant_filter_is_noop_when_disabled(monkeypatch):

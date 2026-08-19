@@ -41,7 +41,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-from ..config.settings import (
+from ..shared.config.settings import (
     AXIS2_GROUND_LLM_EDGES,
     AXIS2_LLM_PAIR_CONCURRENCY,
     AXIS2_MAX_LLM_PAIRS,
@@ -53,7 +53,7 @@ from ..config.settings import (
     AXIS2_RELATION_MAX_TOKENS,
     EMBEDDING_MODEL,
 )
-from ..model_providers.factory import get_chat_provider, get_embedding_provider
+from ..shared.model_providers.factory import get_chat_provider, get_embedding_provider
 from ..models import DKGNode, DKGEdge, EdgeConfidenceTier, NodeType, RelType
 
 

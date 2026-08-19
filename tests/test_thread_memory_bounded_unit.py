@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-from src.conversation import thread_memory as tm
+from src.shared.conversation import thread_memory as tm
 
 
 def _snap(tid: str) -> None:

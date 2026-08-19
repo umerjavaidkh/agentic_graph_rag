@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.graph.driver import get_neo4j_driver  # noqa: E402
+from src.shared.neo4j.driver import get_neo4j_driver  # noqa: E402
 
 
 def _fetch_embedded_nodes_sync(driver, batch_size: int):
@@ -75,16 +75,16 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.force_qdrant:
-        from src.config.settings import QDRANT_API_KEY, QDRANT_COLLECTION, QDRANT_URL, VECTOR_DIM
-        from src.storage.vector.qdrant_store import QdrantVectorStore
+        from src.shared.config.settings import QDRANT_API_KEY, QDRANT_COLLECTION, QDRANT_URL, VECTOR_DIM
+        from src.shared.storage.vector.qdrant_store import QdrantVectorStore
 
         vector_store = QdrantVectorStore(
             url=QDRANT_URL, collection_name=QDRANT_COLLECTION,
             api_key=QDRANT_API_KEY or None, dim=VECTOR_DIM,
         )
     else:
-        from src.config.settings import VECTOR_STORE_BACKEND
-        from src.storage.vector.factory import get_vector_store
+        from src.shared.config.settings import VECTOR_STORE_BACKEND
+        from src.shared.storage.vector.factory import get_vector_store
 
         if VECTOR_STORE_BACKEND != "qdrant":
             print(

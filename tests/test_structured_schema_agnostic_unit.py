@@ -31,13 +31,20 @@ BANNED = (
 STRUCTURED_SOURCES = [
     "src/retrieval/structured",
     "src/presentation/structured_planner.py",
-    "src/conversation/thread_memory.py",
+    "src/shared/conversation/thread_memory.py",
     "src/prompts/structured_text2cypher.txt",
     "src/prompts/structured_multistep_plan.txt",
 ]
 
 
 def _files() -> list[Path]:
+    # Every entry must exist. Without this the list fails OPEN: a path
+    # that moves silently drops out of the parametrisation and the guard
+    # stops checking it, with no failure to say so. A repo reorganisation
+    # did exactly that -- thread_memory.py vanished from the suite and the
+    # only visible symptom was the passed count falling by one.
+    missing = [e for e in STRUCTURED_SOURCES if not (ROOT / e).exists()]
+    assert not missing, f"STRUCTURED_SOURCES entries no longer exist: {missing}"
     out: list[Path] = []
     for entry in STRUCTURED_SOURCES:
         path = ROOT / entry

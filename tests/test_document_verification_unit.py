@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 
-from src.model_providers.base import ModelProvider
+from src.shared.model_providers.base import ModelProvider
 from src.retrieval.unstructured.verification import (
     NO_CHUNKS_NOTE,
     check_answer_sanity,

@@ -29,8 +29,8 @@ from typing import Any, Optional
 
 from ..document.parser_registry import get_parser
 from ..ingestion.validation import resolve_active_revision
-from ..storage.blob.factory import get_blob_store
-from ..storage.hydrator import get_hydrator
+from ..shared.storage.blob.factory import get_blob_store
+from ..shared.storage.hydrator import get_hydrator
 from .page_validation import score_page, summarize_pages
 from .versioning import source_file_blob_key
 

@@ -1,7 +1,7 @@
-from ..config.settings import EMBEDDING_MODEL
-from ..graph.driver import get_neo4j_driver
-from ..model_providers.factory import get_embedding_provider
-from ..storage.vector.factory import get_vector_store
+from ..shared.config.settings import EMBEDDING_MODEL
+from ..shared.neo4j.driver import get_neo4j_driver
+from ..shared.model_providers.factory import get_embedding_provider
+from ..shared.storage.vector.factory import get_vector_store
 
 
 def get_embedding(text: str) -> list[float]:

@@ -17,16 +17,16 @@ from .retriever import (
     is_toc_question,
     is_visual_page_question,
 )
-from ...config.prompts import load_prompt
-from ...config.settings import (
+from ...shared.config.prompts import load_prompt
+from ...shared.config.settings import (
     CHAT_MODEL,
     DOCUMENT_SYNTHESIS_CONTEXT_MAX_CHARS,
     DOCUMENT_SYNTHESIS_LONG_MAX_TOKENS,
     DOCUMENT_SYNTHESIS_MAX_TOKENS,
     RETRIEVAL_FINAL_LIMIT,
 )
-from ...model_providers.factory import get_chat_provider
-from ...telemetry import pipeline_step
+from ...shared.model_providers.factory import get_chat_provider
+from ...shared.telemetry import pipeline_step
 from .state import ESGState
 from .verification import compute_confidence
 

@@ -13,10 +13,10 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from ....auth.roles import UserContext
+from ....shared.auth.roles import UserContext
 from ....graph.constants import DOCUMENT_ROOT_CYPHER
-from ....graph.tenancy import tenant_filter
-from ....storage.hydrator import get_hydrator
+from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.storage.hydrator import get_hydrator
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import _doc_scope_cypher
 from ..executor import DocumentQueryExecutor

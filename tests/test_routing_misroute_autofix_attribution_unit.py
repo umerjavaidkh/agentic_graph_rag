@@ -38,10 +38,10 @@ if "neo4j" not in sys.modules:
     _stub_module("neo4j")
 sys.modules["neo4j"].GraphDatabase = MagicMock()
 
-for _n in ["src.auth", "src.auth.roles"]:
+for _n in ["src.shared.auth", "src.shared.auth.roles"]:
     if _n not in sys.modules:
         _stub_module(_n)
-sys.modules["src.auth.roles"].UserContext = MagicMock
+sys.modules["src.shared.auth.roles"].UserContext = MagicMock
 
 if "src.routing" in sys.modules:
     del sys.modules["src.routing"]

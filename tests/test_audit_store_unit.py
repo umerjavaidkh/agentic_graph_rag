@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 
 
-from src.audit.models import AuditEvent
-from src.audit.store import JsonlAuditStore, RedisAuditStore, _utc_now_iso
+from src.shared.audit.models import AuditEvent
+from src.shared.audit.store import JsonlAuditStore, RedisAuditStore, _utc_now_iso
 
 
 def _event(**overrides) -> AuditEvent:
@@ -231,7 +231,7 @@ def test_redis_query_time_range_by_user():
 
 
 def test_record_audit_event_noop_when_disabled(monkeypatch, tmp_path):
-    import src.audit.record as record_mod
+    import src.shared.audit.record as record_mod
 
     class _Boom:
         def record(self, event):
@@ -248,7 +248,7 @@ def test_record_audit_event_noop_when_disabled(monkeypatch, tmp_path):
 
 
 def test_record_audit_event_fails_open_on_store_exception(monkeypatch):
-    import src.audit.record as record_mod
+    import src.shared.audit.record as record_mod
 
     class _RaisingStore:
         def record(self, event):
@@ -265,7 +265,7 @@ def test_record_audit_event_fails_open_on_store_exception(monkeypatch):
 
 
 def test_record_audit_event_respects_store_question_toggle(monkeypatch, tmp_path):
-    import src.audit.record as record_mod
+    import src.shared.audit.record as record_mod
 
     captured = {}
 
@@ -286,7 +286,7 @@ def test_record_audit_event_respects_store_question_toggle(monkeypatch, tmp_path
 
 
 def _cfg(*, enabled: bool, store_question: bool = True):
-    from src.audit.config import AuditConfig
+    from src.shared.audit.config import AuditConfig
 
     return AuditConfig(
         enabled=enabled,

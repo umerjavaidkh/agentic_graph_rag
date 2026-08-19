@@ -36,10 +36,10 @@ if "neo4j" not in sys.modules:
     _stub_module("neo4j")
 sys.modules["neo4j"].GraphDatabase = MagicMock()
 
-for _n in ["src.auth", "src.auth.roles"]:
+for _n in ["src.shared.auth", "src.shared.auth.roles"]:
     if _n not in sys.modules:
         _stub_module(_n)
-sys.modules["src.auth.roles"].UserContext = MagicMock
+sys.modules["src.shared.auth.roles"].UserContext = MagicMock
 
 if "src.routing" in sys.modules:
     del sys.modules["src.routing"]
@@ -85,7 +85,7 @@ def test_mode_to_tool_covers_all_real_agents():
 
 def test_forced_tool_wins_over_baseline_and_follow_up(monkeypatch):
     """resolve_query_tool must honor forced_tool and skip baseline routing."""
-    import src.feedback_loop.resolver as resolver
+    import src.shared.feedback.resolver as resolver
 
     # A prior turn that, on its own, would resolve as a document follow-up.
     monkeypatch.setattr(resolver, "get_turn", lambda _tid: {"document_id": "doc_gs"})
@@ -116,7 +116,7 @@ def test_forced_tool_wins_over_baseline_and_follow_up(monkeypatch):
 
 def test_auto_still_uses_baseline(monkeypatch):
     """Without forced_tool, baseline routing drives the decision."""
-    import src.feedback_loop.resolver as resolver
+    import src.shared.feedback.resolver as resolver
 
     monkeypatch.setattr(resolver, "get_turn", lambda _tid: None)
     monkeypatch.setattr(resolver, "select_mcp_tool", lambda _q: "search_documents")

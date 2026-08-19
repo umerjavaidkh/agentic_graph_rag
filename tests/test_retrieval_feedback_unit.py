@@ -6,7 +6,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from src.feedback_loop import (
+from src.shared.feedback import (
     AggregateDimension,
     JsonlFeedbackStore,
     RetrievalFeedbackEvent,
@@ -22,7 +22,7 @@ from src.feedback_loop import (
     reset_feedback_store,
     retrieval_pattern,
 )
-from src.feedback_loop.routing.service import FeedbackRoutingService
+from src.shared.feedback.routing.service import FeedbackRoutingService
 
 
 class TestFeedbackExtract(unittest.TestCase):
