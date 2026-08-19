@@ -36,9 +36,6 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 # hdbscan isn't installed in this dev env -- stub it so
 # _build_category_edges can be exercised without a real install, same

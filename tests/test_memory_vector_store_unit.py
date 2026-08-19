@@ -15,9 +15,6 @@ import logging
 import sys
 from pathlib import Path
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.storage.vector import memory_store as memory_store_mod
 from src.storage.vector.memory_store import InMemoryVectorStore

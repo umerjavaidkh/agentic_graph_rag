@@ -15,9 +15,6 @@ from pathlib import Path
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.graph.axis1_structural import Axis1StructuralBuilder
 from src.models import DKGEdge, DKGNode, NodeType, RelType

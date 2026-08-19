@@ -50,8 +50,6 @@ class _FakeBaseModel:
 # pulling in the full fastapi/neo4j import chain via service.py. We load the
 # REAL models.py (no heavy deps) to get IngestionStatus.
 _root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.ingestion.models import IngestionStatus  # noqa: E402 – after path setup
 

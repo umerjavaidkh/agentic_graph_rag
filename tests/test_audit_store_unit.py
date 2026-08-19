@@ -12,9 +12,6 @@ from pathlib import Path
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.audit.models import AuditEvent
 from src.audit.store import JsonlAuditStore, RedisAuditStore, _utc_now_iso

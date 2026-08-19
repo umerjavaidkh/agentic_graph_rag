@@ -20,9 +20,6 @@ from pathlib import Path
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.document import ontology_report as ontology_report_mod
 from src.document.ontology_report import _sample_edges, _sample_entities

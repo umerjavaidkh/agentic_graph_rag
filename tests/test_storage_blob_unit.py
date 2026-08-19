@@ -12,9 +12,6 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.storage.blob.local_store import LocalFsBlobStore
 from src.storage.blob.factory import get_blob_store

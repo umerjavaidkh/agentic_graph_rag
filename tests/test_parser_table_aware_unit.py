@@ -11,9 +11,6 @@ from pathlib import Path
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 def _drop_fake_document_stubs() -> None:
     """Drop stale fake stubs another test file left in sys.modules (e.g.

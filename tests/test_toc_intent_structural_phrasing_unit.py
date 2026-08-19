@@ -22,9 +22,6 @@ from pathlib import Path
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.retrieval.unstructured.query_intent import is_toc_question
 from src.retrieval.unstructured.toc_retrieval import include_in_outline_fallback

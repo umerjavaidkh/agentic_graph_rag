@@ -14,9 +14,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 import src.graph.tenancy as tenancy_mod
 from src.graph.tenancy import tenant_filter

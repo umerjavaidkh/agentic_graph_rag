@@ -16,9 +16,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.model_providers.base import ModelProvider
 from src.retrieval.unstructured.verification import (

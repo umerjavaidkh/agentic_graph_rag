@@ -20,9 +20,6 @@ from unittest.mock import patch
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 # Same fresh-registry-fixture rationale as test_document_parser_registry_unit.py
 # and test_parser_table_aware_unit.py: other test modules stub src.document*

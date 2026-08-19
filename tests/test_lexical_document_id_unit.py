@@ -18,9 +18,6 @@ from pathlib import Path
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 # A previously-collected test file (e.g. test_ingestion_manager_di_unit.py)
 # may have stubbed src.graph.constants/src.graph.driver/src.auth* with bare

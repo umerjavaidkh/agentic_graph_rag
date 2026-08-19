@@ -32,9 +32,6 @@ from pathlib import Path
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.document.versioning import extract_filing_date_from_filename
 from src.retrieval.unstructured.query_intent import is_filing_date_question

@@ -25,9 +25,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.model_providers._shim import ShimResponse, ShimUsage
 from src.model_providers.anthropic_provider import AnthropicProvider, _split_system

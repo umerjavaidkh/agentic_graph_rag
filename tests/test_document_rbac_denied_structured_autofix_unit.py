@@ -30,10 +30,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
-
 
 def _stub_module(name: str) -> types.ModuleType:
     mod = types.ModuleType(name)

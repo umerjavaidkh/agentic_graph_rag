@@ -11,9 +11,6 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.storage.vector.memory_store import InMemoryVectorStore
 from src.storage.vector.factory import get_vector_store

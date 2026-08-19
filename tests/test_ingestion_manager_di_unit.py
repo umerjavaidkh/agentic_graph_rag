@@ -40,10 +40,6 @@ def _stub_module(name: str) -> types.ModuleType:
     return mod
 
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
-
 # Drop any stale stubs a previously-collected test file may have left behind
 # for modules we need to import for real in this file.
 for _mod_name in list(sys.modules):

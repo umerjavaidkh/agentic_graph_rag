@@ -15,8 +15,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_versioning_module():
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
     import importlib
 
     importlib.import_module("src.models")

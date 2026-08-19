@@ -18,9 +18,6 @@ from pathlib import Path
 
 import pytest
 
-_root = Path(__file__).resolve().parents[1]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
 
 from src.presentation.planner import _extract_chart_from_text, build_presentation
 
