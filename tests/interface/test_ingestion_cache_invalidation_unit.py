@@ -45,11 +45,13 @@ _stub_module("neo4j.exceptions").ClientError = type("ClientError", (Exception,),
 _stub_module("fastapi").UploadFile = MagicMock()
 
 _stub_module("src.shared.auth")
+# Stubbing the auth PACKAGE without its submodules leaves it without a __path__,
+# so a later module importing src.shared.auth.roles fails with "is not a
+# package" -- and the file that breaks is an innocent one that stubs nothing.
+_auth_roles = _stub_module("src.shared.auth.roles")
+_auth_roles.UserContext = MagicMock
+_auth_roles.DEFAULT_PUBLIC_CONTEXT = MagicMock(role=MagicMock(value="public"))
 _stub_module("src.shared.auth.rbac_setup").GraphRBAC = MagicMock()
-_graph_constants = _stub_module("src.unstructured.graph.constants")
-_graph_constants.DOC_REVISION_LABEL = "DocRevision"
-_graph_constants.DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
-_graph_constants.DOCUMENT_ROOT_CYPHER = "Document|Book"
 _stub_module("src.shared.neo4j.driver").get_neo4j_driver = MagicMock()
 
 _STUBBED_MODULE_NAMES = (
