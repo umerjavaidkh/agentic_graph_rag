@@ -16,33 +16,28 @@ Run with:
 """
 from __future__ import annotations
 
-import sys
-import types
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 
-def _stub_module(name: str) -> types.ModuleType:
-    mod = types.ModuleType(name)
-    sys.modules[name] = mod
-    return mod
+@pytest.fixture
+def routing(stubbed_import):
+    """The routing module, imported with its heavy dependencies stood in for.
 
-
-if "neo4j" not in sys.modules:
-    _stub_module("neo4j")
-sys.modules["neo4j"].GraphDatabase = MagicMock()
-
-for _n in ["src.shared.auth", "src.shared.auth.roles"]:
-    if _n not in sys.modules:
-        _stub_module(_n)
-sys.modules["src.shared.auth.roles"].UserContext = MagicMock
-
-if "src.interface.routing" in sys.modules:
-    del sys.modules["src.interface.routing"]
-
-from src.interface.routing import _DATA_ROUTE, _DOC_ROUTE, _fast_route_tool
+    Installed by a fixture rather than at module scope: pytest imports every
+    test module during collection, so a module-level stub is still in place
+    when a LATER module is imported, and the suite only passes in the one
+    collection order where that happens to be harmless.
+    """
+    return stubbed_import(
+        "src.interface.routing",
+        stubs={
+            "neo4j": {"GraphDatabase": MagicMock()},
+            "src.shared.auth": {},
+            "src.shared.auth.roles": {"UserContext": MagicMock},
+        },
+    )
 
 
 @pytest.mark.parametrize(
@@ -65,16 +60,16 @@ from src.interface.routing import _DATA_ROUTE, _DOC_ROUTE, _fast_route_tool
         ("Show me the products table", None),
     ],
 )
-def test_fast_route_tool(question, expected_tool):
-    assert _fast_route_tool(question) == expected_tool
+def test_fast_route_tool(routing, question, expected_tool):
+    assert routing._fast_route_tool(question) == expected_tool
 
 
-def test_doc_route_matches_bare_table_and_figure_references():
-    assert _DOC_ROUTE.search("see Table 1 for details")
-    assert _DOC_ROUTE.search("as shown in Figure 2")
-    assert _DOC_ROUTE.search("refer to table 3.1")
+def test_doc_route_matches_bare_table_and_figure_references(routing):
+    assert routing._DOC_ROUTE.search("see Table 1 for details")
+    assert routing._DOC_ROUTE.search("as shown in Figure 2")
+    assert routing._DOC_ROUTE.search("refer to table 3.1")
 
 
-def test_data_route_still_matches_revenue_and_products():
-    assert _DATA_ROUTE.search("What was our total revenue?")
-    assert _DATA_ROUTE.search("How many products are there?")
+def test_data_route_still_matches_revenue_and_products(routing):
+    assert routing._DATA_ROUTE.search("What was our total revenue?")
+    assert routing._DATA_ROUTE.search("How many products are there?")
