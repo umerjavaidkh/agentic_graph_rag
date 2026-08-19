@@ -208,12 +208,9 @@ def setup_module(module) -> None:
     sys.modules["src.unstructured.document.parser_registry"].supported_extensions = MagicMock(return_value={".pdf"})
 
     # --- graph.constants / graph.driver stubs ---
-    for _n in ["src.unstructured.graph", "src.unstructured.graph.constants", "src.shared.neo4j.driver"]:
+    for _n in ["src.shared.neo4j.driver"]:
         if _n not in sys.modules:
             _stub_module(_n)
-    sys.modules["src.unstructured.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
-    sys.modules["src.unstructured.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
-    sys.modules["src.unstructured.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
     sys.modules["src.shared.neo4j.driver"].get_neo4j_driver = MagicMock()
 
     # --- bridge/conversation stubs ---
@@ -248,7 +245,7 @@ _STUBBED_MODULE_NAMES = (
     "src.unstructured.document.light.parser", "src.unstructured.document.parser_base",
     "src.unstructured.document.parser_registry", "src.unstructured.document.page_vision",
     "src.unstructured.document.graph_snapshot",
-    "src.unstructured.graph", "src.unstructured.graph.constants", "src.shared.neo4j.driver",
+    "src.shared.neo4j.driver",
     "src.interface.bridge", "src.shared.conversation", "src.interface.routing", "src.interface.router",
     "src.unstructured.ingestion.service", "src.pipeline.ingestion",
 )

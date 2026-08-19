@@ -40,12 +40,9 @@ for _n in ["src.shared.auth", "src.shared.auth.rbac_setup"]:
         _stub_module(_n)
 sys.modules["src.shared.auth.rbac_setup"].GraphRBAC = MagicMock()
 
-for _n in ["src.unstructured.graph", "src.unstructured.graph.constants", "src.shared.neo4j.driver"]:
+for _n in ["src.shared.neo4j.driver"]:
     if _n not in sys.modules:
         _stub_module(_n)
-sys.modules["src.unstructured.graph.constants"].DOC_REVISION_LABEL = "DocRevision"
-sys.modules["src.unstructured.graph.constants"].DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
-sys.modules["src.unstructured.graph.constants"].DOCUMENT_ROOT_CYPHER = "Document|Book"
 sys.modules["src.shared.neo4j.driver"].get_neo4j_driver = MagicMock()
 
 from src.unstructured.ingestion.triage import check_duplicate, check_structural_sanity

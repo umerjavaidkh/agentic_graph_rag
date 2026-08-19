@@ -63,8 +63,6 @@ _stub_module("fastapi").UploadFile = MagicMock()
 
 _stub_module("src.shared.auth")
 _stub_module("src.shared.auth.rbac_setup").GraphRBAC = MagicMock()
-
-_stub_module("src.unstructured.graph")
 _graph_constants = _stub_module("src.unstructured.graph.constants")
 _graph_constants.DOC_REVISION_LABEL = "DocRevision"
 _graph_constants.DOCUMENT_LOGICAL_LABEL = "DocumentLogical"
@@ -74,8 +72,7 @@ _stub_module("src.shared.neo4j.driver").get_neo4j_driver = MagicMock()
 _STUBBED_MODULE_NAMES = (
     "neo4j", "neo4j.exceptions", "fastapi",
     "src.shared.auth.rbac_setup", "src.shared.auth",
-    "src.shared.neo4j.driver", "src.unstructured.graph.constants", "src.unstructured.graph",
-)
+    "src.shared.neo4j.driver", )
 
 
 def teardown_module(module) -> None:
