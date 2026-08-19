@@ -248,7 +248,7 @@ def structured_misroute_message(user_id: str = "unknown") -> str:
 def user_can_query_structured(user_context: Optional[UserContext]) -> bool:
     if not user_context:
         return False
-    from .router import _rbac_check
+    from .handlers.rbac import _rbac_check
 
     return _rbac_check().can_query_knowledge_area(user_context.user_id, "structured")
 

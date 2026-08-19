@@ -56,7 +56,9 @@ _unstructured_graph_stub.esg_agent = MagicMock()
 
 sys.modules.pop("src.interface.router", None)
 
-import src.interface.router as router_mod
+# query_hybrid moved to handlers/hybrid.py when the router was split by axis;
+# patching src.interface.router no longer reaches it.
+import src.interface.handlers.hybrid as router_mod
 
 
 class _ConcurrencyProbeAgent:

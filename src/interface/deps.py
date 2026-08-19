@@ -1,83 +1,31 @@
-"""Process-wide singletons the routers share.
+"""Process-wide singletons the routers and handlers share.
 
 The two thread pools especially MUST be created once. Each is sized from
 config, so a per-router copy would silently multiply the thread count by the
 number of routers -- a behaviour change no test would notice.
+
+Imports are kept to what this module actually uses. Carrying api.py's whole
+import block, as an earlier version did, pulled in `from .bridge import ask`,
+which imports the router, which imports this -- a cycle that surfaced as
+"cannot import name 'ask' from partially initialized module".
 """
 import asyncio
-import functools
-import json
-import logging
-import re
-import uuid
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from typing import List, Optional
-from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
-from fastapi.responses import RedirectResponse, Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from ..unstructured.graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
-from ..shared.neo4j.driver import close_neo4j_driver, get_neo4j_driver
-from ..shared.neo4j.tenancy import tenant_filter
-from ..unstructured.document.graph_snapshot import (
-    X1_STAGE,
-    X2_STAGE,
-    query_final_snapshot_sync,
-    query_page_scoped_snapshot_sync,
-    read_snapshot as read_graph_snapshot,
-)
-from ..unstructured.document.purge import delete_document
-from ..unstructured.document.versioning import source_file_blob_key
-from ..shared.storage.blob.factory import get_blob_store
-from pydantic import BaseModel, Field
-from ..shared.audit import AuditEventType, get_audit_store, record_audit_event
-from .bridge import ask
-from ..shared.conversation import clear_turn
-from ..shared.logging_config import setup_logging
-from ..shared.auth.rbac_setup import GraphRBAC
-from ..shared.auth.oidc import auth_public_config, resolve_admin_session, resolve_scoped_thread_id, resolve_user_context
-from ..shared.config.settings import (
-    ALLOW_CYPHER_INGEST,
-    ALLOW_DB_RESET,
-    API_INGEST_EXECUTOR_WORKERS,
-    API_QUERY_EXECUTOR_WORKERS,
-    CORPUS_SCAN_TIMEOUT,
-    NEO4J_PASSWORD,
-    NEO4J_URI,
-    NEO4J_USER,
-    OPENAI_API_KEY,
-    PROJECT_ROOT,
-    REDIS_URL,
-    RETRIEVAL_FEEDBACK_ENABLED,
-    RETRIEVAL_FEEDBACK_HINT_CACHE_SEC,
-    RETRIEVAL_FEEDBACK_MIN_MARGIN,
-    RETRIEVAL_FEEDBACK_MIN_SAMPLES,
-    QUERY_STREAM_ENABLED,
-    get_model_config,
-)
-from .streaming.query_stream import iter_query_stream
+
+from fastapi import BackgroundTasks
+
+from ..shared.config.settings import API_INGEST_EXECUTOR_WORKERS, API_QUERY_EXECUTOR_WORKERS
+from ..pipeline.ingestion.queue import enqueue_ingest
 from ..unstructured.ingestion.service import IngestionManager
-from ..pipeline.ingestion.job_store import get_job_store
-from ..pipeline.ingestion.queue import enqueue_ingest, list_failed_jobs, queue_depth
-from ..unstructured.ingestion.validation import build_ingestion_quality_report, list_ingested_documents
-from ..shared.feedback import (
-    best_mode_for_question,
-    build_dashboard_overview,
-    get_feedback_store,
-    maybe_attach_feedback_outcome,
-    maybe_record_retrieval_feedback,
-    pattern_hash,
-    retrieval_pattern,
-)
 
-
+# Shared ingestion manager (store-backed — works in both in-process and worker modes).
 ingestion_manager = IngestionManager()
 
-
+# Fallback executor: used only when REDIS_URL is not set (dev / single-process mode).
 _ingest_executor = ThreadPoolExecutor(max_workers=API_INGEST_EXECUTOR_WORKERS, thread_name_prefix="ingest")
-
-
+# Run sync RAG pipeline (LLM + Neo4j) off the asyncio event loop.
 _query_executor = ThreadPoolExecutor(max_workers=API_QUERY_EXECUTOR_WORKERS, thread_name_prefix="query")
+
 
 
 async def _run_ingest_job_local(job_id: str) -> None:

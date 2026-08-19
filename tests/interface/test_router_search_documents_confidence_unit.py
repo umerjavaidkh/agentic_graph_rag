@@ -52,7 +52,9 @@ _unstructured_graph_stub.esg_agent = MagicMock()
 if "src.interface.router" in sys.modules:
     del sys.modules["src.interface.router"]
 
-import src.interface.router as router_mod
+# search_documents moved to handlers/documents.py when the router was split
+# by axis; patching src.interface.router no longer reaches it.
+import src.interface.handlers.documents as router_mod
 
 
 def test_search_documents_forwards_low_confidence_and_note(monkeypatch):

@@ -8,7 +8,7 @@ from ...shared.auth.roles import DEFAULT_PUBLIC_CONTEXT, UserContext
 from ...shared.conversation import get_turn, save_turn
 from ...shared.feedback import maybe_record_retrieval_feedback, resolve_query_tool
 from ...unstructured.presentation import build_presentation
-from ..router import _rbac_check
+from ..handlers.rbac import _rbac_check
 from ..routing import (
     TOOL_TO_AGENT,
     is_structured_data_question,
