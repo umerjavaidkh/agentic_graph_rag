@@ -287,6 +287,12 @@ class QueryResponse(BaseModel):
     confidence_note: Optional[str] = None  # reason when low_confidence is True
     document_id:    Optional[str] = None  # logical doc id the answer was grounded in (document paths only)
     document_title: Optional[str] = None  # UI transparency: "answering from <document>"
+    # Per-claim citations: [{text, source_id, page, title, overlap}], with
+    # source_id None where a sentence has no confident support. Declared here
+    # because response_model strips anything this model does not name -- the
+    # router set "claims" all along and every /query response silently
+    # dropped it, so the UI could only ever show a document-level citation.
+    claims: list = []
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -361,6 +367,7 @@ async def query(
             query_type   = result.get("query_type"),
             follow_up    = result.get("_follow_up"),
             telemetry    = telemetry,
+            claims       = result.get("claims", []),
             request_id   = request_id,
             low_confidence  = bool(result.get("low_confidence")),
             confidence_note = result.get("confidence_note"),

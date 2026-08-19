@@ -78,6 +78,7 @@ class GraphSeedService:
                   coalesce(n.search_text, '') AS text,
                   coalesce(labels(n)[0], '') AS node_label,
                   n.page_start AS page_start,
+                  n.document_page AS document_page,
                   score
                 ORDER BY score DESC
                 LIMIT $limit
@@ -95,6 +96,7 @@ class GraphSeedService:
                     "text": r["text"],
                     "node_label": r.get("node_label") or "",
                     "page_start": r.get("page_start"),
+                    "document_page": r.get("document_page"),
                     "score": float(r["score"] or 0.0),
                     "related": [],
                 }
@@ -139,6 +141,7 @@ class GraphSeedService:
                   n.blob_key_text AS blob_key_text,
                   coalesce(labels(n)[0], '') AS node_label,
                   n.page_start AS page_start
+                  n.document_page AS document_page
                 """,
                 ids=list(scores.keys()),
                 tenant_id=tenant_id,
@@ -193,6 +196,7 @@ class GraphSeedService:
                   coalesce(n.search_text, '') AS text,
                   coalesce(labels(n)[0], '') AS node_label,
                   n.page_start AS page_start,
+                  n.document_page AS document_page,
                   score
                 ORDER BY score DESC
                 LIMIT $limit
@@ -211,6 +215,7 @@ class GraphSeedService:
                     "text": r["text"],
                     "node_label": r.get("node_label") or "",
                     "page_start": r.get("page_start"),
+                    "document_page": r.get("document_page"),
                     "score": float(r["score"] or 0.0),
                     "related": [],
                 }
@@ -249,6 +254,7 @@ class GraphSeedService:
                   coalesce(related.search_text, '') AS text,
                   coalesce(labels(related)[0], '') AS node_label,
                   related.page_start AS page_start,
+                  related.document_page AS document_page,
                   type(r) AS rel_type,
                   coalesce(r.weight, 0.75) AS edge_weight,
                   sid AS seed_id,
@@ -276,6 +282,7 @@ class GraphSeedService:
                   coalesce(related.search_text, '') AS text,
                   coalesce(labels(related)[0], '') AS node_label,
                   related.page_start AS page_start,
+                  related.document_page AS document_page,
                   type(r1) + '->' + type(r2) AS rel_type,
                   coalesce(r2.weight, 0.75) AS edge_weight,
                   sid AS seed_id,
@@ -299,6 +306,7 @@ class GraphSeedService:
                     "text": r["text"],
                     "node_label": r.get("node_label") or "",
                     "page_start": r.get("page_start"),
+                    "document_page": r.get("document_page"),
                     "rel_type": r["rel_type"],
                     "edge_weight": float(r["edge_weight"] or 0.75),
                     "seed_id": r["seed_id"],

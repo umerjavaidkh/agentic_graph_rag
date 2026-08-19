@@ -81,7 +81,22 @@ CONTRADICTION_THRESH   = 0.85   # only run LLM on very similar pairs
 # confirm two specific members are strongly related) — AMBIGUOUS, flat score.
 SAME_CATEGORY_CONFIDENCE = 0.5
 # Node types to include in semantic analysis (skip PAGE for perf)
+# What gets EMBEDDED, for retrieval.
+#
+# Page was added here and reverted: embedding all 34 pages of a document
+# changed citation precision from 0.52 to 0.51 and page-citation from 64% to
+# 60% -- no gain, measured on the same 25 cases. The improvement that mattered
+# came from citing only the chunks the answer used (see _grounded_sources),
+# not from finer-grained retrieval targets. Not worth an embedding per page.
 SEMANTIC_NODE_TYPES    = {NodeType.CHAPTER, NodeType.SECTION}
+
+# What gets SIMILARITY EDGES, which is deliberately narrower. Pages are
+# embedded but excluded here: a page-to-page similarity edge adds nothing a
+# reader or the retriever needs, while 34 pages per document would bury the
+# chapter/section structure the graph view exists to show. Embedding for
+# retrieval and linking for structure are separate concerns and were
+# previously the same set.
+SIMILARITY_EDGE_TYPES  = {NodeType.CHAPTER, NodeType.SECTION}
 CONCEPT_NODE_TYPES     = {NodeType.SECTION, NodeType.PAGE}
 
 
@@ -1106,7 +1121,10 @@ class Axis2Builder:
     # 3. SEMANTICALLY_SIMILAR
     # ─────────────────────────────────────────
     def _build_similarity_edges(self, nodes: list[DKGNode]) -> list[DKGEdge]:
-        embedded = [n for n in nodes if n.embedding is not None]
+        embedded = [
+            n for n in nodes
+            if n.embedding is not None and n.type in SIMILARITY_EDGE_TYPES
+        ]
         edges: list[DKGEdge] = []
 
         if len(embedded) < 2:
@@ -1489,7 +1507,10 @@ on its own. Answer strictly as JSON: {{"grounded": true/false, "confidence": 0.0
             paraphrase-level pairs and never cross-topic logical ones.
         """
         edges: list[DKGEdge] = []
-        embedded = [n for n in nodes if n.embedding is not None]
+        embedded = [
+            n for n in nodes
+            if n.embedding is not None and n.type in SIMILARITY_EDGE_TYPES
+        ]
         if len(embedded) < 2:
             return edges
 

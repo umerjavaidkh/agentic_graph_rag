@@ -90,6 +90,109 @@ def detect_document_page_label(page_text: str) -> Optional[str]:
     return None
 
 
+_ROMAN_NUMERALS = {v: k for k, v in _ROMAN_VALUES.items()}
+
+# How far to look for a page that agrees on the offset. Front matter runs are
+# short (this report has four roman pages), so a wide window would let the
+# main arabic run vouch for a roman one; three is enough to bracket a single
+# bad page while staying inside its own run.
+_OFFSET_WINDOW = 3
+
+
+def label_to_number(label: Optional[str]) -> tuple[Optional[int], Optional[str]]:
+    """(value, numbering system) for a printed label, or (None, None).
+
+    The system matters as much as the value: a document restarts numbering at
+    1 when it moves from roman front matter to arabic body, so "iv" and "4"
+    are the same number in different runs and must not vouch for each other.
+    """
+    if not label:
+        return None, None
+    text = str(label).strip().lower()
+    if text.isdigit():
+        return int(text), "arabic"
+    if text in _ROMAN_VALUES:
+        return _ROMAN_VALUES[text], "roman"
+    return None, None
+
+
+def _format_label(value: int, system: str) -> str:
+    if system == "roman" and value in _ROMAN_NUMERALS:
+        return _ROMAN_NUMERALS[value]
+    return str(value)
+
+
+def reconcile_page_labels(pages: list[tuple[int, Optional[str]]]) -> dict[int, Optional[str]]:
+    """Repair printed page labels using the sequence the document establishes.
+
+    detect_document_page_label reads one page at a time, so anything sitting
+    alone on a line near an edge can pass for a page number. In one 52-page
+    report that produced three wrong labels out of 52: a decorative drop-cap
+    "A" on PDF 9 and "N" on PDF 37 (both matching the bare-letter pattern),
+    and the cover's "2021" on PDF 2 (a year matching the bare-digit pattern).
+    A citation to "page A" cannot be navigated to and cannot be checked.
+
+    Read across the document instead, the offset between printed label and
+    PDF index is constant within a numbering run -- here iv..vii at offset 0
+    and 1..44 at offset -7. So:
+
+      * a label whose offset no nearby same-system page shares is not
+        believable, and is dropped rather than shown;
+      * a page with no usable label that sits BETWEEN two pages agreeing on
+        an offset takes that offset -- which is what turns "page A" into
+        "page 2".
+
+    Only interpolates between agreeing anchors, never past the ends of a run:
+    a document's last page is often deliberately unnumbered, and inventing a
+    label there would be a fabricated citation of exactly the kind this whole
+    effort exists to prevent.
+
+    `pages` is [(pdf_page, detected_label)]; returns {pdf_page: label or None}.
+    """
+    parsed: dict[int, tuple[Optional[int], Optional[str]]] = {
+        pdf: label_to_number(label) for pdf, label in pages
+    }
+    offsets: dict[int, tuple[int, str]] = {
+        pdf: (value - pdf, system)
+        for pdf, (value, system) in parsed.items()
+        if value is not None and system is not None
+    }
+
+    # Keep only labels an independent neighbour agrees with.
+    trusted: dict[int, tuple[int, str]] = {}
+    for pdf, (offset, system) in offsets.items():
+        for other, (other_offset, other_system) in offsets.items():
+            if other == pdf:
+                continue
+            if (
+                abs(other - pdf) <= _OFFSET_WINDOW
+                and other_system == system
+                and other_offset == offset
+            ):
+                trusted[pdf] = (offset, system)
+                break
+
+    resolved: dict[int, Optional[str]] = {}
+    anchors = sorted(trusted)
+    for pdf, original in pages:
+        if pdf in trusted:
+            offset, system = trusted[pdf]
+            resolved[pdf] = _format_label(pdf + offset, system)
+            continue
+        before = [a for a in anchors if a < pdf]
+        after = [a for a in anchors if a > pdf]
+        if before and after:
+            low, high = trusted[before[-1]], trusted[after[0]]
+            if low == high:  # same offset AND same system on both sides
+                offset, system = low
+                resolved[pdf] = _format_label(pdf + offset, system)
+                continue
+        # Untrusted and unbracketed: report no printed label rather than one
+        # that cannot be relied on.
+        resolved[pdf] = None
+    return resolved
+
+
 def document_page_matches_pdf(document_page: Optional[str], pdf_page: int) -> bool:
     if not document_page:
         return False
@@ -130,6 +233,16 @@ def enrich_page_nodes(
             if prev is None or sec.depth >= prev.depth:
                 section_by_pdf[pno] = sec
 
+    # Detect first, reconcile across the whole document, then apply. Applying
+    # each page's own detection directly is what let a drop-cap letter and a
+    # cover year stand as page numbers -- nothing checked them against the
+    # sequence the rest of the document establishes.
+    detected: list[tuple[int, Optional[str]]] = []
+    for page in page_nodes:
+        pdf_page = page.page_start or page.order
+        detected.append((pdf_page, detect_document_page_label((page.text or "").strip())))
+    reconciled = reconcile_page_labels(detected)
+
     for page in page_nodes:
         pdf_page = page.page_start or page.order
         page.pdf_page = pdf_page
@@ -138,8 +251,7 @@ def enrich_page_nodes(
         page.page_end = pdf_page
 
         raw_text = (page.text or "").strip()
-        doc_label = detect_document_page_label(raw_text)
-        page.document_page = doc_label
+        page.document_page = reconciled.get(pdf_page)
 
         if not raw_text or len(raw_text) < 40:
             page.text = _fill_missing_page_text(page, section_by_pdf.get(pdf_page))
@@ -151,6 +263,39 @@ def enrich_page_nodes(
             page.title = f"Page {doc_disp} (PDF {pdf_page})"
         else:
             page.title = f"Page {pdf_page}"
+
+
+def propagate_document_pages(page_nodes: list[DKGNode], other_nodes: list[DKGNode]) -> int:
+    """Copy each page's printed label onto everything that starts on it.
+
+    enrich_page_nodes labels Page nodes only, but a citation can land on a
+    Region (a figure caption) or a Section just as easily, and those carried
+    no printed label at all -- so a Box answer showed "printed page 23" while
+    a Figure answer on the very next page showed nothing.
+
+    Keyed on the node's first page, since that is where a reader is being
+    sent. Nodes with no page, or on a page whose own label was rejected as
+    unreliable, are left alone rather than given a guess.
+
+    Returns how many nodes were labelled, for the ingest log.
+    """
+    labels = {
+        p.pdf_page or p.page_start: p.document_page
+        for p in page_nodes
+        if p.document_page and (p.pdf_page or p.page_start)
+    }
+    if not labels:
+        return 0
+    labelled = 0
+    for node in other_nodes:
+        if getattr(node, "document_page", None):
+            continue
+        start = node.page_start or node.pdf_page
+        label = labels.get(start)
+        if label:
+            node.document_page = label
+            labelled += 1
+    return labelled
 
 
 def _fill_missing_page_text(page: DKGNode, section: Optional[DKGNode]) -> str:

@@ -103,6 +103,13 @@ class RankingService:
                     "title": item.get("title") or cid,
                     "text": item.get("text") or "",
                     "page_start": item.get("page_start"),
+                    # The merge rebuilds each item field by field, so anything
+                    # not named here is dropped no matter how many retrieval
+                    # paths supplied it -- which is how the printed page label
+                    # reached this point from every strategy and still arrived
+                    # at the UI as None.
+                    "document_page": item.get("document_page"),
+                    "pdf_page": item.get("pdf_page"),
                     "score": score,
                     "related": list(rel),
                     "sources": {source},

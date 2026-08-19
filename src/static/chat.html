@@ -1010,6 +1010,58 @@
     }
 
     // ── Source document viewer (side panel) ──────────────────────────────
+
+    // One citation per claim, rather than one source list per answer. A flat
+    // list cannot say which page supports which sentence, so a reader
+    // checking a four-page answer has to read all four -- which is the thing
+    // that makes a citation worth having. Rendered under the answer rather
+    // than injected into it: the markdown is already rendered by the time
+    // claims arrive, and rewriting that HTML risks breaking it.
+    //
+    // Sentences with no confident source get a dashed, non-clickable marker.
+    // Showing a reader which line they cannot verify is more honest than
+    // leaving it looking the same as the rest.
+    function renderClaimCitations(bubble, claims, documentId, documentTitle) {
+      const rows = (claims || []).filter(c => c && c.text);
+      if (!rows.length) return;
+      const box = document.createElement('div');
+      box.className = 'claim-cites';
+      box.innerHTML = '<div class="claim-cites-head">Sources by claim</div>';
+      for (const c of rows) {
+        const row = document.createElement('div');
+        row.className = 'claim-row';
+        const txt = document.createElement('span');
+        txt.className = 'claim-txt';
+        txt.textContent = c.text.length > 150 ? c.text.slice(0, 150) + '…' : c.text;
+        const cite = document.createElement('button');
+        cite.type = 'button';
+        if (c.source_id && c.page != null) {
+          cite.className = 'claim-cite';
+          // Show the number PRINTED on the page, navigate by the PDF index.
+          // They differ by seven in the Go.Data report, so showing the index
+          // sends a reader hunting for a number the page does not carry.
+          // A unit spanning several pages cites as a range from where it
+          // starts, so the reader opens at the beginning of the content
+          // rather than wherever the matching sentence happened to land.
+          const spans = c.page_end != null && c.page_end !== c.page;
+          const shown = c.page_label != null ? c.page_label : c.page;
+          cite.textContent = spans ? ('pp.' + shown + '–' + c.page_end) : ('p.' + shown);
+          cite.title = c.page_label != null && String(c.page_label) !== String(c.page)
+            ? (c.title ? c.title + ' — ' : '') + 'printed page ' + c.page_label + ', PDF page ' + c.page
+            : (c.title || ('Open page ' + c.page));
+          cite.addEventListener('click', () => openDocPanel(documentId, documentTitle, c.page));
+        } else {
+          cite.className = 'claim-cite unsourced';
+          cite.textContent = 'no source';
+          cite.title = 'No retrieved page clearly supports this sentence';
+          cite.disabled = true;
+        }
+        row.appendChild(txt); row.appendChild(cite);
+        box.appendChild(row);
+      }
+      bubble.appendChild(box);
+    }
+
     function openDocPanel(documentId, title, page) {
       if (!documentId) return;
       const ctx = getCtx();
@@ -1993,6 +2045,8 @@
         state.bubble.classList.add('plain-text');
         state.bubble.textContent = answer;
       }
+
+      renderClaimCitations(state.bubble, event.claims, event.document_id, event.document_title);
 
       const metaRow = buildMetaChips(
         event.access_level,

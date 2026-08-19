@@ -156,6 +156,7 @@ class LexicalService:
               n.blob_key_text AS blob_key_text,
               coalesce(n.search_text, '') AS search_text,
               n.page_start AS page_start,
+              n.document_page AS document_page,
               matched,
               w
             ORDER BY w DESC, size(coalesce(n.search_text, '')) ASC
@@ -183,6 +184,7 @@ class LexicalService:
                 "title": title,
                 "text": self.enrich_chunk_text_for_facts(title, full_text),
                 "page_start": r.get("page_start"),
+                "document_page": r.get("document_page"),
                 "score": 0.88 + 0.06 * min(len(matched), 4) + 0.01 * min(w, 20),
                 "related": ["via:keyword_search"],
             })
@@ -234,6 +236,7 @@ class LexicalService:
               n.blob_key_text AS blob_key_text,
               coalesce(n.search_text, '') AS search_text,
               n.page_start AS page_start,
+              n.document_page AS document_page,
               phrase_hits,
               coalesce(d.title, d.id) AS doc_title
             ORDER BY phrase_hits DESC, size(coalesce(n.search_text, '')) ASC
@@ -264,6 +267,7 @@ class LexicalService:
                 "title": title,
                 "text": text,
                 "page_start": r.get("page_start"),
+                "document_page": r.get("document_page"),
                 "score": score,
                 "related": ["via:phrase_search"],
             })
@@ -314,6 +318,7 @@ class LexicalService:
               part.blob_key_text AS blob_key_text,
               coalesce(part.search_text, '') AS search_text,
               part.page_start AS page_start,
+              part.document_page AS document_page,
               coalesce(part.unit_part, 0) AS unit_part
             ORDER BY unit_part
             LIMIT 12
@@ -328,6 +333,7 @@ class LexicalService:
                 "title": r.get("title") or r["id"],
                 "text": hydrator.hydrate(r.get("blob_key_text"), r.get("search_text") or ""),
                 "page_start": r.get("page_start"),
+                "document_page": r.get("document_page"),
                 # Ranked with the hit that pulled it in: a continuation is
                 # only here because its sibling earned a place.
                 "score": 9.0,
@@ -398,6 +404,7 @@ class LexicalService:
               n.blob_key_text AS blob_key_text,
               coalesce(n.search_text, '') AS search_text,
               n.page_start AS page_start,
+              n.document_page AS document_page,
               matched,
               coalesce(d.title, d.id) AS doc_title
             ORDER BY matched DESC, size(coalesce(n.search_text, '')) DESC
@@ -422,6 +429,7 @@ class LexicalService:
                 "title": title,
                 "text": self.enrich_chunk_text_for_facts(title, full_text),
                 "page_start": r.get("page_start"),
+                "document_page": r.get("document_page"),
                 # A chunk quantifying BOTH nouns the question asked about
                 # ("65 countries" and "115 institutions") answers it outright,
                 # so it must outrank one quantifying only half of it.
@@ -541,6 +549,7 @@ class LexicalService:
               n.blob_key_text AS blob_key_text,
               coalesce(n.search_text, '') AS search_text,
               n.page_start AS page_start,
+              n.document_page AS document_page,
               phrase_weight,
               coalesce(d.title, d.id) AS doc_title
             ORDER BY phrase_weight DESC, size(coalesce(n.search_text, '')) DESC
@@ -566,6 +575,7 @@ class LexicalService:
                 "title": title,
                 "text": self.enrich_chunk_text_for_facts(title, full_text),
                 "page_start": r.get("page_start"),
+                "document_page": r.get("document_page"),
                 # Scaled by how many of the query's scope phrases the chunk
                 # satisfies -- a chunk matching both "International" and
                 # "Upstream" scoping is a better scope match than one

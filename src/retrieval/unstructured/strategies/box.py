@@ -251,7 +251,7 @@ class BoxStrategy:
             WHERE p.id STARTS WITH d.id + '_page_'
               AND toLower(coalesce(p.search_text, '')) CONTAINS $box_phrase
               AND {tenant_filter("p")}
-            RETURN p.id AS id, p.title AS title, p.search_text AS text, p.pdf_page AS pdf_page
+            RETURN p.id AS id, p.title AS title, p.search_text AS text, p.pdf_page AS pdf_page, p.document_page AS document_page
             ORDER BY size(coalesce(p.search_text, '')) DESC
             LIMIT 3
             """,
@@ -276,6 +276,12 @@ class BoxStrategy:
                     "via:box_page_fallback",
                 ],
                 "pdf_page": r.get("pdf_page"),
+                # Both numbers travel with the chunk: pdf_page is what
+                # navigation opens, document_page is what the reader
+                # sees printed on the page. Hand-built chunk dicts like
+                # this one bypass the formatter's passthrough, so the
+                # printed label was lost on every box answer.
+                "document_page": r.get("document_page"),
             }]
         return []
 

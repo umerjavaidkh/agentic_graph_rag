@@ -103,6 +103,10 @@ def search_documents(
         "confidence_note": result.get("confidence_note"),
         "presentation": presentation,
         "retrieved_context": result.get("retrieved_context", {}),
+        # Which claim each page supports, so a reader can check one sentence
+        # rather than the whole source list. Additive: callers that only read
+        # "sources" are unaffected.
+        "claims": result.get("claims", []),
         "_access_level": user_context.role.value if user_context else DEFAULT_PUBLIC_CONTEXT.role.value,
         "_follow_up": resolved.get("follow_up_kind") if resolved.get("use_prior") else None,
     }

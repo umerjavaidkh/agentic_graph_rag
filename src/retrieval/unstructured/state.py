@@ -15,6 +15,10 @@ class ESGState(TypedDict, total=False):
     prior_context: Optional[Dict]
     low_confidence: bool
     confidence_note: Optional[str]
+    # Which claim each source supports. Declared here because LangGraph drops
+    # any key a node returns that the state schema does not name -- the value
+    # was being computed and silently discarded.
+    claims: List[Dict]
     skip_structured_guard: bool
     strategy: Optional[str]
     _autofix_agent: Optional[str]

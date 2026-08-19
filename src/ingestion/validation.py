@@ -13,7 +13,7 @@ from ..graph.constants import DOC_REVISION_LABEL
 _MIN_TEXT_CHARS = 20  # below this, a node's text is treated as effectively empty
 _CONTENT_LABELS = ("Chapter", "Section", "Page")
 _NER_LABELS = ("Section", "Page")  # matches axis2.py's CONCEPT_NODE_TYPES
-_EMBED_LABELS = ("Chapter", "Section")  # matches axis2.py's SEMANTIC_NODE_TYPES
+_EMBED_LABELS = ("Chapter", "Section", "Page")  # matches axis2.py's SEMANTIC_NODE_TYPES
 _SEMANTIC_REL_TYPES = (
     "SEMANTICALLY_SIMILAR",
     "SHARES_ENTITY",
