@@ -24,7 +24,9 @@ from ..toc_retrieval import (
     include_in_outline_fallback,
     score_page_text_as_toc,
     stitch_toc_run,
+    pick_subject_page,
     section_title_is_toc,
+    toc_subject_terms,
 )
 
 
@@ -138,7 +140,14 @@ class TocStrategy:
                     )
                 ], doc_id, doc_title
 
-        page_hit = self._toc_find_toc_pages(session, doc_id, tenant_id)
+        # Which TOC? A document can carry many -- the Chevron 10-K has eight,
+        # on pdf pages 3, 30, 68, 73, 162, 168, 239 and 252. Without an anchor
+        # every question got runs[0], the one at the front, so "contents of the
+        # financial statements" and "sections in Item 8" both answered with the
+        # document-level TOC. Resolve the section the question names to its
+        # page and let stitch_toc_run pick the TOC that precedes it.
+        near = self._toc_anchor_page(session, query, doc_id, tenant_id)
+        page_hit = self._toc_find_toc_pages(session, doc_id, tenant_id, near=near)
         if page_hit:
             return [
                 format_toc_chunk(
@@ -220,6 +229,14 @@ class TocStrategy:
               AND (
                 coalesce(p.pdf_page, p.order, 9999) <= 40
                 OR toLower(coalesce(p.search_text, '')) CONTAINS 'contents'
+                // Near an anchor, consider any page: a chapter's contents list
+                // does not have to use the word "contents", and the keyword
+                // filter is what kept the Chevron 10-K's TOCs on pages 68, 162
+                // and 168 out of the running entirely. The score still decides;
+                // this only widens what gets scored, and only where the
+                // question already pointed.
+                OR ($near IS NOT NULL
+                    AND abs(coalesce(p.pdf_page, p.order, 9999) - $near) <= 60)
               )
             RETURN
               coalesce(p.search_text, '') AS text,
@@ -231,12 +248,43 @@ class TocStrategy:
             """,
             doc_id=doc_id,
             tenant_id=tenant_id,
+            near=near,
         )
         return stitch_toc_run(
             [(dict(r), score_page_text_as_toc((r.get("text") or "").strip()))
              for r in rows if (r.get("text") or "").strip()],
             near=near,
         )
+
+    def _toc_anchor_page(
+        self, session: Any, query: str, doc_id: Optional[str], tenant_id: str = ""
+    ) -> Optional[int]:
+        """Page the question is about, or None if it names no particular part.
+
+        Reads page TEXT rather than extracted headings. Headings would be the
+        tidier signal, but they cannot be relied on: this filing's Section
+        titles come out as "Preamble", "Smith Street" and "Dry", so anchoring
+        on them finds nothing. The body still contains the words the question
+        used, whatever a document calls its parts -- Item 8, Chapter 5, Annex
+        A -- so nothing here is tied to one document's vocabulary.
+        """
+        terms = toc_subject_terms(query)
+        if not terms:
+            return None
+        rows = session.run(
+            f"""
+            MATCH (p:Page)
+            WHERE {_node_scope_cypher("p")}
+              AND {lifecycle_active("p")}
+              AND {tenant_filter("p")}
+              AND trim(coalesce(p.search_text, '')) <> ''
+            RETURN coalesce(p.search_text, '') AS text, p.pdf_page AS page
+            ORDER BY coalesce(p.pdf_page, p.order, 9999)
+            """,
+            doc_id=doc_id,
+            tenant_id=tenant_id,
+        )
+        return pick_subject_page([(r["page"], r["text"]) for r in rows], terms)
 
     def _toc_find_section(
         self, session: Any, doc_id: Optional[str], tenant_id: str = ""

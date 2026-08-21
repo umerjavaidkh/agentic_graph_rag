@@ -94,6 +94,99 @@ def score_page_text_as_toc(text: str) -> float:
 TOC_PAGE_SCORE_FLOOR = 0.42
 
 
+# Words that describe the REQUEST rather than the subject. "What is the table
+# of contents of the financial statements?" is about financial statements; the
+# rest is how the question was phrased, and matching on it would anchor every
+# TOC question to whichever page says "contents" loudest.
+_TOC_REQUEST_WORDS = frozenset(
+    "table tables contents content index list show tell give what which where "
+    "sections section chapter chapters part parts document report pdf file the "
+    "for from about please me my this that these those does have has are was".split()
+)
+
+
+def toc_subject_terms(query: str) -> list[str]:
+    """The words that say WHICH part of a document a TOC question is about.
+
+    Numbers are kept and kept attached: "Item 8" has to stay distinguishable
+    from "Item 80", and a bare "8" is worthless on its own. Everything that
+    merely phrases the request is dropped, so a question naming no subject
+    yields nothing and the document-level TOC stands.
+    """
+    tokens = re.findall(r"[A-Za-z]+|\d+", query or "")
+    out: list[str] = []
+    for i, tok in enumerate(tokens):
+        low = tok.lower()
+        if low.isdigit():
+            # attach a number to the word before it: "item 8" -> "item 8"
+            if out and not out[-1][-1].isdigit():
+                out[-1] = "%s %s" % (out[-1], low)
+            continue
+        if low in _TOC_REQUEST_WORDS or len(low) < 3:
+            continue
+        out.append(low)
+    return out
+
+
+def score_page_for_subject(text: str, terms: list[str]) -> float:
+    """How much of the question's subject a page actually contains.
+
+    Fraction of subject terms present, so a long page is not rewarded for
+    length. Used to locate the part of a document a TOC question is about
+    WITHOUT relying on extracted headings -- on a filing whose heading
+    detection produces "Preamble", "Smith Street" and "Dry", the headings
+    cannot anchor anything, but the body text still says "Item 8".
+    """
+    if not terms:
+        return 0.0
+    low = (text or "").lower()
+    if not low.strip():
+        return 0.0
+    return sum(1 for t in terms if t in low) / len(terms)
+
+
+def pick_subject_page(
+    pages: list[tuple[Optional[int], str]], terms: list[str], *, min_score: float = 0.6
+) -> Optional[int]:
+    """Page the question is about, or None when it names no subject.
+
+    Below `min_score` the question is general ("what is the table of
+    contents?") and must keep the document-level answer rather than being
+    sent somewhere arbitrary. Ties go to the EARLIEST page: a subject is
+    introduced before it is referred to again.
+    """
+    best_page, best, best_hits = None, 0.0, 0
+    for page, text in pages:
+        if page is None:
+            continue
+        score = score_page_for_subject(text, terms)
+        if score < best:
+            continue
+        # Coverage first, then how often the subject is actually discussed.
+        # A phrase like "financial statements" appears once on a cover page and
+        # dozens of times in the section about it; taking the earliest page
+        # with full coverage anchored on the cover and sent every question back
+        # to the front of the document.
+        low = (text or "").lower()
+        hits = sum(low.count(t) for t in terms)
+        if score > best or hits > best_hits:
+            best_page, best, best_hits = page, score, hits
+    return best_page if best >= min_score else None
+
+
+# A chapter's table of contents lists a handful of entries; a document's lists
+# dozens. The score rewards density of "title .... page" lines, so the two are
+# not on the same scale, and one floor cannot serve both: at 0.42 the Chevron
+# 10-K admits its front TOC (0.57) and its exhibit index (1.00) while dropping
+# the six chapter TOCs between them, which score 0.30-0.41.
+#
+# The floor exists to keep prose out. When a question anchors on a place in the
+# document, that anchor does the disambiguating -- a false positive far from it
+# cannot win -- so the bar can come down to admit local TOCs. Unanchored
+# questions keep the strict floor, because nothing else is holding them back.
+TOC_PAGE_SCORE_FLOOR_ANCHORED = 0.28
+
+
 def stitch_toc_run(
     scored_pages: list[tuple[dict, float]], near: Optional[int] = None
 ) -> Optional[dict]:
@@ -112,10 +205,11 @@ def stitch_toc_run(
     TOC -- unless `near` points at one, and the run's earliest page is
     reported as its location.
     """
+    floor = TOC_PAGE_SCORE_FLOOR_ANCHORED if near is not None else TOC_PAGE_SCORE_FLOOR
     by_key = {
         int(page.get("sort_key") or 0): page
         for page, score in scored_pages
-        if score > TOC_PAGE_SCORE_FLOOR
+        if score > floor
     }
     if not by_key:
         return None
@@ -131,7 +225,16 @@ def stitch_toc_run(
     # A chapter's own TOC is only returned when the question points at it
     # (`near`), because picking a deeper one for a general question would
     # answer a question nobody asked.
-    run = min(runs, key=lambda r: abs(r[0] - near)) if near is not None else runs[0]
+    if near is None:
+        run = runs[0]
+    else:
+        # A table of contents precedes the material it indexes, so a run that
+        # starts at or before the anchor is preferred; distance only decides
+        # between those. Without this a section beginning on 165 would take
+        # the TOC on 168 -- which indexes the section AFTER it.
+        preceding = [r for r in runs if r[0] <= near]
+        candidates = preceding or runs
+        run = min(candidates, key=lambda r: abs(r[0] - near))
     first = by_key[run[0]]
     return {
         **first,
