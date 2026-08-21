@@ -343,6 +343,79 @@ class DocumentResolver:
             return _clean_doc_title(str(row["title"]))
         return None
 
+    @staticmethod
+    def _normalise_reference(text: str) -> str:
+        """Lowercase, with every run of non-alphanumerics collapsed to one space.
+
+        Lets a question written as "rag_document_2" match a title stored as
+        "rag document 2" or "rag-document-2". Document ids and titles are
+        punctuated inconsistently -- filenames use underscores, display titles
+        use spaces, filing ids use hyphens -- and none of that changes which
+        document is meant.
+        """
+        return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+
+    def exact_document_reference(
+        self, session, query: str, tenant_id: str = ""
+    ) -> Optional[tuple[str, str]]:
+        """The document whose id or title the question states outright.
+
+        The strongest signal there is, and the one the heuristics miss: a
+        title like "rag_document_2" is lowercase with underscores and a digit,
+        so it is neither an anchor term nor a mid-sentence proper noun, and
+        strict resolution declined on it. The thread's own document then won
+        by default -- so a question naming one document was answered from
+        another, and labelled as the one that was asked for.
+
+        Widening the heuristics was not an option: this method's own comments
+        record that treating ordinary vocabulary as document names made a
+        638-section 10-K beat an unrelated policy document on the strength of
+        "employees" and "benefits". Matching against ids and titles that
+        actually exist cannot do that, because nothing generic is in the list.
+
+        Ambiguity declines rather than guesses: if two documents share a title
+        -- which happens, the same filing ingested twice -- neither is a safe
+        answer, and the ordinary resolution path is better placed to choose.
+        """
+        haystack = self._normalise_reference(query)
+        # No session means no catalogue to compare against -- callers that
+        # resolve without one (and tests that stub the tiers around this)
+        # must fall through to the next tier rather than fail.
+        if not haystack or session is None:
+            return None
+        rows = session.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]->(:{DOC_REVISION_LABEL})
+            WHERE {tenant_filter("dl")}
+            RETURN dl.logical_id AS logical_id, dl.title AS title
+            """,
+            tenant_id=tenant_id,
+        )
+        matches: dict[str, str] = {}
+        for row in rows:
+            # Tolerant read: this tier runs inside a chain whose other steps
+            # issue different queries, so a row that carries neither field is
+            # simply not a document to match against.
+            try:
+                logical_id, title = row.get("logical_id"), row.get("title")
+            except Exception:
+                continue
+            if not logical_id:
+                continue
+            for candidate in (logical_id, title):
+                needle = self._normalise_reference(candidate or "")
+                # Guard against a one-word title ("Policy") matching any
+                # sentence containing that word: an outright reference is a
+                # multi-token identifier, not a single common noun.
+                if len(needle) < 6 or " " not in needle:
+                    continue
+                if needle in haystack:
+                    matches[logical_id] = title or logical_id
+        if len(matches) != 1:
+            return None
+        logical_id, title = next(iter(matches.items()))
+        return logical_id, title
+
     def resolve_document_for_query(
         self, session, query: str, tenant_id: str = "", document_id_hint: str = ""
     ) -> tuple[Optional[str], Optional[str]]:
@@ -370,6 +443,14 @@ class DocumentResolver:
         strict_id, strict_title = self.resolve_document_for_query_strict(session, query, tenant_id)
         if strict_id:
             return strict_id, strict_title
+
+        # An outright reference to a document's id or title outranks the thread.
+        # Staying on the thread's document is the right default for a question
+        # with no vocabulary of its own ("what's on page 6?"), but it must not
+        # override a question that names a different document.
+        named = self.exact_document_reference(session, query, tenant_id)
+        if named:
+            return named
 
         if document_id_hint:
             hint_title = self._validate_document_id(session, document_id_hint, tenant_id)
