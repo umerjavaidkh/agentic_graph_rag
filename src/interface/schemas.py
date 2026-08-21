@@ -186,3 +186,46 @@ class FeedbackOutcomeRequest(BaseModel):
     request_id: str
     passed: bool
     case_id: Optional[str] = None
+
+
+class TabularIngestRequest(BaseModel):
+    source: str = Field(
+        ...,
+        description=(
+            "A CSV directory, .xlsx workbook, .sqlite file, or a database "
+            "connection URL (postgresql://…, mysql://…, sqlite:///…)."
+        ),
+    )
+    load: bool = Field(
+        default=False,
+        description=(
+            "Dry run unless true. Labels are inferred from table names, so two "
+            "unrelated sources collide constantly -- a small fixture and a "
+            "production dataset both infer :Product. Reviewing the plan before "
+            "writing is the point, not a formality."
+        ),
+    )
+    user_id: Optional[str] = None
+    role: Optional[str] = None
+    tenant_id: Optional[str] = None
+
+
+class TabularPlanTable(BaseModel):
+    name: str
+    label: str
+    columns: List[str]
+    primary_key: Optional[str] = None
+    # column -> "table.column" it points at
+    foreign_keys: dict = {}
+    row_count: Optional[int] = None
+
+
+class TabularIngestResponse(BaseModel):
+    # Always the sanitised form: a connection URL carries a password and this
+    # response is logged, cached and shown in a browser.
+    source: str
+    dry_run: bool
+    tables: List[TabularPlanTable]
+    warnings: List[str] = []
+    # Present only after an actual load; per-table rows written.
+    counts: Optional[dict] = None

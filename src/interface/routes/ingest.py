@@ -70,7 +70,8 @@ from ..deps import (_dispatch_ingest_job, _ingest_executor, _query_executor,
                     _run_ingest_job_local, ingestion_manager)
 from ..schemas import (ClearThreadRequest, CorpusIngestRequest, FeedbackOutcomeRequest,
                        IngestionJobSummary, IngestionResponse, IngestionStatusResponse,
-                       QueryRequest, QueryResponse)
+                       QueryRequest, QueryResponse, TabularIngestRequest,
+                       TabularIngestResponse, TabularPlanTable)
 
 logger = logging.getLogger(__name__)
 
@@ -428,3 +429,100 @@ async def ingest_queue_status(
         "queue_depth": depth,
         "failed_jobs": failed,
     }
+
+
+def _tabular_plan_sync(source: str, load: bool) -> dict:
+    """Inspect a tabular source, and write it only when asked.
+
+    Runs off the event loop: reflecting a schema opens a connection, and a
+    load streams every row through Neo4j. Neither belongs on the loop.
+    """
+    from ...shared.neo4j.driver import get_neo4j_driver
+    from ...structured.ingestion.tabular import (
+        _as_sql_url,
+        infer_schema,
+        load_schema,
+        source_tag,
+    )
+
+    normalised = source if _as_sql_url(source) else str(Path(source).expanduser())
+    schema = infer_schema(normalised)
+    counts = None
+    if load:
+        with get_neo4j_driver().session() as session:
+            counts = load_schema(session, normalised, schema)
+    return {
+        # Sanitised: source_tag strips any password before it reaches a caller.
+        "source": source_tag(normalised).removeprefix("tabular:"),
+        "tables": [
+            {
+                "name": t.name,
+                "label": t.label,
+                "columns": t.columns,
+                "primary_key": t.primary_key,
+                "foreign_keys": {c: f"{tt}.{tc}" for c, (tt, tc) in t.foreign_keys.items()},
+                "row_count": t.row_count,
+            }
+            for t in schema.tables
+        ],
+        "warnings": schema.warnings,
+        "counts": counts,
+    }
+
+
+@router.post("/ingest/tabular", response_model=TabularIngestResponse)
+async def ingest_tabular(request: TabularIngestRequest,
+                         authorization: Optional[str] = Header(default=None)):
+    """
+    Load a tabular source -- CSV directory, workbook, SQLite file, or a live
+    database -- into the business graph.
+
+    Dry run by default. `load: true` performs the write, and the plan returned
+    by a dry run is what should be reviewed first: labels come from table
+    names, so a fixture and a production dataset can infer the same label and
+    the second load silently rewrites the first.
+
+    Admin-gated. It writes to the graph, and a database source carries
+    credentials.
+
+    Runs inline rather than as a queued job. Schema reflection is fast, but a
+    large database load holds the request open for its duration -- moving the
+    write to the ingest queue is the follow-up, and is why the dry run exists
+    as a separate, cheap call.
+    """
+    session = resolve_admin_session(
+        authorization=authorization,
+        body_user_id=request.user_id,
+        body_role=request.role,
+        body_tenant_id=request.tenant_id,
+    )
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            _ingest_executor,
+            functools.partial(_tabular_plan_sync, request.source, request.load),
+        )
+    except ValueError as exc:                      # unsupported source shape
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:                       # connection refused, bad credentials
+        raise HTTPException(
+            status_code=502, detail=f"could not read source: {type(exc).__name__}"
+        ) from exc
+
+    if request.load:
+        record_audit_event(
+            event_type=AuditEventType.INGESTION_SUBMITTED,
+            user_id=session.user.user_id,
+            tenant_id=session.user.tenant_id,
+            role=session.user.role.value,
+            resource=result["source"],
+            action="tabular_load",
+            metadata={"tables": len(result["tables"]), "counts": result["counts"]},
+        )
+    return TabularIngestResponse(
+        source=result["source"],
+        dry_run=not request.load,
+        tables=[TabularPlanTable(**t) for t in result["tables"]],
+        warnings=result["warnings"],
+        counts=result["counts"],
+    )
