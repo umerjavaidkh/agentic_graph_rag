@@ -64,7 +64,7 @@ def test_explicit_rtldoc_backend_qualifier_resolves(parser_registry, rtldoc_pdf_
 
 def test_unknown_extension_raises_value_error(parser_registry):
     with pytest.raises(ValueError):
-        parser_registry.get_parser("report.rtf")
+        parser_registry.get_parser("report.docx")
 
 
 def test_unregistered_backend_falls_back_to_bare_extension(parser_registry, rtldoc_pdf_parser_cls):

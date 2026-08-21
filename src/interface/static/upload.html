@@ -153,14 +153,14 @@
   <!-- Upload card -->
   <div class="card" id="ingest_card">
     <div class="tabs">
-      <div class="tab active" id="tab-unstructured" onclick="switchTab('unstructured')">Unstructured (documents)</div>
+      <div class="tab active" id="tab-unstructured" onclick="switchTab('unstructured')">Unstructured (PDF)</div>
       <div class="tab" id="tab-cypher" onclick="switchTab('cypher')">Cypher</div>
       <div class="tab" id="tab-admin" onclick="switchTab('admin')">Admin</div>
     </div>
 
     <!-- Unstructured panel -->
     <div id="panel-unstructured">
-      <h2>Upload one or more documents</h2>
+      <h2>Upload one or more PDFs</h2>
 
       <!-- Drop zone -->
       <div class="dropzone" id="dropzone"
@@ -169,10 +169,10 @@
            ondrop="handleDrop(event)"
            onclick="document.getElementById('file-picker').click()">
         <div class="drop-icon">📄</div>
-        <div class="drop-label">Drop documents here or click to browse</div>
-        <div class="drop-sub">PDF, Word, PowerPoint or Excel — all submitted concurrently</div>
+        <div class="drop-label">Drop PDFs here or click to browse</div>
+        <div class="drop-sub">Multiple files supported — all submitted concurrently</div>
       </div>
-      <input type="file" id="file-picker" accept=".pdf,.docx,.pptx,.xlsx,.xlsm" multiple class="hidden"
+      <input type="file" id="file-picker" accept=".pdf" multiple class="hidden"
              onchange="addFiles(this.files)" />
       <!-- webkitdirectory picks a whole folder, recursively. The browser hands
            over EVERY file in it, so unsupported ones are filtered client-side
@@ -308,7 +308,10 @@
     // 200 files with 3 PDFs uploads 3 files, not 200 -- and the reason each
     // other file was left out is shown rather than discovered later as a
     // failed job.
-    const SUPPORTED = ['.pdf', '.docx', '.pptx', '.xlsx', '.xlsm'];
+    // PDF only: the Word/PowerPoint/Excel parsers were rolled back, so
+    // staging one here would upload a file nothing can parse and fail
+    // server-side instead of being filtered out with a visible count.
+    const SUPPORTED = ['.pdf'];
 
     function addFolder(fileList) {
       const all = Array.from(fileList);
