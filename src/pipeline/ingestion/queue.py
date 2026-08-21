@@ -81,7 +81,13 @@ def enqueue_ingest(job_id: str, *, job_timeout: str = "30m") -> Optional[Any]:
         rq_job = queue.enqueue(
             run_ingest_job,
             job_id,
-            job_id=f"ingest:{job_id}",
+            # A dash, not a colon: rq 2.x validates job ids against
+            # [A-Za-z0-9_-] and rejects anything else. `ingest:{id}` made
+            # every enqueue raise, and enqueue_ingest turns any failure into
+            # None -- which the dispatcher reads as "no queue configured" and
+            # silently runs the job in-process instead. Ingestion kept
+            # working, one document at a time, while the workers sat idle.
+            job_id=f"ingest-{job_id}",
             job_timeout=job_timeout,
             ttl=24 * 3600,
             retry=Retry(max=2, interval=[30, 120]),
