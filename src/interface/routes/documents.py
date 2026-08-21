@@ -399,7 +399,7 @@ async def get_document_ontology_score(
     if axis1_only and axis2_only:
         raise HTTPException(status_code=400, detail="axis1_only and axis2_only are mutually exclusive")
 
-    from ..unstructured.document.ontology_report import run_for_doc
+    from ...unstructured.document.ontology_report import run_for_doc
 
     driver = get_neo4j_driver()
     loop = asyncio.get_running_loop()

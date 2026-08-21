@@ -391,7 +391,7 @@ async def get_page_level_quality_report(
     )
     context = session.user
 
-    from ..unstructured.document.page_report import run_for_doc as run_page_report
+    from ...unstructured.document.page_report import run_for_doc as run_page_report
 
     driver = get_neo4j_driver()
     loop = asyncio.get_running_loop()
