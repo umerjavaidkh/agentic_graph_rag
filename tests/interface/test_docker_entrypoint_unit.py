@@ -18,7 +18,16 @@ ENTRYPOINT = Path(__file__).resolve().parents[2] / "scripts" / "docker-entrypoin
 
 @pytest.fixture(scope="module")
 def script() -> str:
-    return ENTRYPOINT.read_text()
+    """The executable lines only.
+
+    These assertions are about what the shell runs, and the comments in this
+    file discuss the very commands being asserted on -- matching prose would
+    make the test pass or fail on how the script is documented.
+    """
+    return "\n".join(
+        line for line in ENTRYPOINT.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
 
 
 def test_the_entrypoint_exists_and_is_executable():
