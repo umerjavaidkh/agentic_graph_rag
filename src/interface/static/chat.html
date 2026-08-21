@@ -672,6 +672,15 @@
       flex: 1;
       position: relative;
     }
+    .doc-page-image{
+      display:block; width:100%; height:auto;
+      background:#fff; border:1px solid #d8dee9; border-radius:6px;
+    }
+    .doc-open-full{
+      display:inline-block; margin:10px 2px 4px; font-size:13px;
+      color:#2f6feb; text-decoration:none;
+    }
+    .doc-open-full:hover{ text-decoration:underline; }
     .doc-panel-body iframe{
       width: 100%;
       height: 100%;
@@ -1049,7 +1058,7 @@
           cite.title = c.page_label != null && String(c.page_label) !== String(c.page)
             ? (c.title ? c.title + ' — ' : '') + 'printed page ' + c.page_label + ', PDF page ' + c.page
             : (c.title || ('Open page ' + c.page));
-          cite.addEventListener('click', () => openDocPanel(documentId, documentTitle, c.page));
+          cite.addEventListener('click', () => openDocPanel(documentId, documentTitle, c.page, c.pdf_page));
         } else {
           cite.className = 'claim-cite unsourced';
           cite.textContent = 'no source';
@@ -1062,20 +1071,54 @@
       bubble.appendChild(box);
     }
 
-    function openDocPanel(documentId, title, page) {
+    function openDocPanel(documentId, title, page, pdfPage) {
       if (!documentId) return;
       const ctx = getCtx();
       const params = new URLSearchParams({ role: ctx.role, user_id: ctx.user_id });
-      let url = `/documents/${encodeURIComponent(documentId)}/file?${params.toString()}`;
-      if (page) url += `#page=${encodeURIComponent(page)}`;
+      const fileUrl = `/documents/${encodeURIComponent(documentId)}/file?${params.toString()}`
+        + (page ? `#page=${encodeURIComponent(page)}` : '');
 
       document.getElementById('doc_panel_title').textContent = title || documentId;
       const body = document.getElementById('doc_panel_body');
       body.innerHTML = '';
-      const iframe = document.createElement('iframe');
-      iframe.src = url;
-      iframe.title = title || documentId;
-      body.appendChild(iframe);
+
+      // A printed page label ("iii", "A-2") names a place in the document, not
+      // a page index -- only a real number can be rendered.
+      const target = Number(pdfPage != null && pdfPage !== '' ? pdfPage : page);
+      const renderable = Number.isInteger(target) && target > 0;
+
+      const showFile = () => {
+        body.innerHTML = '';
+        const iframe = document.createElement('iframe');
+        iframe.src = fileUrl;
+        iframe.title = title || documentId;
+        body.appendChild(iframe);
+      };
+
+      if (renderable) {
+        // An image of the page, rather than the file itself: the browser has
+        // no renderer for .docx/.pptx/.xlsx (they download instead of opening),
+        // and even for a PDF this pins the view to the cited page instead of
+        // trusting the plugin to honour #page.
+        const img = document.createElement('img');
+        img.className = 'doc-page-image';
+        img.alt = `Page ${target} of ${title || documentId}`;
+        img.src = `/documents/${encodeURIComponent(documentId)}/pages/${target}/image?${params.toString()}`;
+        // Nothing can render this format, or the page is gone -- show the file
+        // rather than a broken image.
+        img.addEventListener('error', showFile);
+        body.appendChild(img);
+
+        const openFull = document.createElement('a');
+        openFull.className = 'doc-open-full';
+        openFull.href = fileUrl;
+        openFull.target = '_blank';
+        openFull.rel = 'noopener';
+        openFull.textContent = 'Open the full document \u2197';
+        body.appendChild(openFull);
+      } else {
+        showFile();
+      }
 
       document.getElementById('doc_panel').classList.add('open');
       document.getElementById('doc_panel_backdrop').classList.add('open');
@@ -1093,7 +1136,7 @@
       link.type = 'button';
       link.className = 'source-open-link';
       link.textContent = page ? `Open page ${page} in document` : 'Open in document';
-      link.addEventListener('click', () => openDocPanel(documentId, documentTitle, page));
+      link.addEventListener('click', () => openDocPanel(documentId, documentTitle, page, source && source.pdf_page));
       container.appendChild(link);
     }
 

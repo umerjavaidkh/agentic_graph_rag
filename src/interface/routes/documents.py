@@ -22,6 +22,13 @@ from ...unstructured.document.graph_snapshot import (
     read_snapshot as read_graph_snapshot,
 )
 from ...unstructured.document.purge import delete_document
+from ...unstructured.document.page_image import (
+    PageOutOfRange,
+    UnsupportedPageFormat,
+    can_render,
+    render_page,
+    supported_suffixes,
+)
 from ...unstructured.document.versioning import source_file_blob_key
 from ...shared.storage.blob.factory import get_blob_store
 from pydantic import BaseModel, Field
@@ -170,6 +177,118 @@ async def get_document_source_file(
         content=data,
         media_type=content_type,
         headers={"Content-Disposition": f'inline; filename="{download_name}"'},
+    )
+
+
+# A page image is a pure function of (revision, page, dpi), so it is rendered
+# once and kept. Re-rendering per view would re-download and re-open the whole
+# source file to produce one page.
+def _page_image_blob_key(tenant_id: str, logical_id: str, revision_id: str,
+                         page_number: int, dpi: int) -> str:
+    return f"page_images/{tenant_id}/{logical_id}/{revision_id}/{page_number}@{dpi}.png"
+
+
+@router.get("/documents/{logical_doc_id}/pages/{page_number}/image")
+async def get_document_page_image(
+    logical_doc_id: str,
+    page_number: int,
+    dpi: int = Query(110, ge=40, le=200),
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+):
+    """One page of the source document, rendered as a PNG.
+
+    The viewer embeds the original file in an iframe, which only works for
+    PDFs -- a browser has no renderer for .docx/.pptx/.xlsx, so those come
+    back as a download instead of a view. An image of the page is something
+    every browser can show, and it pins the view to the cited page rather
+    than relying on a PDF plugin honouring a #page fragment.
+
+    PDFs only for now: rendering an Office page means laying it out, and
+    nothing in this image can do that (see the endpoint's 415 for the
+    upgrade path). Same auth as /documents/{id}/file -- this exposes a
+    picture of a page whose text the chat answer already quoted.
+
+    `dpi` is bounded because it squares: the 200 ceiling on an A4 page is
+    ~1654x2339, while an unbounded value is a memory exhaustion vector.
+    """
+    session = resolve_user_context(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+        body_tenant_id=tenant_id,
+    )
+    context = session.user
+    driver = get_neo4j_driver()
+    loop = asyncio.get_running_loop()
+    meta = await loop.run_in_executor(
+        _query_executor,
+        _active_revision_source_meta_sync,
+        driver,
+        logical_doc_id,
+        context.tenant_id,
+    )
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"No document found for {logical_doc_id!r}")
+
+    suffix = Path(meta["source_filename"] or "").suffix.lower() or ".pdf"
+    if not can_render(suffix):
+        raise HTTPException(
+            status_code=415,
+            detail=f"No page renderer for {suffix or 'this format'} "
+            f"(available: {', '.join(supported_suffixes())}). Word and PowerPoint store "
+            "no layout, so drawing a page of one needs a layout engine that is not in "
+            "this image; the page's text still reaches the answer either way.",
+        )
+
+    owner_tenant = meta["tenant_id"] or context.tenant_id
+    blob_store = get_blob_store()
+    cache_key = _page_image_blob_key(
+        owner_tenant, logical_doc_id, meta["revision_id"], page_number, dpi
+    )
+    png = await loop.run_in_executor(_query_executor, blob_store.get_bytes, cache_key)
+
+    if png is None:
+        source_key = source_file_blob_key(
+            tenant_id=owner_tenant,
+            logical_id=logical_doc_id,
+            revision_id=meta["revision_id"],
+            source_filename=meta["source_filename"] or "",
+        )
+        data = await loop.run_in_executor(_query_executor, blob_store.get_bytes, source_key)
+        if data is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Original source file not available for this document (ingested "
+                "before the document-viewer feature, or not yet backfilled).",
+            )
+        try:
+            png = await loop.run_in_executor(
+                _query_executor, render_page, data, suffix, page_number, dpi
+            )
+        except PageOutOfRange as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except UnsupportedPageFormat as exc:
+            raise HTTPException(status_code=415, detail=str(exc)) from exc
+        # A failed cache write must not fail the response: the image is
+        # already rendered, and the only cost of not storing it is rendering
+        # it again next time.
+        try:
+            await loop.run_in_executor(
+                _query_executor,
+                functools.partial(
+                    blob_store.put_bytes, cache_key, png, content_type="image/png"
+                ),
+            )
+        except Exception:
+            logger.warning("Could not cache page image %s", cache_key, exc_info=True)
+
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 
