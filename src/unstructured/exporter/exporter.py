@@ -331,19 +331,43 @@ class Neo4jExporter:
             RelType.ACTIVE_REVISION.value,
             RelType.ROOT.value,
         }
-        edges_by_rel: Dict[str, List[DKGEdge]] = defaultdict(list)
+        # Endpoint labels, so each MATCH below can use the per-label `id`
+        # index (Page_id, Section_id, ...). An unlabelled `MATCH (a {id: ...})`
+        # has no index to use and degrades to AllNodesScan: every lookup walks
+        # the entire database, and the database also holds the structured
+        # business graph. On a 547k-node instance a 16-page document's 477
+        # semantic edges came to roughly half a billion node scans, and the
+        # single write sat at 100% Neo4j CPU for minutes. Empty-database
+        # ingestion never showed it -- there was nothing to scan.
+        label_by_id: Dict[str, str] = {
+            node.id: (node.type.value if isinstance(node.type, NodeType) else str(node.type))
+            for node in nodes
+        }
+
+        # Grouped by endpoint labels as well as rel type, since the labels are
+        # baked into the query text rather than passed as parameters -- a label
+        # cannot be parameterised in Cypher.
+        edges_by_shape: Dict[tuple, List[DKGEdge]] = defaultdict(list)
         for edge in edges:
             rel = edge.rel_type.value if isinstance(edge.rel_type, RelType) else str(edge.rel_type)
             if rel not in skip_rels:
-                edges_by_rel[rel].append(edge)
+                edges_by_shape[
+                    (rel, label_by_id.get(edge.source_id), label_by_id.get(edge.target_id))
+                ].append(edge)
 
-        for rel_type, rel_edges in edges_by_rel.items():
+        for (rel_type, source_label, target_label), rel_edges in edges_by_shape.items():
+            # An edge can point at a node this revision did not write (nothing
+            # in the current plan does, but the write must not depend on that).
+            # Unknown endpoints keep the unlabelled form: slow, but correct.
+            a = f"a:{source_label}" if source_label else "a"
+            b = f"b:{target_label}" if target_label else "b"
             for chunk_start in range(0, len(rel_edges), NEO4J_WRITE_BATCH):
                 chunk = rel_edges[chunk_start : chunk_start + NEO4J_WRITE_BATCH]
                 rows = [Neo4jExporter._edge_to_param_dict(e) for e in chunk]
                 tx.run(
                     f"UNWIND $rows AS row "
-                    "MATCH (a {id: row.source_id}), (b {id: row.target_id}) "
+                    f"MATCH ({a} {{id: row.source_id}}) "
+                    f"MATCH ({b} {{id: row.target_id}}) "
                     f"MERGE (a)-[r:{rel_type}]->(b) "
                     "SET r.weight = row.weight, r.axis = row.axis, r.properties = row.properties, "
                     "r.confidence = row.confidence, r.confidence_tier = row.confidence_tier, "
