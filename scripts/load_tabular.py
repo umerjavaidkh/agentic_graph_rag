@@ -23,24 +23,35 @@ if str(ROOT) not in sys.path:
 
 from src.shared.neo4j.driver import get_neo4j_driver  # noqa: E402
 from src.structured.ingestion.schema_docs import ensure_field_docs  # noqa: E402
-from src.structured.ingestion.tabular import infer_schema, load_schema, source_tag  # noqa: E402
+from src.structured.ingestion.tabular import (  # noqa: E402
+    _as_sql_url,
+    infer_schema,
+    load_schema,
+    source_tag,
+)  # noqa: E402
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", required=True, help="CSV directory, .xlsx workbook, or .sqlite file")
+    ap.add_argument("--source", required=True, help="CSV directory, .xlsx workbook, .sqlite file, or a database URL "
+                         "(e.g. postgresql://user:pass@host/db)")
     ap.add_argument("--load", action="store_true", help="actually write to Neo4j (default: dry run)")
     ap.add_argument("--clear", action="store_true", help="delete the labels this schema owns first")
     ap.add_argument("--no-docs", action="store_true",
                     help="skip generating field descriptions (one LLM call per label)")
     args = ap.parse_args()
 
-    source = Path(args.source).expanduser()
-    if not source.exists():
+    # A connection URL is not a path, and wrapping one in Path() turns
+    # "sqlite:///shop.db" into a filename -- which then fails trying to open a
+    # file of that literal name. Ask the loader which kind this is rather than
+    # guessing here, so the CLI and the library agree on the answer.
+    source = args.source if _as_sql_url(args.source) else Path(args.source).expanduser()
+    if isinstance(source, Path) and not source.exists():
         sys.exit(f"not found: {source}")
 
     schema = infer_schema(source)
-    print(f"Inferred from {source.name}:\n")
+    label = source_tag(source).removeprefix("tabular:")
+    print(f"Inferred from {label}:\n")
     print(schema.describe())
 
     links = sum(len(t.foreign_keys) for t in schema.tables)

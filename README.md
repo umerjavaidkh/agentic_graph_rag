@@ -236,27 +236,53 @@ Load the sample data:
   see [ATTRIBUTION.md](sample_data_to_test/structured/olist-sample/ATTRIBUTION.md) for
   how it was cut and for its licence, which is **CC BY-NC-SA, not MIT like the code**.
 
-- **Your own tables** — a SQLite database, a directory of CSVs, or an Excel
-  workbook. Prints the schema and relationships it inferred and stops, so you can
-  check the plan before anything is written:
+- **Your own tables** — a live database, a SQLite file, a directory of CSVs, or
+  an Excel workbook. Prints the schema and relationships it inferred and stops,
+  so you can check the plan before anything is written:
 
   ```bash
   python scripts/load_tabular.py --source ./my-data      # dry run
   python scripts/load_tabular.py --source ./my-data --load
+
+  # or connect to a database directly
+  python scripts/load_tabular.py --source "postgresql://user:pass@host/db"
+  python scripts/load_tabular.py --source "postgresql://user:pass@host/db" --load
   ```
+
+  The same thing over HTTP, which is what a scheduled or scripted load should
+  use. Dry run unless `load` is true:
+
+  ```bash
+  curl -X POST http://localhost:8000/ingest/tabular \
+    -H 'Content-Type: application/json' \
+    -d '{"source": "postgresql://user:pass@host/db",
+         "user_id": "admin_001", "role": "admin"}'          # plan only
+
+  # …review the plan, then
+  #   add  "load": true   to write
+  ```
+
+  Admin-only, and the response never contains the connection string — it is
+  masked before being returned, because that response is logged and rendered in
+  a browser.
 
   | Format | Support |
   | --- | --- |
   | **SQLite** — `.db`, `.sqlite`, `.sqlite3` | Schema read directly, including **declared** foreign keys, so relationships are known rather than guessed |
   | **CSV** — a directory of `.csv` files | Relationships inferred from column naming (`dept_id` → `dept.dept_id`) |
   | **Excel** — `.xlsx`, `.xlsm` | One sheet per table; needs `openpyxl` installed |
-  | ~~`.sql` dump~~ | **Not supported.** A text file of `CREATE TABLE` / `INSERT` statements is not parsed — this is the usual export from MySQL, Postgres and SQL Server |
-  | ~~Live database connection~~ | **Not supported.** There is no connection string; the loader takes a file or a directory, not a server |
+  | **Live database** — any SQLAlchemy URL (`postgresql://`, `mysql://`, `mssql://`, `sqlite:///`) | Schema reflected from the server, including **declared** foreign keys. Rows stream, so table size does not change memory use |
+  | ~~`.sql` dump~~ | **Not supported.** A text file of `CREATE TABLE` / `INSERT` statements is not parsed — connect to the database instead, or export each table as CSV |
 
-  Coming from MySQL or Postgres, export each table as CSV rather than taking a
-  `.sql` dump. Importing a dump into SQLite first is unreliable — dialect
-  differences (`AUTO_INCREMENT`, backtick quoting, `ENGINE=` clauses) break a
-  plain import.
+  Coming from MySQL or Postgres, connect to the database directly rather than
+  taking a `.sql` dump — reflection reads the real foreign keys, which is
+  strictly better than anything inferred from a CSV export. Needs the driver
+  for your engine (`psycopg[binary]` for Postgres, `PyMySQL` for MySQL);
+  SQLAlchemy itself ships in `requirements.txt`.
+
+  A composite primary key is reported as a warning and its rows load without
+  identity, because there is no single property to MERGE on — re-running that
+  load duplicates them.
 
   SQLite is the best-behaved input of the three: because its foreign keys are
   declared rather than guessed, the "load related tables together" caveat below
@@ -406,7 +432,7 @@ chapter, no extra graph-algorithm dependency.
 | Multi-provider chat/synthesis (OpenAI, Anthropic, Gemini) — embeddings always OpenAI                                                                                                          | ✅                                                                                                       |
 | Scalable ingestion (Redis + RQ workers, versioning)                                                                                                                                           | ✅                                                                                                       |
 | Ingestion-quality validation (`GET /ingest/quality`, LLM-free per-document report)                                                                                                            | ✅                                                                                                       |
-| Tabular loading — SQLite (`.db`/`.sqlite`), CSV directories, Excel (`.xlsx`), with inferred relationships, per-source provenance and generated field descriptions | ✅ done via `scripts/load_tabular.py` — **CLI only**; the upload screen accepts PDFs and Cypher, not tables. No `.sql` dump or live-connection support |
+| Tabular loading — live databases (any SQLAlchemy URL), SQLite, CSV directories, Excel, with declared or inferred relationships, per-source provenance and generated field descriptions | ✅ done via `scripts/load_tabular.py` and `POST /ingest/tabular`. The upload **screen** still accepts only PDFs and Cypher — no tables tab yet. `.sql` dumps are not parsed |
 | Source document viewer — click a citation, view the original PDF in a side panel                                                                                                              | ✅                                                                                                       |
 | Bulk-question queue — paste several questions, answered one at a time in order                                                                                                                | ✅                                                                                                       |
 | Multi-tenancy (property-based `tenant_id` isolation)                                                                                                                                          | ✅                                                                                                       |
