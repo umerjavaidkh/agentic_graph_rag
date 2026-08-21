@@ -26,9 +26,11 @@ from ...unstructured.document.page_image import (
     PageOutOfRange,
     UnsupportedPageFormat,
     can_render,
+    registered_suffixes,
     render_page,
     supported_suffixes,
 )
+from ...shared.storage.hydrator import BlobHydrator
 from ...unstructured.document.versioning import source_file_blob_key
 from ...shared.storage.blob.factory import get_blob_store
 from pydantic import BaseModel, Field
@@ -235,12 +237,21 @@ async def get_document_page_image(
 
     suffix = Path(meta["source_filename"] or "").suffix.lower() or ".pdf"
     if not can_render(suffix):
+        installable = suffix in registered_suffixes()
         raise HTTPException(
             status_code=415,
-            detail=f"No page renderer for {suffix or 'this format'} "
-            f"(available: {', '.join(supported_suffixes())}). Word and PowerPoint store "
-            "no layout, so drawing a page of one needs a layout engine that is not in "
-            "this image; the page's text still reaches the answer either way.",
+            detail=(
+                f"Cannot render a page of {suffix or 'this format'} here "
+                f"(available: {', '.join(supported_suffixes())}). "
+                + (
+                    "Install LibreOffice and this starts working with no code or "
+                    "configuration change."
+                    if installable
+                    else "No renderer handles this format."
+                )
+                + " The page's text is available from "
+                f"/documents/{logical_doc_id}/pages/{page_number}/text."
+            ),
         )
 
     owner_tenant = meta["tenant_id"] or context.tenant_id
@@ -290,6 +301,99 @@ async def get_document_page_image(
         media_type="image/png",
         headers={"Cache-Control": "private, max-age=3600"},
     )
+
+
+def _page_text_sync(driver, logical_doc_id: str, tenant_id: str, page_number: int) -> Optional[dict]:
+    with driver.session() as session:
+        row = session.run(
+            f"""
+            MATCH (p:Page {{logical_doc_id: $lid, pdf_page: $page}})
+            WHERE p.lifecycle_status = 'ACTIVE' AND {tenant_filter('p')}
+            RETURN p.blob_key_text AS blob_key,
+                   p.search_text   AS search_text,
+                   p.document_page AS document_page,
+                   p.title         AS title,
+                   p.section_path  AS section_path
+            LIMIT 1
+            """,
+            lid=logical_doc_id,
+            page=page_number,
+            tenant_id=tenant_id,
+        ).single()
+        return dict(row) if row else None
+
+
+@router.get("/documents/{logical_doc_id}/pages/{page_number}/text")
+async def get_document_page_text(
+    logical_doc_id: str,
+    page_number: int,
+    authorization: Optional[str] = Header(default=None),
+    user_id: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+):
+    """The stored text of one page -- what the viewer shows when it cannot
+    draw the page.
+
+    This is the content the answer was built from, so it is the honest
+    fallback: no layout, but nothing invented and nothing missing that the
+    graph holds. Full text comes from the blob store when the storage split
+    has moved it there, falling back to the `search_text` kept on the node.
+    """
+    session = resolve_user_context(
+        authorization=authorization,
+        body_user_id=user_id,
+        body_role=role,
+        body_tenant_id=tenant_id,
+    )
+    context = session.user
+    driver = get_neo4j_driver()
+    loop = asyncio.get_running_loop()
+    page = await loop.run_in_executor(
+        _query_executor,
+        _page_text_sync,
+        driver,
+        logical_doc_id,
+        context.tenant_id,
+        page_number,
+    )
+    if not page:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No page {page_number} for document {logical_doc_id!r}.",
+        )
+
+    hydrator = BlobHydrator()
+    text = await loop.run_in_executor(
+        _query_executor,
+        functools.partial(
+            hydrator.hydrate, page["blob_key"], fallback=page["search_text"] or ""
+        ),
+    )
+    return {
+        "logical_doc_id": logical_doc_id,
+        "pdf_page": page_number,
+        "document_page": page["document_page"],
+        "title": page["title"],
+        "section_path": page["section_path"] or None,
+        "text": text,
+        "renderable": can_render(
+            Path(
+                (
+                    await loop.run_in_executor(
+                        _query_executor,
+                        _active_revision_source_meta_sync,
+                        driver,
+                        logical_doc_id,
+                        context.tenant_id,
+                    )
+                    or {}
+                ).get("source_filename")
+                or ""
+            ).suffix.lower()
+            or ".pdf"
+        ),
+    }
 
 
 @router.delete("/documents/{logical_doc_id}")
