@@ -87,13 +87,10 @@ services:
   worker:
     build: .
     # No container_name so Docker can create graphrag-worker-1, -2, etc. on scale
-    command: >
-      sh -c "
-        python -m pip install --quiet rq redis &&
-        rq worker ingest
-          --url redis://redis:6379/0
-          --with-scheduler
-      "
+    # rq and redis ship in requirements.txt, so this needs no install step --
+    # and the entrypoint now execs this instead of discarding it.
+    # Scale with: docker compose up -d --scale worker=N
+    command: ["rq", "worker", "ingest", "--url", "redis://redis:6379/0", "--with-scheduler"]
     env_file:
       - .env
     environment:
