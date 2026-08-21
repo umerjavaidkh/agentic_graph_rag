@@ -8,7 +8,7 @@ import shutil
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 from fastapi import UploadFile
@@ -854,8 +854,33 @@ class IngestionManager:
             statements = filtered
         return statements, params
 
+    @staticmethod
+    def _safe_upload_name(filename: Optional[str]) -> str:
+        """The bare file name from whatever the client called this upload.
+
+        An upload's filename is client-supplied text, not a path, and this
+        one gets interpolated into a real one. Two things follow.
+
+        It can carry directories. Picking a folder in the browser sends each
+        file as `<folder>/<name>` (webkitRelativePath), so the save path named
+        a subdirectory that was never created and every upload in a folder
+        failed on FileNotFoundError.
+
+        And it can carry `..`. A name like `../../etc/cron.d/job` would have
+        written outside the ingest directory entirely. Taking the last
+        component of both separators closes that off -- Windows clients send
+        backslashes, which PurePosixPath does not treat as separators.
+        """
+        raw = (filename or "").replace("\\", "/")
+        name = PurePosixPath(raw).name
+        # `.`, `..` and the empty string all resolve to no name at all.
+        if name in ("", ".", ".."):
+            return "upload"
+        return name
+
     def _save_upload(self, upload: UploadFile, job_id: str) -> Path:
-        target = self.temp_dir / f"{job_id}_{upload.filename}"
+        target = self.temp_dir / f"{job_id}_{self._safe_upload_name(upload.filename)}"
+        target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("wb") as out_file:
             shutil.copyfileobj(upload.file, out_file)
         return target
