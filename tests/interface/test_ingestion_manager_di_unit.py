@@ -294,10 +294,8 @@ def test_process_unstructured_rejects_unsupported_extension(monkeypatch):
     monkeypatch.setattr(service_mod, "AUTO_LOAD_TO_NEO4J", False)
 
     manager = _make_manager(FakeParser())
-    # .rtf, not .docx: Word is a supported format now, so it no longer
-    # demonstrates rejection.
-    with tempfile.NamedTemporaryFile(suffix=".rtf", delete=False) as f:
-        f.write(b"not a document we parse")
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
+        f.write(b"not a pdf")
         bad_path = Path(f.name)
     try:
         job = IngestionJob(id="job3", type="unstructured", input_path=bad_path)
