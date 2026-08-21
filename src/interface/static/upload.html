@@ -174,6 +174,16 @@
       </div>
       <input type="file" id="file-picker" accept=".pdf,.docx,.pptx,.xlsx,.xlsm" multiple class="hidden"
              onchange="addFiles(this.files)" />
+      <!-- webkitdirectory picks a whole folder, recursively. The browser hands
+           over EVERY file in it, so unsupported ones are filtered client-side
+           rather than uploaded and turned into failed jobs one at a time. -->
+      <input type="file" id="folder-picker" webkitdirectory directory multiple class="hidden"
+             onchange="addFolder(this.files)" />
+      <div style="margin-top:0.5rem; display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap">
+        <button type="button" class="secondary"
+                onclick="document.getElementById('folder-picker').click()">📁 Choose folder…</button>
+        <span id="folder-note" style="font-size:0.85rem;color:#64748b"></span>
+      </div>
 
       <div class="file-list" id="file-list"></div>
 
@@ -291,6 +301,28 @@
         }
       }
       renderFileList();
+    }
+
+    // Extensions the server has a parser for; mirrors
+    // parser_registry.supported_extensions(). Filtering here means a folder of
+    // 200 files with 3 PDFs uploads 3 files, not 200 -- and the reason each
+    // other file was left out is shown rather than discovered later as a
+    // failed job.
+    const SUPPORTED = ['.pdf', '.docx', '.pptx', '.xlsx', '.xlsm'];
+
+    function addFolder(fileList) {
+      const all = Array.from(fileList);
+      const keep = all.filter(f =>
+        SUPPORTED.some(ext => f.name.toLowerCase().endsWith(ext)));
+      addFiles(keep);
+      const skipped = all.length - keep.length;
+      const note = document.getElementById('folder-note');
+      note.textContent = keep.length
+        ? `${keep.length} staged from folder` + (skipped ? `, ${skipped} skipped` : '')
+        : `no supported files in that folder (${all.length} skipped)`;
+      // Re-picking the SAME folder fires no change event unless the value is
+      // cleared, which looks like the button silently doing nothing.
+      document.getElementById('folder-picker').value = '';
     }
 
     function removeFile(idx) {
