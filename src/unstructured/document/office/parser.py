@@ -65,13 +65,86 @@ def _toc_from(blocks_by_page: list[tuple[int, list[Block]]]) -> list[tuple[int, 
     return toc
 
 
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+class _Para:
+    __slots__ = ("paragraph",)
+
+    def __init__(self, paragraph): self.paragraph = paragraph
+
+
+class _Tbl:
+    __slots__ = ("table",)
+
+    def __init__(self, table): self.table = table
+
+
+def _body_items(document) -> "list[_Para | _Tbl]":
+    """Paragraphs and tables in the order they appear in the document.
+
+    `document.paragraphs` and `document.tables` are two separate sequences,
+    so reading them one after the other puts every table at the end of the
+    last page no matter where it sits in the text -- wrong for reading order
+    and wrong for any citation that lands on a table. The body's own child
+    order is the only thing that knows where they interleave.
+    """
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    items: list[_Para | _Tbl] = []
+    for child in document.element.body.iterchildren():
+        if child.tag == f"{_W}p":
+            items.append(_Para(Paragraph(child, document)))
+        elif child.tag == f"{_W}tbl":
+            items.append(_Tbl(Table(child, document)))
+    return items
+
+
+def _paragraph_segments(para) -> list[str]:
+    """One paragraph's text, split at every page break, in document order.
+
+    Walks the XML rather than reading `paragraph.text`, because neither page
+    break survives into it -- python-docx renders both as an empty string, so
+    the obvious `"\f" in para.text` test never fires on a real Word file and
+    every document collapses onto page 1.
+
+    Two markers count. `w:br w:type="page"` is a break the author inserted.
+    `w:lastRenderedPageBreak` is where Word itself paginated when it last
+    saved: not a guess, but a record of real pagination, and the closest a
+    .docx comes to having page numbers at all.
+
+    Splitting mid-paragraph matters because that is where Word's own breaks
+    usually land -- a paragraph spanning two pages should cite the page each
+    half is actually on. Descending the tree also picks up text inside
+    hyperlinks, which `paragraph.runs` skips.
+    """
+    segments = [""]
+    for node in para._element.iter():
+        tag = node.tag
+        if tag == f"{_W}t":
+            segments[-1] += node.text or ""
+        elif tag == f"{_W}tab":
+            segments[-1] += "\t"
+        elif tag == f"{_W}lastRenderedPageBreak":
+            segments.append("")
+        elif tag == f"{_W}br":
+            if node.get(f"{_W}type") == "page":
+                segments.append("")
+            else:
+                segments[-1] += "\n"
+        elif tag == f"{_W}cr":
+            segments[-1] += "\n"
+    return segments
+
+
 class DocxParser:
     """Word documents.
 
-    Word has no stable page concept -- pagination is decided by the renderer,
-    not stored -- so an explicit page break is the only honest divider. A
-    document with none becomes a single page, which is accurate rather than a
-    guess at where pages would fall.
+    Word stores no page numbers -- pagination is the renderer's decision --
+    so pages here are recovered from the two break markers a .docx does
+    carry, and a document with neither becomes a single page, which is
+    accurate rather than a guess at where pages would fall.
     """
 
     def parse_ir(self, source: str | Path) -> DocumentIR:
@@ -83,14 +156,32 @@ class DocxParser:
         current: list[Block] = []
         page_no = 1
 
-        for para in document.paragraphs:
-            text = (para.text or "").strip()
-            style = (getattr(para.style, "name", "") or "")
-            if "\f" in (para.text or "") and current:      # explicit page break
+        def flush() -> None:
+            """End the current page, if it has anything on it.
+
+            A break with nothing accumulated -- one at the very top, or two
+            in a row -- advances nothing, so `pages` stays contiguous with
+            the page numbers on its blocks. The cost is that a deliberately
+            blank page is not counted; the alternative is a `pages` list
+            whose indices no longer line up with what the blocks cite.
+            """
+            nonlocal page_no, current
+            if current:
                 pages.append(_page(page_no, current))
                 page_no, current = page_no + 1, []
-            if not text:
+
+        for item in _body_items(document):
+            if isinstance(item, _Tbl):
+                rows = ["\t".join(c.text.strip() for c in r.cells) for r in item.table.rows]
+                body = "\n".join(r for r in rows if r.strip())
+                if body:
+                    current.append(
+                        Block(text=body, page=page_no, source="docx", kind="table")
+                    )
                 continue
+
+            para = item.paragraph
+            style = (getattr(para.style, "name", "") or "")
             extra: dict[str, Any] = {}
             if style.lower().startswith("heading"):
                 extra = dict(_HEADING)
@@ -98,13 +189,15 @@ class DocxParser:
                 extra["heading_level"] = int(tail) if tail.isdigit() else 1
             elif style.lower() in ("title", "subtitle"):
                 extra = dict(_HEADING, heading_level=1)
-            current.append(Block(text=text, page=page_no, source="docx", extra=extra))
 
-        for table in document.tables:
-            rows = ["\t".join(c.text.strip() for c in r.cells) for r in table.rows]
-            body = "\n".join(r for r in rows if r.strip())
-            if body:
-                current.append(Block(text=body, page=page_no, source="docx", kind="table"))
+            for index, segment in enumerate(_paragraph_segments(para)):
+                if index:                      # a page break preceded this run
+                    flush()
+                text = segment.strip()
+                if text:
+                    current.append(
+                        Block(text=text, page=page_no, source="docx", extra=dict(extra))
+                    )
 
         pages.append(_page(page_no, current))
         ir = DocumentIR(

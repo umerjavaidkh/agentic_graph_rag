@@ -117,3 +117,75 @@ def test_a_stated_heading_is_trusted_whatever_produced_it():
     src = inspect.getsource(axis1_structural)
     assert 'block.source == "rtldoc" and block.extra.get("heading_hint")' not in src
     assert 'block.extra.get("heading_hint") == "heading"' in src
+
+
+def _docx_with_real_page_breaks(path):
+    """A Word file broken the way Word breaks one -- not with a "\f".
+
+    `add_page_break` writes `<w:br w:type="page"/>`, which is what a real
+    document carries. python-docx renders it as an empty string in
+    `paragraph.text`, so a parser testing for "\f" sees a single page.
+    """
+    from docx import Document
+
+    document = Document()
+    document.add_heading("Revenue Review", 1)
+    document.add_paragraph("Net revenue was 4.2 billion in the period.")
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "Upstream"
+    table.cell(0, 1).text = "2900"
+    document.add_page_break()
+    document.add_heading("Risk Factors", 1)
+    document.add_paragraph("Commodity price volatility remains the principal risk.")
+    document.add_page_break()
+    document.add_heading("Outlook", 1)
+    document.add_paragraph("Guidance unchanged for the year.")
+    document.save(str(path))
+    return path
+
+
+def test_a_real_word_page_break_starts_a_new_page(tmp_path):
+    """The whole point of a page number in a citation is that it differs.
+
+    The regression this guards is silent: every block still parses, every
+    citation still renders, and every one of them says page 1.
+    """
+    from src.unstructured.document.office.parser import DocxParser
+
+    ir = DocxParser().parse_ir(_docx_with_real_page_breaks(tmp_path / "breaks.docx"))
+
+    assert ir.page_count == 3, f"page breaks not detected: {ir.page_count} page(s)"
+    assert [p.page for p in ir.pages] == [1, 2, 3]
+    assert "Risk Factors" in ir.pages[1].text
+    assert "Outlook" in ir.pages[2].text
+    assert all(b.page == p.page for p in ir.pages for b in p.blocks)
+
+
+def test_a_table_is_cited_on_the_page_it_sits_on(tmp_path):
+    """`document.tables` is a separate sequence from `document.paragraphs`.
+
+    Reading one after the other puts every table on the last page, however
+    early in the text it appears -- so a citation landing on a table sends
+    the reader to the wrong page, and reading order is wrong too.
+    """
+    from src.unstructured.document.office.parser import DocxParser
+
+    ir = DocxParser().parse_ir(_docx_with_real_page_breaks(tmp_path / "table.docx"))
+
+    tables = [(p.page, b) for p in ir.pages for b in p.blocks if b.kind == "table"]
+    assert len(tables) == 1
+    page, block = tables[0]
+    assert page == 1, f"table attributed to page {page}, but it sits on page 1"
+    assert "Upstream" in block.text
+    # ...and in reading order: after the heading it follows, not appended last.
+    page_one = [b.text for b in ir.pages[0].blocks]
+    assert page_one.index("Revenue Review") < page_one.index(block.text)
+
+
+def test_a_slide_is_not_called_a_pdf_page(tmp_path):
+    """A region title is user-facing text that ends up in a citation."""
+    from src.unstructured.graph.axis1_structural import _PAGE_UNIT, _region_title
+
+    assert _region_title("table", "", 3, 1, unit=_PAGE_UNIT["pptx"]) == "Table 1 (slide 3)"
+    assert _region_title("table", "", 2, 1, unit=_PAGE_UNIT["xlsx"]) == "Table 1 (sheet 2)"
+    assert _region_title("figure", "", 7, 2) == "Figure 2 (PDF page 7)"
