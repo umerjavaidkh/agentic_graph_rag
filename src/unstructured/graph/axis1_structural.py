@@ -89,12 +89,20 @@ def _build_region_tags(
     return list(dict.fromkeys(tags))
 
 
-def _region_title(kind: str, text: str, pdf_page: int, index: int) -> str:
+# What one page of a document is called, by the parser that produced it. A
+# slide and a worksheet are pages to the graph, but calling either a "PDF
+# page" in a citation names a file format the document does not have.
+_PAGE_UNIT = {"pptx": "slide", "xlsx": "sheet", "docx": "page"}
+
+
+def _region_title(
+    kind: str, text: str, pdf_page: int, index: int, unit: str = "PDF page"
+) -> str:
     first_line = (text or "").strip().splitlines()[0][:120] if text else ""
     if first_line:
         return first_line
     label = "Table" if kind == "table" else "Figure"
-    return f"{label} {index} (PDF page {pdf_page})"
+    return f"{label} {index} ({unit} {pdf_page})"
 
 
 # Chunk-bounded text kept on Neo4j nodes for Lucene/IDF lexical matching
@@ -943,7 +951,10 @@ class Axis1StructuralBuilder:
                 page_node = page_by_pdf.get(page_no)
                 doc_page = page_node.document_page if page_node else None
                 tags = _build_region_tags(kind, text, page_no, idx, doc_page)
-                title = _region_title(kind, text, page_no, idx)
+                title = _region_title(
+                    kind, text, page_no, idx,
+                    unit=_PAGE_UNIT.get(region.source or "", "PDF page"),
+                )
                 node_id = f"{document_id}_region_{page_no}_{idx}"
 
                 node = DKGNode(
