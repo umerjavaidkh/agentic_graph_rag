@@ -52,3 +52,7 @@ qdrant-client>=1.9.0
 # Pulls in torch (CPU wheel) — a real image-size cost, not optional at
 # import time since RerankerService loads it lazily on first query.
 sentence-transformers>=3.0.0
+# Reflecting a live database into the graph: one API over every managed SQL
+# engine, and its reflection reports DECLARED foreign keys, which is what the
+# CSV path can only guess at.
+sqlalchemy>=2.0

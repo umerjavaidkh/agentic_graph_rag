@@ -45,6 +45,12 @@ _NON_WORD = re.compile(r"[^0-9a-zA-Z]+")
 _ID_SUFFIX = re.compile(r"_?id$", re.I)
 
 
+# Rows buffered per round trip when streaming a SQL table. Large enough that
+# per-batch overhead is negligible, small enough that one batch is not a
+# memory event on a wide table.
+_SQL_STREAM_BATCH = 1000
+
+
 def _label_for(table: str) -> str:
     """Table/sheet name -> node label ("olist_order_items" -> "OrderItem")."""
     name = _NON_WORD.sub(" ", table).strip()
@@ -195,8 +201,138 @@ def _infer_csv_tables(paths: list[Path]) -> InferredSchema:
     return InferredSchema(tables, warnings)
 
 
-def infer_schema(source: Path) -> InferredSchema:
-    """Read a directory of CSVs, an .xlsx workbook, or a SQLite database."""
+# ── SQL databases ──────────────────────────────────────────────────────────
+#
+# A live database is the one source that already KNOWS its schema. CSVs and
+# spreadsheets force us to guess relationships from column names; a database
+# declares them, so reflection gives real foreign keys instead of inference.
+#
+# SQLAlchemy is imported lazily throughout. It is an optional dependency -- a
+# deployment that only ingests files should not have to install a database
+# toolkit, and this module must stay importable without it.
+
+# Anything that is not an existing path is treated as a connection URL.
+# Checked in that order deliberately: a relative path like "data/shop.db"
+# contains no "://" but is still a file, and probing the filesystem first
+# means a typo'd URL fails with a connection error rather than silently
+# being read as a missing file.
+def _as_sql_url(source: "str | Path") -> Optional[str]:
+    """The connection URL, if `source` names a database rather than a file."""
+    if isinstance(source, Path):
+        return None
+    text = str(source)
+    return text if "://" in text and not Path(text).exists() else None
+
+
+def _safe_url(url: str) -> str:
+    """The URL with its password removed, for logs and provenance stamps.
+
+    A connection URL routinely carries credentials, and `_source` is written
+    onto every node this loader creates. Stamping the raw URL would put the
+    database password in the graph, where it is readable by anyone who can
+    query it and survives in backups.
+    """
+    from sqlalchemy.engine import make_url
+
+    try:
+        return make_url(url).render_as_string(hide_password=True)
+    except Exception:
+        # Never let a malformed URL leak by falling back to the raw string.
+        return url.split("://", 1)[0] + "://<unparsed>"
+
+
+def _sql_engine(url: str):
+    from sqlalchemy import create_engine
+
+    # pool_pre_ping costs one round trip per checkout and buys immunity to
+    # connections dropped by an idle timeout, which is the normal failure
+    # mode for a long ingest against a managed database.
+    return create_engine(url, pool_pre_ping=True)
+
+
+def _sqlalchemy_tables(url: str) -> InferredSchema:
+    """Reflect a database into the same Table shape the file loaders produce.
+
+    Uses DECLARED foreign keys. That is the whole reason to prefer a database
+    source: `_infer_csv_tables` has to guess a relationship from a column
+    called `customer_id`, and guesses wrongly on any column that merely looks
+    like a key. Reflection reports what the schema actually says.
+    """
+    from sqlalchemy import MetaData, inspect
+
+    engine = _sql_engine(url)
+    meta = MetaData()
+    try:
+        meta.reflect(bind=engine)
+        inspector = inspect(engine)
+        tables: list[Table] = []
+        warnings: list[str] = []
+        for name, tbl in sorted(meta.tables.items()):
+            pk_cols = [c.name for c in tbl.primary_key.columns]
+            if len(pk_cols) > 1:
+                # A composite key has no single property to MERGE on, so the
+                # rows would load without identity and duplicate on re-run.
+                warnings.append(
+                    f"{name}: composite primary key ({', '.join(pk_cols)}) is not "
+                    "supported -- rows will load without identity"
+                )
+            fks: dict[str, tuple[str, str]] = {}
+            for fk in tbl.foreign_keys:
+                fks[fk.parent.name] = (fk.column.table.name, fk.column.name)
+            tables.append(Table(
+                name=name,
+                label=_label_for(name),
+                columns=[c.name for c in tbl.columns],
+                primary_key=pk_cols[0] if len(pk_cols) == 1 else None,
+                foreign_keys=fks,
+                row_count=None,      # counting every table up front costs a
+                                     # full scan each; the loader reports real
+                                     # counts as it writes.
+                source="sql",
+            ))
+        if tables and not any(t.foreign_keys for t in tables):
+            warnings.append(
+                "no foreign keys declared in this database, so no relationships were "
+                "found -- the graph will be disconnected islands unless keys are added"
+            )
+        if not tables:
+            warnings.append(f"{_safe_url(url)}: no tables found")
+        _ = inspector  # reflection already used it; kept for clarity of intent
+        return InferredSchema(tables, warnings)
+    finally:
+        engine.dispose()
+
+
+def _sql_rows(url: str, table: Table) -> Iterator[dict[str, Any]]:
+    """Stream one table's rows without materialising it.
+
+    `stream_results` asks the driver for a server-side cursor and `yield_per`
+    bounds what is buffered, so a table of any size costs the same memory
+    here. The connection stays open for the length of the walk -- that is the
+    trade being made, and it is the right one: the alternative is holding
+    millions of rows in the process instead.
+    """
+    from sqlalchemy import MetaData, Table as SATable, select
+
+    engine = _sql_engine(url)
+    try:
+        meta = MetaData()
+        sa_table = SATable(table.name, meta, autoload_with=engine)
+        with engine.connect().execution_options(
+            stream_results=True, yield_per=_SQL_STREAM_BATCH
+        ) as conn:
+            for row in conn.execute(select(sa_table)):
+                yield dict(row._mapping)
+    finally:
+        engine.dispose()
+
+
+def infer_schema(source: "str | Path") -> InferredSchema:
+    """Read a directory of CSVs, an .xlsx workbook, a SQLite file, or a database URL."""
+    url = _as_sql_url(source)
+    if url:
+        return _sqlalchemy_tables(url)
+    source = Path(source)
     if source.is_dir():
         csvs = sorted(source.glob("*.csv"))
         if not csvs:
@@ -266,7 +402,15 @@ def _infer_excel(path: Path) -> InferredSchema:
 # ── loading ────────────────────────────────────────────────────────────────
 
 
-def _rows_for(source: Path, table: Table) -> Iterator[dict[str, Any]]:
+def _rows_for(source: "str | Path", table: Table) -> Iterator[dict[str, Any]]:
+    if table.source == "sql":
+        # `yield from`, not `return`. This function contains yields elsewhere,
+        # which makes it a generator function -- so `return <iterator>` sets a
+        # StopIteration value instead of handing back the rows, and every SQL
+        # table would load as zero rows with no error anywhere.
+        yield from _sql_rows(str(source), table)
+        return
+    source = Path(source)
     if table.source == "sqlite":
         con = sqlite3.connect(str(source))
         con.row_factory = sqlite3.Row
@@ -289,7 +433,7 @@ def _rows_for(source: Path, table: Table) -> Iterator[dict[str, Any]]:
         yield from _csv_rows(source / f"{table.name}.csv")
 
 
-def source_tag(source: Path) -> str:
+def source_tag(source: "str | Path") -> str:
     """Provenance stamp written on every node this loader creates.
 
     Labels are inferred from table names, so two unrelated sources collide
@@ -298,10 +442,14 @@ def source_tag(source: Path) -> str:
     clearing the fixture deletes the real data and the loss is silent.
     Verified the hard way: exactly that wiped 36,046 rows here.
     """
-    return f"tabular:{source.name}"
+    url = _as_sql_url(source)
+    if url:
+        # Credentials stripped: this string is written onto every node.
+        return f"tabular:{_safe_url(url)}"
+    return f"tabular:{Path(source).name}"
 
 
-def load_schema(session, source: Path, schema: InferredSchema) -> dict[str, int]:
+def load_schema(session, source: "str | Path", schema: InferredSchema) -> dict[str, int]:
     """Create nodes then relationships, returning per-table row counts.
 
     Nodes for every table are written BEFORE any relationship, because a

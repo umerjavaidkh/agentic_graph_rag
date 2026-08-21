@@ -1,2 +1,6 @@
 # Kept for Docker backwards compatibility — use requirements.txt only.
 -r requirements.txt
+# Reflecting a live database into the graph: one API over every managed SQL
+# engine, and its reflection reports DECLARED foreign keys, which is what the
+# CSV path can only guess at.
+sqlalchemy>=2.0
