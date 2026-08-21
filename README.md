@@ -124,7 +124,9 @@ Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, A
 <tr>
 <td width="50%">
 
-**Drop in a PDF, get a queryable graph.** Multiple files, concurrent submission, stable logical keys for versioning — same upload path whether it's one document or a batch.
+**Drop in a document, get a queryable graph.** PDF, Word, PowerPoint or Excel — multiple files, concurrent submission, stable logical keys for versioning, the same upload path whether it's one document or a batch.
+
+Office formats are read rather than converted, because they *state* the structure a PDF forces the parser to guess at. A `.docx` declares its headings in the paragraph style, a slide has one title, a sheet has a name — so the section titles come out exactly as written, where the PDF path infers them from font size and can produce a running header as a section title.
 
 ![Document Ingestion — upload single or batch documents](docs/images/document_ingestion.png)
 

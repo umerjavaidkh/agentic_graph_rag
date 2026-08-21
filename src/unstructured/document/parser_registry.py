@@ -11,6 +11,7 @@ from typing import Callable
 
 from ...shared.config.settings import PDF_PARSER_BACKEND
 from .light.parser import LightPdfParser
+from .office.parser import DocxParser, PptxParser, XlsxParser
 from .parser_base import DocumentParser
 from .rtldoc_backend.parser import RtldocPdfParser
 from .table_aware.parser import TableAwarePdfParser
@@ -47,3 +48,11 @@ register_parser(".pdf", RtldocPdfParser)
 register_parser(".pdf:light", LightPdfParser)
 register_parser(".pdf:table-aware", TableAwarePdfParser)
 register_parser(".pdf:rtldoc", RtldocPdfParser)
+
+# Office formats. Registered without a backend qualifier because there is one
+# sensible reader per type -- the ".pdf:backend" variants exist because PDFs
+# genuinely have competing extraction strategies, and these do not.
+register_parser(".docx", DocxParser)
+register_parser(".pptx", PptxParser)
+register_parser(".xlsx", XlsxParser)
+register_parser(".xlsm", XlsxParser)

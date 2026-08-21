@@ -56,3 +56,8 @@ sentence-transformers>=3.0.0
 # engine, and its reflection reports DECLARED foreign keys, which is what the
 # CSV path can only guess at.
 sqlalchemy>=2.0
+# Office document sources. Word and PowerPoint state their headings in the
+# markup, so the structure is read rather than inferred from font size --
+# openpyxl was already here for the tabular loader.
+python-docx>=1.1
+python-pptx>=0.6

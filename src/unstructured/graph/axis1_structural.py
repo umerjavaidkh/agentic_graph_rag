@@ -754,7 +754,11 @@ class Axis1StructuralBuilder:
         # A negative/missing hint falls through to the same heuristic
         # below as a rescue (rtldoc's classifier isn't infallible --
         # verified live missing an 11pt-bold-vs-9pt-body heading).
-        if block.source == "rtldoc" and block.extra.get("heading_hint") == "heading":
+        # Any backend that STATES a heading is trusted, not just rtldoc. The
+        # hint is the contract; gating it on one producer meant a parser that
+        # reads headings from markup -- Word styles, a slide title -- had its
+        # answer thrown away in favour of guessing from font size.
+        if block.extra.get("heading_hint") == "heading":
             return True
 
         if not (3 <= len(text) <= 160):
