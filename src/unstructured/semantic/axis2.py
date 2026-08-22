@@ -84,12 +84,25 @@ SAME_CATEGORY_CONFIDENCE = 0.5
 # Node types to include in semantic analysis (skip PAGE for perf)
 # What gets EMBEDDED, for retrieval.
 #
-# Page was added here and reverted: embedding all 34 pages of a document
-# changed citation precision from 0.52 to 0.51 and page-citation from 64% to
-# 60% -- no gain, measured on the same 25 cases. The improvement that mattered
-# came from citing only the chunks the answer used (see _grounded_sources),
-# not from finer-grained retrieval targets. Not worth an embedding per page.
-SEMANTIC_NODE_TYPES    = {NodeType.CHAPTER, NodeType.SECTION}
+# Page was added here, reverted, and added back. The revert was measured on
+# a single document, where it changed citation precision 0.52 -> 0.51 and
+# page-citation 64% -> 60%: pages added nothing a section did not already
+# cover, so an embedding each was not worth it.
+#
+# That stopped being true at corpus scale. A Section's embedding sees only
+# `text[:EMBEDDING_MAX_CHARS]`, and across 50 documents sections held
+# 4,449,412 of 8,526,653 characters -- so roughly half the corpus was
+# represented in no embedded node at all, and a question whose answer sat
+# past a section's cut could not be answered from a document that plainly
+# contained it (verified: $108.28 on page 10 of IRS Pub 559, present in the
+# Page node, absent from every Section).
+#
+# Pages are the one node type that tiles a document completely with no
+# truncation -- `search_text = text` verbatim, one chunk per page -- which
+# makes them the natural retrieval unit once sections stop covering
+# everything. Embedding them costs a vector each in the vector store and a
+# pointer in Neo4j; the embeddings themselves never touch the graph.
+SEMANTIC_NODE_TYPES    = {NodeType.CHAPTER, NodeType.SECTION, NodeType.PAGE}
 
 # What gets SIMILARITY EDGES, which is deliberately narrower. Pages are
 # embedded but excluded here: a page-to-page similarity edge adds nothing a
