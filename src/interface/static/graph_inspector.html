@@ -55,7 +55,7 @@
     }
     #graph-canvas svg { display: block; cursor: grab; }
     #graph-canvas svg:active { cursor: grabbing; }
-    .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: #5c7568; font-size: 0.95rem; text-align: center; padding: 2rem; }
+    .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: #405249; font-size: 0.95rem; text-align: center; padding: 2rem; }
     .graph-node circle { stroke: #fff; stroke-width: 1.5px; filter: drop-shadow(0 1px 2px rgba(15,23,42,0.35)); transition: r 0.12s ease, filter 0.12s ease; }
     .graph-node text { font-size: 9.5px; font-weight: 600; fill: #15251c; paint-order: stroke; stroke: #eaf1e5; stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
     .graph-node { cursor: pointer; }
@@ -67,13 +67,13 @@
     .zoom-controls { position: absolute; bottom: 14px; right: 14px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
     .zoom-btn { width: 30px; height: 30px; border-radius: 8px; border: 1px solid #aecda5; background: #fff; color: #cadcc3; font-size: 1rem; font-weight: 700; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
     .zoom-btn:hover { background: #dfebd8; }
-    .graph-hint { position: absolute; top: 10px; left: 12px; font-size: 0.72rem; color: #5c7568; background: rgba(255,255,255,0.85); padding: 0.25rem 0.55rem; border-radius: 6px; z-index: 5; }
+    .graph-hint { position: absolute; top: 10px; left: 12px; font-size: 0.72rem; color: #405249; background: rgba(255,255,255,0.85); padding: 0.25rem 0.55rem; border-radius: 6px; z-index: 5; }
     .error-banner { background: #fbf1ef; color: #8e3d2d; border: 1px solid #e8c3b9; border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.82rem; margin-top: 0.75rem; }
 
     .detail-panel h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: #15251c; }
-    .detail-empty { color: #5c7568; font-size: 0.85rem; }
+    .detail-empty { color: #405249; font-size: 0.85rem; }
     .detail-field { margin-bottom: 0.65rem; }
-    .detail-field .k { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #5c7568; font-weight: 700; }
+    .detail-field .k { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: #405249; font-weight: 700; }
     .detail-field .v { font-size: 0.88rem; color: #15251c; margin-top: 0.15rem; word-break: break-word; }
     .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; color: #fff; }
     pre.props { background: #eaf1e5; border: 1px solid #cadcc3; border-radius: 6px; padding: 0.5rem; font-size: 0.76rem; overflow-x: auto; white-space: pre-wrap; }
@@ -117,8 +117,8 @@
     .doc-result-item { padding: 0.5rem 0.7rem; cursor: pointer; font-size: 0.84rem; border-bottom: 1px solid #dfebd8; }
     .doc-result-item:last-child { border-bottom: none; }
     .doc-result-item:hover, .doc-result-item.active { background: #dcecdc; }
-    .doc-result-item .drid { font-size: 0.7rem; color: #5c7568; margin-top: 0.1rem; }
-    .doc-results .doc-empty { padding: 0.6rem 0.7rem; font-size: 0.8rem; color: #5c7568; }
+    .doc-result-item .drid { font-size: 0.7rem; color: #405249; margin-top: 0.1rem; }
+    .doc-results .doc-empty { padding: 0.6rem 0.7rem; font-size: 0.8rem; color: #405249; }
     .selected-doc-chip {
       margin-top: 0.4rem; padding: 0.35rem 0.6rem; border-radius: 8px; background: #dcecdc;
       border: 1px solid #c3ded9; font-size: 0.78rem; color: #234a44; display: none;
@@ -144,7 +144,7 @@
     .page-row .pg-dot.RE_EXTRACT_REQUIRED { background: #a94b39; }
     .page-row .pg-dot.REPARSE_MISMATCH { background: #a86f1f; }
     .page-row .pg-cov { color: #2f4539; }
-    .page-row .pg-meta { margin-left: auto; color: #5c7568; font-size: 0.72rem; }
+    .page-row .pg-meta { margin-left: auto; color: #405249; font-size: 0.72rem; }
     .page-scoped-banner {
       position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5;
       background: #15251c; color: #fff; padding: 0.35rem 0.9rem; border-radius: 999px;
@@ -152,11 +152,12 @@
     }
     .page-scoped-banner button { margin: 0; padding: 0.15rem 0.5rem; font-size: 0.72rem; width: auto; background: #cadcc3; }
   </style>
-<link rel="stylesheet" href="/static/theme.css" />
+<link rel="stylesheet" href="/static/theme.css?v=cc1baf0f" />
+  <script defer src="/static/ambient.js?v=7430ec62"></script>
 </head>
 <body>
   <header>
-    <h1>Graph Inspector <span style="font-weight:400;color:#5c7568;font-size:0.85rem;">— X1 / X2 / final construction stages</span></h1>
+    <h1>Graph Inspector <span style="font-weight:400;color:#405249;font-size:0.85rem;">— X1 / X2 / final construction stages</span></h1>
     <nav>
     </nav>
   </header>
@@ -235,11 +236,11 @@
 
   <script>
     const NODE_COLORS = {
-      Document: '#eaf1e5', Chapter: '#27673f', Section: '#27673f', Page: '#5c7568',
+      Document: '#eaf1e5', Chapter: '#27673f', Section: '#27673f', Page: '#405249',
       Region: '#a86f1f', Concept: '#6b5b93', DocRevision: '#2f4539', Unknown: '#aecda5',
     };
     const EDGE_COLORS = {
-      CONTAINS: '#5c7568', PART_OF: '#aecda5', PRECEDES: '#cadcc3', FOLLOWS: '#cadcc3', ROOT: '#cadcc3',
+      CONTAINS: '#405249', PART_OF: '#aecda5', PRECEDES: '#cadcc3', FOLLOWS: '#cadcc3', ROOT: '#cadcc3',
       SHARES_ENTITY: '#2f8455', SAME_CATEGORY: '#6b5b93', SEMANTICALLY_SIMILAR: '#a86f1f',
       CONTRADICTS: '#a94b39', ELABORATES: '#27673f', PREREQUISITE_OF: '#2a6b63', MENTIONS: '#6b5b93',
     };
@@ -325,7 +326,7 @@
       }
       box.innerHTML = docs.map((d, i) => `
         <div class="doc-result-item" data-index="${i}">
-          <div>${d.title || d.logical_doc_id} <span style="color:#5c7568;">(v${d.version_number ?? '?'})</span></div>
+          <div>${d.title || d.logical_doc_id} <span style="color:#405249;">(v${d.version_number ?? '?'})</span></div>
           <div class="drid">${d.logical_doc_id}${d.source_filename ? ' · ' + d.source_filename : ''}</div>
         </div>
       `).join('');
@@ -562,7 +563,7 @@
         html += `<div class="legend-item"><span class="swatch" style="background:${EDGE_COLORS[r] || '#aecda5'}"></span>${r}</div>`;
       }
       if (snapshot.nodes.some(n => n.is_external)) {
-        html += `<div class="legend-item"><span class="swatch" style="background:#5c7568;opacity:0.45;border:1px dashed #2f4539;"></span>dimmed/dashed = outer (other pages)</div>`;
+        html += `<div class="legend-item"><span class="swatch" style="background:#405249;opacity:0.45;border:1px dashed #2f4539;"></span>dimmed/dashed = outer (other pages)</div>`;
       }
       document.getElementById('legend_items').innerHTML = html;
     }
@@ -1140,6 +1141,6 @@
     initDocSearch();
     searchDocs('');
   </script>
-<script src="/static/nav.js"></script>
+<script src="/static/nav.js?v=cb7fef1f"></script>
 </body>
 </html>

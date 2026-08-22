@@ -9,7 +9,7 @@
     *, *::before, *::after { box-sizing: border-box; }
     :root {
       --bg: #eaf1e5; --panel: #ffffff; --border: #cadcc3;
-      --text: #15251c; --muted: #5c7568; --accent: #27673f;
+      --text: #15251c; --muted: #405249; --accent: #27673f;
       --ok: #2f8455; --bad: #a94b39; --warn: #a86f1f;
     }
     body {
@@ -78,7 +78,8 @@
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
   </style>
-<link rel="stylesheet" href="/static/theme.css" />
+<link rel="stylesheet" href="/static/theme.css?v=cc1baf0f" />
+  <script defer src="/static/ambient.js?v=7430ec62"></script>
 </head>
 <body>
   <header>
@@ -257,7 +258,7 @@
         type: "doughnut",
         data: {
           labels: ["Pass", "Fail", "Unlabeled"],
-          datasets: [{ data: [t.pass, t.fail, t.unlabeled], backgroundColor: ["#2f8455", "#a94b39", "#2f4539"] }]
+          datasets: [{ data: [t.pass, t.fail, t.unlabeled], backgroundColor: ["#2f8455", "#a94b39", "#cfdcc7"] }]
         },
         options: { plugins: { legend: { labels: { color: "#aecda5" } } }, maintainAspectRatio: false }
       });
@@ -275,8 +276,8 @@
         },
         options: {
           scales: {
-            y: { min: 0, max: 1, ticks: { color: "#5c7568" }, grid: { color: "#cadcc3" } },
-            x: { ticks: { color: "#5c7568", maxRotation: 45 }, grid: { display: false } }
+            y: { min: 0, max: 1, ticks: { color: "#405249" }, grid: { color: "#cadcc3" } },
+            x: { ticks: { color: "#405249", maxRotation: 45 }, grid: { display: false } }
           },
           plugins: { legend: { display: false } },
           maintainAspectRatio: false
@@ -529,6 +530,6 @@
     loadIngestionDocList();
     timer = setInterval(() => { loadDashboard(); loadAudit(); }, 30000);
   </script>
-<script src="/static/nav.js"></script>
+<script src="/static/nav.js?v=cb7fef1f"></script>
 </body>
 </html>
