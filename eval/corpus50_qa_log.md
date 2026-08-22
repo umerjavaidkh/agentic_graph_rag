@@ -80,3 +80,36 @@ a choice.
 `AMBIGUITY_LEAD` of each other, prefer asking over guessing. Four documents
 sharing a vocabulary is not a case more heuristics will separate — it is a
 case where the user knows and the system does not.
+
+## Was it the model change? Partly — and it is now split by job
+
+The synthesis model was swapped from `gpt-4o-mini` to `gpt-4.1-nano` earlier
+the same day, to escape a per-day request cap. Re-running the failures with
+only that setting changed back, against the identical graph and retrieval:
+
+| question | gpt-4.1-nano | gpt-4o-mini | cause |
+|---|---|---|---|
+| NIST `CP-9` | answered `PR.IP-4` | **correct** | **the model** |
+| IRS `$150,000` | wrong once, right on re-run | correct | non-determinism |
+| arXiv `28.4` | wrong document | wrong document | resolver, not the model |
+
+Page 33 of NIST IR 8228 lists both `CP-9, System Backup` (an SP 800-53
+control) and `PR.IP-4` (a Cybersecurity Framework subcategory) against the
+same risk. Asked specifically for the SP 800-53 control, nano returned the
+CSF subcategory. Both were on the page; only one answered the question.
+
+The two models were compared on entity extraction before the swap, where
+nano looked better. Synthesis was never tested, and nano's coarseness --
+visible then as typing almost everything `MISC` -- shows up here as failing
+to discriminate between two similar labels.
+
+Settings now differ by job, which they always could:
+
+- `AXIS2_MODEL = gpt-4.1-nano` — ingestion, thousands of calls, rate-limited,
+  and the work is coarse extraction
+- `CHAT_MODEL = gpt-4o-mini` — synthesis, one call per question, where the
+  distinction between two labels on a page is the whole answer
+
+Also worth recording: **the same question failed and then passed on the same
+model**, so a single pass over five questions carries real noise. Treat these
+numbers as directional until a suite runs them repeatedly.
