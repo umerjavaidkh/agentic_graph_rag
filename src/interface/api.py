@@ -110,9 +110,35 @@ async def _close_neo4j_driver():
     close_neo4j_driver()
 
 
+class _NoCacheHtml(StaticFiles):
+    """Serve HTML fresh, everything else cached normally.
+
+    CSS and JS are versioned by content hash in their URLs, so a browser
+    can hold them forever and still pick up a change. The HTML pages carry
+    no such marker: their filenames never change, so a browser keeps an old
+    copy indefinitely -- along with the inline <script> and <style> inside
+    it, and the ?v= links that point at the assets.
+
+    That is not theoretical. A deployed fix rendered a selected control as
+    white text on pale green for one browser and correctly for another, and
+    a working answer appeared blank, both because the page itself was
+    months of edits behind while its stylesheet was current. Nothing in the
+    app can detect that state, and the user has no reason to suspect it.
+
+    HTML is small and requested once per navigation, so revalidating it
+    costs nothing worth measuring.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        if (response.headers.get("content-type") or "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
 app.mount(
     "/static",
-    StaticFiles(directory=Path(__file__).resolve().parent / "static"),
+    _NoCacheHtml(directory=Path(__file__).resolve().parent / "static"),
     name="static",
 )
 
