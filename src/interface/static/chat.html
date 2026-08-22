@@ -12,23 +12,23 @@
        helper reference) -- near-black panels floating on a soft lavender
        page background, vivid indigo/purple accent, Inter throughout. */
     :root{
-      --bg0:#cdbff2;
-      --bg1:#b6a3ea;
-      --surface:#18151f;
-      --surface-elevated:#201c2c;
-      --card: rgba(255,255,255,0.045);
-      --border: rgba(255,255,255,0.08);
-      --border-strong: rgba(255,255,255,0.16);
-      --text:#f2eefb;
-      --text-secondary:#a99fc6;
-      --text-muted:#786f92;
-      --accent:#6c5ce7;
-      --accent-soft:rgba(108,92,231,0.16);
-      --accent-glow:rgba(108,92,231,0.38);
-      --success:#34d399;
-      --danger:#f87171;
-      --shadow: 0 2px 10px rgba(0,0,0,0.25), 0 1px 0 rgba(255,255,255,0.04) inset;
-      --shadow-lg: 0 25px 70px rgba(15,8,35,0.5);
+      --bg0:#e7f1e2;
+      --bg1:#d5e8cf;
+      --surface:#ffffff;
+      --surface-elevated:#fafdf8;
+      --card: rgba(47,125,79,0.035);
+      --border: #dce9d7;
+      --border-strong: #c3d9bc;
+      --text:#1d3026;
+      --text-secondary:#456051;
+      --text-muted:#7a9285;
+      --accent:#2f7d4f;
+      --accent-soft:rgba(47,125,79,0.10);
+      --accent-glow:rgba(47,125,79,0.22);
+      --success:#3f9e6a;
+      --danger:#c05f4c;
+      --shadow: 0 1px 2px rgba(29,48,38,.05), 0 6px 20px rgba(29,48,38,.07);
+      --shadow-lg: 0 24px 60px rgba(29,48,38,.14);
       --radius: 10px;
       --radius-sm: 8px;
       --radius-lg: 16px;
@@ -166,7 +166,7 @@
       font-family: var(--mono);
       font-size: 0.85em;
       color: var(--text);
-      background: rgba(255,255,255,0.08);
+      background: #dce9d7;
       padding: 1px 5px;
       border-radius: 4px;
     }
@@ -846,6 +846,7 @@
     }
     .source-tab-sub{ font-weight:400; font-size:.72rem; opacity:.72; }
   </style>
+<link rel="stylesheet" href="/static/theme.css" />
 </head>
 <body>
   <div class="shell">
@@ -1420,7 +1421,7 @@
           legend: {
             display: isPie,
             position: 'bottom',
-            labels: { color: '#a99fc6', boxWidth: 12, padding: 10 },
+            labels: { color: '#456051', boxWidth: 12, padding: 10 },
           },
           tooltip: {
             callbacks: {
@@ -1439,15 +1440,15 @@
       if (!isPie) {
         options.scales = {
           x: {
-            ticks: { color: '#a99fc6', maxRotation: 45, minRotation: 0 },
-            grid: { color: 'rgba(255,255,255,0.08)' },
+            ticks: { color: '#456051', maxRotation: 45, minRotation: 0 },
+            grid: { color: '#dce9d7' },
           },
           y: {
             ticks: {
-              color: '#a99fc6',
+              color: '#456051',
               callback: (v) => formatChartValue(v, block),
             },
-            grid: { color: 'rgba(255,255,255,0.08)' },
+            grid: { color: '#dce9d7' },
             beginAtZero: true,
           },
         };

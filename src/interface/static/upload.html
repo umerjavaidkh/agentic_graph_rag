@@ -6,25 +6,25 @@
   <title>Ingestion Upload</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, Arial, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; background: #f1f5f9; color: #1e293b; }
-    h1 { color: #1f2937; margin-bottom: 0.25rem; }
-    h2 { font-size: 1.05rem; margin: 0 0 0.75rem; color: #374151; }
-    a { color: #2563eb; }
-    .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem; background: #fff; }
-    label { display: block; margin-top: 0.75rem; font-weight: 600; font-size: 0.9rem; color: #374151; }
-    input[type=file], input[type=text] { width: 100%; padding: 0.65rem 0.85rem; margin-top: 0.3rem; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem; }
+    body { font-family: system-ui, Arial, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; background: #e7f1e2; color: #1d3026; }
+    h1 { color: #1d3026; margin-bottom: 0.25rem; }
+    h2 { font-size: 1.05rem; margin: 0 0 0.75rem; color: #1d3026; }
+    a { color: #2f7d4f; }
+    .card { border: 1px solid #dce9d7; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem; background: #fff; }
+    label { display: block; margin-top: 0.75rem; font-weight: 600; font-size: 0.9rem; color: #1d3026; }
+    input[type=file], input[type=text] { width: 100%; padding: 0.65rem 0.85rem; margin-top: 0.3rem; border: 1px solid #c3d9bc; border-radius: 8px; font-size: 0.95rem; }
     input[type=file] { cursor: pointer; }
-    .hint { font-size: 0.85rem; color: #64748b; margin-top: 0.3rem; }
+    .hint { font-size: 0.85rem; color: #456051; margin-top: 0.3rem; }
     .row { display: flex; gap: 1rem; }
     .row > * { flex: 1; }
     button {
-      margin-top: 1rem; padding: 0.8rem 1.25rem; background: #2563eb; color: #fff;
+      margin-top: 1rem; padding: 0.8rem 1.25rem; background: #2f7d4f; color: #fff;
       border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.95rem;
       display: inline-flex; align-items: center; gap: 0.5rem;
     }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
-    button.secondary { background: #64748b; }
-    button.danger { background: #dc2626; }
+    button.secondary { background: #456051; }
+    button.danger { background: #c05f4c; }
     .spinner {
       width: 1rem; height: 1rem;
       border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
@@ -35,17 +35,17 @@
 
     /* Tabs */
     .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; }
-    .tab { padding: 0.6rem 1.1rem; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer; background: #f8fafc; font-weight: 600; font-size: 0.9rem; }
-    .tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .tab { padding: 0.6rem 1.1rem; border: 1px solid #c3d9bc; border-radius: 8px; cursor: pointer; background: #f2f7ef; font-weight: 600; font-size: 0.9rem; }
+    .tab.active { background: #2f7d4f; color: #fff; border-color: #2f7d4f; }
     .hidden { display: none !important; }
 
     /* Drop zone */
     .dropzone {
       border: 2px dashed #93c5fd; border-radius: 10px; padding: 2rem 1rem;
       text-align: center; cursor: pointer; margin-top: 0.75rem;
-      background: #eff6ff; color: #1e40af; transition: background 0.2s;
+      background: #e3f1e4; color: #24623d; transition: background 0.2s;
     }
-    .dropzone.drag-over { background: #dbeafe; border-color: #3b82f6; }
+    .dropzone.drag-over { background: #dbeafe; border-color: #3f9e6a; }
     .dropzone .drop-icon { font-size: 2rem; margin-bottom: 0.35rem; }
     .dropzone .drop-label { font-weight: 600; }
     .dropzone .drop-sub { font-size: 0.85rem; opacity: 0.75; margin-top: 0.25rem; }
@@ -54,17 +54,17 @@
     .file-list { margin-top: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
     .file-chip {
       display: flex; align-items: center; gap: 0.5rem;
-      border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.5rem 0.75rem;
-      background: #f8fafc; font-size: 0.9rem;
+      border: 1px solid #dce9d7; border-radius: 8px; padding: 0.5rem 0.75rem;
+      background: #f2f7ef; font-size: 0.9rem;
     }
     .file-chip .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .file-chip .fsize { color: #64748b; font-size: 0.8rem; }
-    .file-chip .remove { cursor: pointer; color: #dc2626; font-size: 1.1rem; line-height: 1; }
+    .file-chip .fsize { color: #456051; font-size: 0.8rem; }
+    .file-chip .remove { cursor: pointer; color: #c05f4c; font-size: 1.1rem; line-height: 1; }
 
     /* Job cards */
     #jobs-panel { display: flex; flex-direction: column; gap: 0.75rem; }
     .job-card {
-      border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.9rem 1rem;
+      border: 1px solid #dce9d7; border-radius: 10px; padding: 0.9rem 1rem;
       background: #fff; font-size: 0.88rem;
     }
     .job-card-header { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
@@ -76,50 +76,51 @@
     .badge-running   { background: #fef3c7; color: #92400e; animation: pulse 1.5s infinite; }
     .badge-completed { background: #dcfce7; color: #166534; }
     .badge-failed    { background: #fee2e2; color: #991b1b; }
-    .badge-skipped   { background: #f1f5f9; color: #475569; }
+    .badge-skipped   { background: #e7f1e2; color: #456051; }
     .badge-worker    { background: #ede9fe; color: #5b21b6; }
     .badge-bg        { background: #e0f2fe; color: #0c4a6e; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
-    .job-meta { color: #64748b; margin-bottom: 0.35rem; }
+    .job-meta { color: #456051; margin-bottom: 0.35rem; }
     .job-meta span { margin-right: 0.75rem; }
     .job-logs {
-      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+      background: #f2f7ef; border: 1px solid #dce9d7; border-radius: 6px;
       padding: 0.5rem 0.75rem; font-family: Menlo, monospace; font-size: 0.8rem;
-      max-height: 120px; overflow-y: auto; color: #334155; white-space: pre-wrap;
+      max-height: 120px; overflow-y: auto; color: #dce9d7; white-space: pre-wrap;
     }
-    .job-logs-toggle { cursor: pointer; color: #2563eb; font-size: 0.82rem; margin-top: 0.35rem; }
+    .job-logs-toggle { cursor: pointer; color: #2f7d4f; font-size: 0.82rem; margin-top: 0.35rem; }
 
     /* Queue status bar */
     #queue-bar {
       display: flex; align-items: center; gap: 1rem;
-      padding: 0.6rem 1rem; border-radius: 8px; background: #f8fafc;
-      border: 1px solid #e2e8f0; font-size: 0.88rem; margin-bottom: 1rem;
+      padding: 0.6rem 1rem; border-radius: 8px; background: #f2f7ef;
+      border: 1px solid #dce9d7; font-size: 0.88rem; margin-bottom: 1rem;
     }
     #queue-bar .qitem { display: flex; align-items: center; gap: 0.35rem; }
-    #queue-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
-    #queue-bar .dot.green { background: #22c55e; }
-    #queue-bar .dot.blue  { background: #3b82f6; }
+    #queue-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #7a9285; }
+    #queue-bar .dot.green { background: #3f9e6a; }
+    #queue-bar .dot.blue  { background: #3f9e6a; }
     #queue-bar .dot.red   { background: #ef4444; }
     .auth-card {
       border: 1px solid #bfdbfe; border-radius: 10px; padding: 1rem 1.1rem;
-      margin-bottom: 1.25rem; background: #eff6ff;
+      margin-bottom: 1.25rem; background: #e3f1e4;
     }
     .auth-card.denied { border-color: #fecaca; background: #fef2f2; }
-    .auth-user-chip { font-size: 0.9rem; margin-top: 0.5rem; color: #1e40af; font-weight: 600; }
+    .auth-user-chip { font-size: 0.9rem; margin-top: 0.5rem; color: #24623d; font-weight: 600; }
     .auth-signout {
-      margin-top: 0.5rem; padding: 0.35rem 0.75rem; background: #64748b; color: #fff;
+      margin-top: 0.5rem; padding: 0.35rem 0.75rem; background: #456051; color: #fff;
       border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
     }
     .ingest-locked { opacity: 0.45; pointer-events: none; }
     .dev-admin-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; }
     .dev-admin-row > div { flex: 1; min-width: 140px; }
   </style>
+<link rel="stylesheet" href="/static/theme.css" />
 </head>
 <body>
   <h1>Document Ingestion</h1>
 
   <div id="auth_card" class="auth-card">
-    <strong>Admin identity <span style="font-weight:400;color:#64748b">(dev)</span></strong>
+    <strong>Admin identity <span style="font-weight:400;color:#456051">(dev)</span></strong>
     <p class="hint" style="margin:0.35rem 0 0.75rem">
       Ingestion requires <code>role=admin</code> and <code>user_id=admin_001</code> (no Google sign-in on <code>master</code>).
       For Google OIDC + production auth, use the <code>release/v1.0</code> branch.
@@ -182,19 +183,19 @@
       <div style="margin-top:0.5rem; display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap">
         <button type="button" class="secondary"
                 onclick="document.getElementById('folder-picker').click()">📁 Choose folder…</button>
-        <span id="folder-note" style="font-size:0.85rem;color:#64748b"></span>
+        <span id="folder-note" style="font-size:0.85rem;color:#456051"></span>
       </div>
 
       <div class="file-list" id="file-list"></div>
 
       <div class="row" style="margin-top:0.75rem">
         <div>
-          <label>Doc key prefix <span style="font-weight:400;color:#64748b">(optional)</span></label>
+          <label>Doc key prefix <span style="font-weight:400;color:#456051">(optional)</span></label>
           <input type="text" id="doc-key-prefix" placeholder="e.g. my-report  →  my-report-1, my-report-2…" />
           <div class="hint">Stable logical ID used for versioning. Same key + same file = skipped. Same key + new file = new revision.</div>
         </div>
         <div>
-          <label>Job name <span style="font-weight:400;color:#64748b">(optional)</span></label>
+          <label>Job name <span style="font-weight:400;color:#456051">(optional)</span></label>
           <input type="text" id="job-name" placeholder="batch-upload-01" />
         </div>
       </div>
@@ -214,7 +215,7 @@
       <div class="row">
         <div><label>Job name</label><input type="text" id="cypher-job-name" placeholder="my-dataset-load" /></div>
       </div>
-      <label>OpenAI API key <span style="font-weight:400;color:#64748b">(optional)</span></label>
+      <label>OpenAI API key <span style="font-weight:400;color:#456051">(optional)</span></label>
       <input type="text" id="cypher-openai-key" placeholder="sk-…" />
       <button onclick="submitCypher()"><div class="spinner"></div><span>Submit Cypher</span></button>
     </div>
@@ -222,7 +223,7 @@
     <!-- Admin panel -->
     <div id="panel-admin" class="hidden">
       <h2>Admin tools</h2>
-      <p class="hint" style="color:#dc2626">Danger: wipes Neo4j completely. Requires <code>role=admin</code> and <code>ALLOW_DB_RESET=true</code>.</p>
+      <p class="hint" style="color:#c05f4c">Danger: wipes Neo4j completely. Requires <code>role=admin</code> and <code>ALLOW_DB_RESET=true</code>.</p>
       <button class="danger" onclick="resetDb()"><div class="spinner"></div><span>Reset Neo4j DB</span></button>
       <div id="admin-status" style="margin-top:0.75rem;font-size:0.88rem"></div>
     </div>
@@ -240,7 +241,7 @@
         <button class="secondary" style="margin-top:0;padding:0.35rem 0.75rem;font-size:0.82rem" onclick="loadJobList()">Refresh now</button>
       </div>
     </div>
-    <div id="jobs-panel"><p style="color:#64748b;font-size:0.9rem">No jobs yet. Upload a document to get started.</p></div>
+    <div id="jobs-panel"><p style="color:#456051;font-size:0.9rem">No jobs yet. Upload a document to get started.</p></div>
   </div>
 
   <script>
@@ -533,7 +534,7 @@
           ${data.revision_id     ? `<span>rev ${esc(data.revision_id.slice(0,8))}…</span>` : ''}
           ${data.created_at      ? `<span>${new Date(data.created_at).toLocaleTimeString()}</span>` : ''}
         </div>
-        ${data.error ? `<div style="color:#dc2626;font-size:0.85rem;margin-bottom:0.35rem">⚠ ${esc(data.error)}</div>` : ''}
+        ${data.error ? `<div style="color:#c05f4c;font-size:0.85rem;margin-bottom:0.35rem">⚠ ${esc(data.error)}</div>` : ''}
         ${logs ? `
           <div class="job-logs-toggle" onclick="toggleLogs('${id}')">
             ${logsVisible ? '▾' : '▸'} Logs (${(data.logs||[]).length})
