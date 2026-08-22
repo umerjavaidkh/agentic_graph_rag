@@ -53,6 +53,7 @@ from ...shared.config.settings import (
     AXIS2_RELATION_MAX_TOKENS,
     EMBEDDING_MODEL,
 )
+from ...shared.model_providers.errors import ModelRateLimitError, is_rate_limit
 from ...shared.model_providers.factory import get_chat_provider, get_embedding_provider
 from ..models import DKGNode, DKGEdge, EdgeConfidenceTier, NodeType, RelType
 
@@ -991,7 +992,17 @@ class Axis2Builder:
                 raw = resp.choices[0].message.content.strip()
                 raw = raw.replace("```json", "").replace("```", "").strip()
                 parsed = json.loads(raw)
-            except Exception:
+            except Exception as exc:
+                # A rate limit is not a size problem, and the cure for a size
+                # problem makes it worse: splitting the batch reissues two
+                # requests against the very limit that just refused one.
+                # Measured live -- a per-day limit was hit ~5,800 times in a
+                # single ingest because each 429 spawned more calls. Raise
+                # instead, so the job stops with something the user can act
+                # on rather than burning the rest of the quota.
+                if is_rate_limit(exc):
+                    raise ModelRateLimitError.from_exception(exc) from exc
+
                 # No fixed max_tokens budget is safe against an arbitrary
                 # combination of entity-dense chunks landing in the same
                 # batch (verified live: raising the per-unit budget just

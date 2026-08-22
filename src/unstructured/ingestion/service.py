@@ -31,6 +31,7 @@ from ...shared.config.settings import (
     REDIS_URL,
     STORE_INGESTION_ARTIFACTS,
 )
+from ...shared.model_providers.errors import ModelRateLimitError
 from ..document.graph_snapshot import X1_STAGE, X2_STAGE, write_snapshot
 from ..document.page_report import write_page_report
 from ..document.page_validation import check_construction_coverage
@@ -247,6 +248,14 @@ class IngestionManager:
             job.finished_at = datetime.utcnow()
             self._set_status(job, IngestionStatus.completed, "Job completed successfully")
             self._clear_structured_query_caches()
+        except ModelRateLimitError as exc:
+            # Surfaced on its own terms rather than behind "Job failed:".
+            # This is the one failure the user can fix directly, and the
+            # message already says how -- burying it under a generic prefix
+            # is why an exhausted daily quota looked like a crash.
+            job.finished_at = datetime.utcnow()
+            job.error = str(exc)
+            self._set_status(job, IngestionStatus.failed, f"⚠ {job.error}")
         except Exception as exc:
             job.finished_at = datetime.utcnow()
             job.error = str(exc)
