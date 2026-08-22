@@ -50,7 +50,7 @@
     #graph-canvas {
       width: 100%; height: 100%; position: relative; overflow: hidden;
       background-color: #eaf1e5;
-      background-image: radial-gradient(circle, #d8dee9 1px, transparent 1px);
+      background-image: radial-gradient(circle, #cadcc3 1px, transparent 1px);
       background-size: 22px 22px;
     }
     #graph-canvas svg { display: block; cursor: grab; }
@@ -68,7 +68,7 @@
     .zoom-btn { width: 30px; height: 30px; border-radius: 8px; border: 1px solid #aecda5; background: #fff; color: #cadcc3; font-size: 1rem; font-weight: 700; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
     .zoom-btn:hover { background: #dfebd8; }
     .graph-hint { position: absolute; top: 10px; left: 12px; font-size: 0.72rem; color: #5c7568; background: rgba(255,255,255,0.85); padding: 0.25rem 0.55rem; border-radius: 6px; z-index: 5; }
-    .error-banner { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.82rem; margin-top: 0.75rem; }
+    .error-banner { background: #fbf1ef; color: #8e3d2d; border: 1px solid #e8c3b9; border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.82rem; margin-top: 0.75rem; }
 
     .detail-panel h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: #15251c; }
     .detail-empty { color: #5c7568; font-size: 0.85rem; }
@@ -85,21 +85,21 @@
     .quality .row { display: flex; gap: 0.5rem; }
     .quality button { margin-top: 0; padding: 0.5rem 0.6rem; font-size: 0.78rem; }
     .quality-score { margin-top: 0.75rem; padding: 0.6rem 0.7rem; border-radius: 8px; font-size: 0.8rem; }
-    .quality-score.pass { background: #f0fdf4; border: 1px solid #bbf7d0; }
-    .quality-score.fail { background: #fef2f2; border: 1px solid #fecaca; }
+    .quality-score.pass { background: #f0f7ee; border: 1px solid #cfe6cd; }
+    .quality-score.fail { background: #fbf1ef; border: 1px solid #e8c3b9; }
     .quality-score .qs-row { display: flex; justify-content: space-between; padding: 0.1rem 0; }
     .quality-score .qs-row .k { color: #2f4539; }
     .quality-score .qs-row .v { font-weight: 700; }
     .quality-score .qs-badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.68rem; font-weight: 700; color: #fff; margin-left: 0.4rem; }
     .quality-score .qs-badge.pass { background: #2f8455; }
     .quality-score .qs-badge.fail { background: #a94b39; }
-    .quality-score .qs-examples { margin-top: 0.4rem; font-size: 0.72rem; color: #7f1d1d; }
+    .quality-score .qs-examples { margin-top: 0.4rem; font-size: 0.72rem; color: #7a3427; }
     /* The dimension breakdown wraps and is the widest row, so it gets its own
        alignment rather than being squeezed by the flex row's space-between. */
     .quality-score .qs-row .v > span { white-space: nowrap; }
-    .quality-score .qs-worst { color: #b91c1c; font-weight: 700; }
+    .quality-score .qs-worst { color: #8e3d2d; font-weight: 700; }
     .quality-score .qs-ci { color: #2f4539; font-size: 0.7rem; font-weight: 400; margin-left: 0.35rem; }
-    .quality-score .qs-note { margin-top: 0.35rem; font-size: 0.7rem; color: #92400e; }
+    .quality-score .qs-note { margin-top: 0.35rem; font-size: 0.7rem; color: #7d5417; }
     .quality-score .qs-examples li { margin-bottom: 0.15rem; word-break: break-word; }
 
     /* Searchable document combobox -- a flat <select> stops being usable
@@ -121,7 +121,7 @@
     .doc-results .doc-empty { padding: 0.6rem 0.7rem; font-size: 0.8rem; color: #5c7568; }
     .selected-doc-chip {
       margin-top: 0.4rem; padding: 0.35rem 0.6rem; border-radius: 8px; background: #dcecdc;
-      border: 1px solid #bfdbfe; font-size: 0.78rem; color: #1e3a8a; display: none;
+      border: 1px solid #c3ded9; font-size: 0.78rem; color: #234a44; display: none;
     }
     .selected-doc-chip.visible { display: block; }
 
@@ -142,7 +142,7 @@
     .page-row .pg-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; flex-shrink: 0; }
     .page-row .pg-dot.PASS { background: #2f8455; }
     .page-row .pg-dot.RE_EXTRACT_REQUIRED { background: #a94b39; }
-    .page-row .pg-dot.REPARSE_MISMATCH { background: #f59e0b; }
+    .page-row .pg-dot.REPARSE_MISMATCH { background: #a86f1f; }
     .page-row .pg-cov { color: #2f4539; }
     .page-row .pg-meta { margin-left: auto; color: #5c7568; font-size: 0.72rem; }
     .page-scoped-banner {
@@ -236,12 +236,12 @@
   <script>
     const NODE_COLORS = {
       Document: '#eaf1e5', Chapter: '#27673f', Section: '#27673f', Page: '#5c7568',
-      Region: '#f59e0b', Concept: '#a855f7', DocRevision: '#2f4539', Unknown: '#aecda5',
+      Region: '#a86f1f', Concept: '#6b5b93', DocRevision: '#2f4539', Unknown: '#aecda5',
     };
     const EDGE_COLORS = {
       CONTAINS: '#5c7568', PART_OF: '#aecda5', PRECEDES: '#cadcc3', FOLLOWS: '#cadcc3', ROOT: '#cadcc3',
-      SHARES_ENTITY: '#2f8455', SAME_CATEGORY: '#a855f7', SEMANTICALLY_SIMILAR: '#f59e0b',
-      CONTRADICTS: '#a94b39', ELABORATES: '#27673f', PREREQUISITE_OF: '#0284c7', MENTIONS: '#c026d3',
+      SHARES_ENTITY: '#2f8455', SAME_CATEGORY: '#6b5b93', SEMANTICALLY_SIMILAR: '#a86f1f',
+      CONTRADICTS: '#a94b39', ELABORATES: '#27673f', PREREQUISITE_OF: '#2a6b63', MENTIONS: '#6b5b93',
     };
     const EDGE_DASH = new Set(['SEMANTICALLY_SIMILAR', 'SAME_CATEGORY', 'SHARES_ENTITY', 'CONTRADICTS', 'ELABORATES', 'PREREQUISITE_OF', 'MENTIONS']);
     // PART_OF and FOLLOWS are always created as the exact inverse of
@@ -994,7 +994,7 @@
       const summaryBox = document.getElementById('pages_summary');
       const listBox = document.getElementById('page_list');
       if (report.error) {
-        summaryBox.innerHTML = `<span style="color:#b91c1c;">${report.error}</span>`;
+        summaryBox.innerHTML = `<span style="color:#8e3d2d;">${report.error}</span>`;
         listBox.style.display = 'none';
         return;
       }

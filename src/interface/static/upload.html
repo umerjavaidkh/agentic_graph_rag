@@ -41,11 +41,11 @@
 
     /* Drop zone */
     .dropzone {
-      border: 2px dashed #93c5fd; border-radius: 10px; padding: 2rem 1rem;
+      border: 2px dashed #a8cdc7; border-radius: 10px; padding: 2rem 1rem;
       text-align: center; cursor: pointer; margin-top: 0.75rem;
       background: #dcecdc; color: #1c4e30; transition: background 0.2s;
     }
-    .dropzone.drag-over { background: #dbeafe; border-color: #2f8455; }
+    .dropzone.drag-over { background: #dceeeb; border-color: #2f8455; }
     .dropzone .drop-icon { font-size: 2rem; margin-bottom: 0.35rem; }
     .dropzone .drop-label { font-weight: 600; }
     .dropzone .drop-sub { font-size: 0.85rem; opacity: 0.75; margin-top: 0.25rem; }
@@ -72,13 +72,13 @@
     .badge {
       padding: 0.2rem 0.55rem; border-radius: 6px; font-size: 0.78rem; font-weight: 700; white-space: nowrap;
     }
-    .badge-queued    { background: #e0e7ff; color: #3730a3; }
-    .badge-running   { background: #fef3c7; color: #92400e; animation: pulse 1.5s infinite; }
-    .badge-completed { background: #dcfce7; color: #166534; }
-    .badge-failed    { background: #fee2e2; color: #991b1b; }
+    .badge-queued    { background: #e3e0ee; color: #4a4070; }
+    .badge-running   { background: #f7efdb; color: #7d5417; animation: pulse 1.5s infinite; }
+    .badge-completed { background: #dcecdc; color: #1c4e30; }
+    .badge-failed    { background: #f4ded8; color: #8e3d2d; }
     .badge-skipped   { background: #dfebd8; color: #2f4539; }
-    .badge-worker    { background: #ede9fe; color: #5b21b6; }
-    .badge-bg        { background: #e0f2fe; color: #0c4a6e; }
+    .badge-worker    { background: #ebe7f2; color: #574376; }
+    .badge-bg        { background: #e4f2f0; color: #1f4f49; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
     .job-meta { color: #2f4539; margin-bottom: 0.35rem; }
     .job-meta span { margin-right: 0.75rem; }
@@ -99,12 +99,12 @@
     #queue-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #5c7568; }
     #queue-bar .dot.green { background: #2f8455; }
     #queue-bar .dot.blue  { background: #2f8455; }
-    #queue-bar .dot.red   { background: #ef4444; }
+    #queue-bar .dot.red   { background: #a94b39; }
     .auth-card {
-      border: 1px solid #bfdbfe; border-radius: 10px; padding: 1rem 1.1rem;
+      border: 1px solid #c3ded9; border-radius: 10px; padding: 1rem 1.1rem;
       margin-bottom: 1.25rem; background: #dcecdc;
     }
-    .auth-card.denied { border-color: #fecaca; background: #fef2f2; }
+    .auth-card.denied { border-color: #e8c3b9; background: #fbf1ef; }
     .auth-user-chip { font-size: 0.9rem; margin-top: 0.5rem; color: #1c4e30; font-weight: 600; }
     .auth-signout {
       margin-top: 0.5rem; padding: 0.35rem 0.75rem; background: #2f4539; color: #fff;
@@ -140,7 +140,7 @@
         </select>
       </div>
     </div>
-    <div id="auth_denied" class="hint" style="display:none;color:#b91c1c;margin-top:0.5rem"></div>
+    <div id="auth_denied" class="hint" style="display:none;color:#8e3d2d;margin-top:0.5rem"></div>
   </div>
 
   <!-- Queue status bar -->
