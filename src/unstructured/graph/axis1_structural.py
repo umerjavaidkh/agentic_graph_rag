@@ -89,6 +89,12 @@ def _build_region_tags(
     return list(dict.fromkeys(tags))
 
 
+# Parser-assigned roles whose text can never be a section heading, however
+# it is typeset. Diagram labels are the case that matters: they are short,
+# large and isolated, which is exactly what the font-size rescue looks for.
+_NON_HEADING_ROLES = {"figure", "table", "activity_marker"}
+
+
 def _region_title(kind: str, text: str, pdf_page: int, index: int) -> str:
     first_line = (text or "").strip().splitlines()[0][:120] if text else ""
     if first_line:
@@ -219,6 +225,91 @@ def _stamp_section_paths(nodes: list[DKGNode], edges: list[DKGEdge]) -> None:
         node.section_path = " > ".join(reversed(trail))
 
 
+
+#: Lines that name nothing — page furniture, not a section's subject.
+_UNINFORMATIVE_TITLE = re.compile(
+    r"^(?:page\s*\d+|\d+|[ivxlcdm]+|figure\s*\d*|table\s*\d*|\W*)$", re.I
+)
+
+
+def _name_untitled_sections(nodes: list[DKGNode]) -> int:
+    """Give every auto-created "Preamble" a title taken from its own content.
+
+    A section is created the moment body text appears with no heading above
+    it, and named "Preamble" because at that instant nothing is known about
+    it. The name is never revisited, so a document whose headings the parser
+    could not classify ends up with a dozen sections all called the same
+    thing -- unusable in a citation ("Preamble p6"), and worse in retrieval,
+    where every one of them carries identical search_text.
+
+    The heading text is usually still there, sitting in the body as ordinary
+    text, precisely because it was not recognised as a heading. Taking the
+    section's first meaningful line recovers "Abstract" or "1 Introduction"
+    without a model, a prompt, or a token spent.
+
+    Deterministic on purpose: the same document must produce the same names
+    on every ingest, or nothing downstream can be compared across runs.
+
+    Returns how many were renamed, for the ingest log.
+    """
+    renamed = 0
+    for node in nodes:
+        if node.type != NodeType.SECTION or node.title != "Preamble":
+            continue
+        placeholder = node.title
+        title = _title_from_body(node.text or "", skip=placeholder)
+        if not title:
+            continue
+        node.title = title
+
+        # search_text drives lexical retrieval, and is built as
+        # "<title>\n\n<body>" -- leaving the placeholder in it would keep
+        # every one of these nodes identical to the ranker, and would break
+        # the invariant that search_text starts with the node's title.
+        # Swap the leading placeholder for the new title and keep the body.
+        search_text = node.search_text or ""
+        if search_text.strip() in ("", placeholder):
+            node.search_text = title
+        elif search_text.startswith(placeholder):
+            node.search_text = title + search_text[len(placeholder):]
+        renamed += 1
+    return renamed
+
+
+def _title_from_body(text: str, skip: str = "") -> str:
+    """The first line of a section that reads like a name for it.
+
+    `skip` is the placeholder being replaced. The section's body is written
+    with its own title as the first line, so without this the first line
+    read back is the placeholder itself and the rename is a no-op that
+    still reports success.
+    """
+    for raw in text.splitlines():
+        line = raw.strip()
+        if skip and line.casefold() == skip.casefold():
+            continue
+        if line.startswith("[Table]"):
+            line = line[len("[Table]"):].strip()
+        if len(line) < 3 or _UNINFORMATIVE_TITLE.match(line):
+            continue
+        # A rendered table row names the table, not the section: "| Input |
+        # [CLS] | my | dog |" is data that happens to be first.
+        if line.count("|") >= 2 or "<br>" in line:
+            continue
+        # A line starting mid-sentence is a fragment of the previous page's
+        # paragraph, not a name -- real headings start with a capital, a
+        # digit, or a quote.
+        if not (line[0].isupper() or line[0].isdigit() or line[0] in "\"'\u201c"):
+            continue
+        if len(line) <= 80:
+            return line
+        # A long opening paragraph: keep the first clause, cut on a word
+        # boundary so the title is not a truncated word.
+        clipped = line[:70].rsplit(" ", 1)[0].rstrip(" ,;:—-")
+        return f"{clipped}…" if clipped else ""
+    return ""
+
+
 class Axis1StructuralBuilder:
     """Converts a DocumentIR into the structural (Axis 1) node/edge graph."""
 
@@ -230,6 +321,9 @@ class Axis1StructuralBuilder:
         else:
             nodes, edges = self._build_from_extracts(ir, chunks)
         _link_continuations(nodes)
+        renamed = _name_untitled_sections(nodes)
+        if renamed:
+            print(f"   🏷  Named {renamed} untitled section(s) from their own content")
         _stamp_section_paths(nodes, edges)
         return nodes, edges
 
@@ -756,6 +850,17 @@ class Axis1StructuralBuilder:
         # verified live missing an 11pt-bold-vs-9pt-body heading).
         if block.source == "rtldoc" and block.extra.get("heading_hint") == "heading":
             return True
+
+        # A block the parser placed inside a figure, a table or an activity
+        # marker is not a heading, whatever its typography says. Without
+        # this the rescue below sees short, large-font text and promotes it:
+        # the BERT paper's Figure 1/3 token boxes ("E [CLS]", "T N") became
+        # 103 sections for a 16-page paper, 59 of them under five
+        # characters. rtldoc classified every one of them as `figure` or
+        # `activity_marker` -- the information was already there, and this
+        # is the first thing that reads it.
+        if block.extra.get("source_role") in _NON_HEADING_ROLES:
+            return False
 
         if not (3 <= len(text) <= 160):
             return False

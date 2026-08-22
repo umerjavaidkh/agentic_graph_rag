@@ -35,6 +35,10 @@ class RtldocPdfParser(LightPdfParser):
         # a new _PdfBlock field so the base dataclass (shared with
         # TableAwarePdfParser) doesn't need touching for this parser's needs.
         self._heading_block_ids: set[int] = set()
+        # rtldoc's role per block, keyed the same way. Knowing a block is a
+        # figure label or a table cell is what lets the heading heuristic
+        # decline it instead of guessing from font size.
+        self._role_by_block_id: dict[int, str] = {}
 
     def _extract_pages(self, source: Path, doc: fitz.Document) -> list[_PageExtract]:
         try:
@@ -44,6 +48,7 @@ class RtldocPdfParser(LightPdfParser):
             return super()._extract_pages(source, doc)
 
         self._heading_block_ids = set()
+        self._role_by_block_id = {}
         try:
             results = parse_document(str(source))
         except Exception as exc:
@@ -153,6 +158,7 @@ class RtldocPdfParser(LightPdfParser):
                 source="rtldoc",
                 kind=kind,
             )
+            self._role_by_block_id[id(pdf_block)] = b.role or ""
             if b.role == "heading":
                 self._heading_block_ids.add(id(pdf_block))
             blocks.append(pdf_block)
@@ -180,6 +186,10 @@ class RtldocPdfParser(LightPdfParser):
         freshly-instantiated Axis1StructuralBuilder -- Block.extra carries
         the same signal instead."""
         ir_block = super()._block_to_ir(b)
+        if b.source == "rtldoc":
+            role = self._role_by_block_id.get(id(b))
+            if role:
+                ir_block.extra["source_role"] = role
         if b.source == "rtldoc" and id(b) in self._heading_block_ids:
             ir_block.extra["heading_hint"] = "heading"
         return ir_block
