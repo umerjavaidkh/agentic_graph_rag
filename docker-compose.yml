@@ -89,8 +89,14 @@ services:
     # No container_name so Docker can create graphrag-worker-1, -2, etc. on scale
     # rq and redis ship in requirements.txt, so this needs no install step --
     # and the entrypoint now execs this instead of discarding it.
-    # Scale with: docker compose up -d --scale worker=N
     command: ["rq", "worker", "ingest", "--url", "redis://redis:6379/0", "--with-scheduler"]
+    # How many documents ingest at once: rq runs one job per worker process,
+    # so this IS the ingestion concurrency. Set WORKER_REPLICAS in .env
+    # rather than passing --scale, so a laptop and a cloud deployment differ
+    # by configuration instead of by the command someone remembered to type.
+    # `--scale` still overrides this when you want a one-off.
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
     env_file:
       - .env
     environment:
