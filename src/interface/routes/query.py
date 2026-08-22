@@ -77,6 +77,39 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+
+def _document_candidates(result: dict, retrieved_context: dict, request) -> Optional[list]:
+    """Documents this question might have meant, when none was resolved.
+
+    Computed here rather than inside the retrieval graph because a question
+    can reach an answer by two routes -- the LangGraph pipeline and a direct
+    tool dispatch (`route_method: llm_mcp`) -- and only one of them runs
+    that graph. Threading the value through both is how it ends up present
+    on some answers and missing on others for no reason a user could see.
+
+    Returns None, not [], when there is nothing to offer: a picker that
+    renders empty is worse than no picker.
+    """
+    existing = result.get("document_candidates") or retrieved_context.get("document_candidates")
+    if existing:
+        return existing
+
+    # Only when nothing was resolved. A confident answer needs no picker.
+    if result.get("document_id") or retrieved_context.get("document_id"):
+        return None
+
+    try:
+        from ...unstructured.retrieval.retriever import DocumentRAGRetriever
+
+        cands = DocumentRAGRetriever().document_candidates(
+            request.question, user_context=getattr(request, "user_context", None)
+        )
+        return cands or None
+    except Exception:  # a suggestion must never fail a working answer
+        logger.debug("document candidates unavailable", exc_info=True)
+        return None
+
+
 @router.post("/query", response_model=QueryResponse)
 async def query(
     request: QueryRequest,
@@ -154,6 +187,11 @@ async def query(
             low_confidence  = bool(result.get("low_confidence")),
             confidence_note = result.get("confidence_note"),
             document_id     = result.get("document_id") or retrieved_context.get("document_id"),
+            # Offered only when the resolver declined because two documents
+            # matched the query about equally. Guessing there lands on the
+            # runner-up about half the time and answers confidently from the
+            # wrong document.
+            document_candidates = _document_candidates(result, retrieved_context, request),
             document_title  = result.get("document_title") or retrieved_context.get("document_title"),
         )
     except ValueError as ve:

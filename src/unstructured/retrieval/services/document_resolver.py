@@ -237,6 +237,26 @@ class DocumentResolver:
 
         return scored[0][1], scored[0][2]
 
+    def names_an_unresolvable_document(
+        self, session, query: str, tenant_id: str = ""
+    ) -> bool:
+        """Did this query name a document that cannot be pinned down?
+
+        Distinct from naming none at all, and the two want opposite
+        handling. A question with no document vocabulary ("what's on page
+        6?") should fall through to the thread, the vectors, and finally
+        the largest document -- guessing is the only thing left, and it is
+        usually right.
+
+        A near-tie is not that. The user named something; two documents
+        simply match it about equally, and picking one is wrong about as
+        often as it is right. Verified: "the arXiv paper Attention Is All
+        You Need" scored arxiv_attention at 1.000 and arxiv_t5 at 0.972,
+        and the lower tiers returned t5.
+        """
+        scored = [x for x in self._scored_documents(session, query, tenant_id) if x[0] > 0.0]
+        return len(scored) > 1 and scored[0][0] < scored[1][0] * self.AMBIGUITY_LEAD
+
     def candidates_for_query(
         self, session, query: str, tenant_id: str = "", limit: int = 10
     ) -> list[dict]:
@@ -528,6 +548,22 @@ class DocumentResolver:
             hint_title = self._validate_document_id(session, document_id_hint, tenant_id)
             if hint_title is not None:
                 return document_id_hint, hint_title
+
+        # Below this point every tier guesses -- by broad term overlap, by
+        # vector majority, and finally by document size. That is the right
+        # behaviour for a question carrying no document name, which is what
+        # those tiers were built for.
+        #
+        # It is the wrong behaviour when the query named a document clearly
+        # enough to produce two close candidates: the guess then lands on
+        # the runner-up about as often as the winner, and the user is given
+        # a confident answer from the wrong document. Declining here lets
+        # the caller offer the candidates instead, which is the one thing
+        # that reliably resolves a tie between documents that share a
+        # vocabulary. The thread hint above still wins, so follow-ups in a
+        # grounded conversation are unaffected.
+        if self.names_an_unresolvable_document(session, query, tenant_id):
+            return None, None
 
         terms = self.document_match_terms(query)
         lc = lifecycle_active("d")
