@@ -21,7 +21,7 @@
       --border-strong: #aecda5;
       --text:#15251c;
       --text-secondary:#2f4539;
-      --text-muted:#5c7568;
+      --text-muted:#405249;
       --accent:#27673f;
       --accent-soft:rgba(39,103,63,0.10);
       --accent-glow:rgba(39,103,63,0.22);
@@ -845,8 +845,32 @@
       box-shadow:inset 0 2px 0 var(--accent);
     }
     .source-tab-sub{ font-weight:400; font-size:.72rem; opacity:.72; }
-  </style>
-<link rel="stylesheet" href="/static/theme.css" />
+  
+      /* Source picker: a segmented control in the sidebar rather than tabs
+         over the transcript. It decides where the NEXT question goes, which
+         makes it a setting -- so it sits with the other settings instead of
+         competing with the conversation for the top of the page. */
+      .source-toggle{ display:grid; gap:6px; margin:2px 0 14px; }
+      .source-opt{
+        text-align:left; padding:9px 12px; border-radius:12px;
+        background:#f4f8f1; border:1px solid #dae7d4; color:#2f4539;
+        font-size:13px; font-weight:600; cursor:pointer; line-height:1.25;
+      }
+      .source-opt span{ display:block; font-weight:500; font-size:11px;
+        color:#7d9488; margin-top:1px; letter-spacing:0; }
+      .source-opt:hover{ background:#e9f2e5; }
+      .source-opt.is-active{
+        /* Solid colour first, gradient second. White text on this option is
+           unreadable if the gradient does not paint for any reason, so the
+           legible state must not depend on it. */
+        background-color:#1c6b3c;
+        background-image:linear-gradient(180deg,#23864b 0%,#1c6b3c 100%);
+        border-color:#14532d; color:#ffffff;
+      }
+      .source-opt.is-active span{ color:rgba(255,255,255,.78); }
+</style>
+<link rel="stylesheet" href="/static/theme.css?v=cc1baf0f" />
+  <script defer src="/static/ambient.js?v=7430ec62"></script>
 </head>
 <body>
   <div class="shell">
@@ -873,6 +897,18 @@
 
           <label>Department</label>
           <input id="department" type="text" placeholder="Optional" />
+
+          <label>Ask about</label>
+          <div class="source-toggle" role="tablist" aria-label="What to ask about">
+            <button class="source-opt is-active" role="tab" data-mode="unstructured"
+                    aria-selected="true" type="button">
+              Documents<span>PDFs, reports, policies</span>
+            </button>
+            <button class="source-opt" role="tab" data-mode="structured"
+                    aria-selected="false" type="button">
+              Structured<span>tables, orders, customers</span>
+            </button>
+          </div>
 
         </div>
 
@@ -905,18 +941,6 @@
           <span class="brand">Assistant</span>
           <span class="badge status-ready" id="status">Ready</span>
         </h2>
-      </div>
-      <div class="source-tabs" role="tablist" aria-label="What to ask about">
-        <button class="source-tab is-active" role="tab" data-mode="unstructured"
-                aria-selected="true" type="button">
-          Documents
-          <span class="source-tab-sub">PDFs, reports, policies</span>
-        </button>
-        <button class="source-tab" role="tab" data-mode="structured"
-                aria-selected="false" type="button">
-          Structured data
-          <span class="source-tab-sub">tables, orders, customers</span>
-        </button>
       </div>
       <div id="err" class="error" style="display:none;"></div>
       <div id="chat_body" class="chat-body"></div>
@@ -2197,12 +2221,12 @@
       unstructured: 'Ask about your documents — policies, reports, filings…',
       structured: 'Ask about your data — orders, revenue, customers, totals…',
     };
-    document.querySelectorAll('.source-tab').forEach((tab) => {
+    document.querySelectorAll('.source-opt').forEach((tab) => {
       tab.addEventListener('click', () => {
         const mode = tab.dataset.mode;
         if (modeInput.value === mode) return;
         modeInput.value = mode;
-        document.querySelectorAll('.source-tab').forEach((t) => {
+        document.querySelectorAll('.source-opt').forEach((t) => {
           const on = t === tab;
           t.classList.toggle('is-active', on);
           t.setAttribute('aria-selected', String(on));
@@ -2248,6 +2272,6 @@
 
     renderWelcome();
   </script>
-<script src="/static/nav.js"></script>
+<script src="/static/nav.js?v=cb7fef1f"></script>
 </body>
 </html>
