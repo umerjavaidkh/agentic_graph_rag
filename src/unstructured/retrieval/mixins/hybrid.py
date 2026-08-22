@@ -37,6 +37,24 @@ class HybridRetrieveMixin:
             query, limit=limit, user_context=user_context, document_id_hint=document_id_hint
         )
 
+    def document_candidates(self, query: str, user_context=None, limit: int = 10) -> list:
+        """Plausible documents for a query that named none clearly.
+
+        Empty when one document wins outright, and empty when nothing
+        matches -- a list of documents that match nothing is worse than
+        saying so. Capped at `limit`, because a picker long enough to
+        scroll is a worse answer than the guess it replaces.
+        """
+        # Imported here, not at module scope: registration.py builds the
+        # strategies that import this mixin, so a top-level import is a cycle.
+        from ..strategies.registration import document_resolver
+
+        tenant_id = getattr(user_context, "tenant_id", "") or ""
+        with self.driver.session() as session:
+            return document_resolver.candidates_for_query(
+                session, query, tenant_id, limit=limit
+            )
+
     def hybrid_retrieve(
         self,
         query: str,
