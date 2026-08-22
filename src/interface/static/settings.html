@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Settings · Agentic Graph RAG</title>
+<script defer src="/static/nav.js"></script>
+<style>
+  :root{
+    --bg:#0f1117; --panel:#171a23; --line:#262b38; --ink:#e7eaf3;
+    --muted:#98a1b8; --accent:#6c8cff; --ok:#3ecf8e; --warn:#f0b849; --err:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:22px 20px 60px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 20px}
+  .note{background:#1b2030;border:1px solid var(--line);border-left:3px solid var(--warn);
+        border-radius:6px;padding:10px 13px;margin:0 0 20px;color:#cfd6e6;font-size:13px}
+  .group{background:var(--panel);border:1px solid var(--line);border-radius:9px;
+         padding:16px 18px;margin:0 0 16px}
+  .group h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;
+            color:var(--muted);margin:0 0 14px;font-weight:600}
+  .row{display:grid;grid-template-columns:1fr 190px;gap:14px;align-items:start;
+       padding:12px 0;border-top:1px solid var(--line)}
+  .row:first-of-type{border-top:none}
+  .name{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  .help{color:var(--muted);font-size:12.5px;margin-top:3px}
+  .tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:20px;
+       border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:1px}
+  .tag.override{color:var(--accent);border-color:var(--accent)}
+  input,select{width:100%;background:#0e1220;color:var(--ink);border:1px solid var(--line);
+       border-radius:6px;padding:7px 9px;font:13px ui-monospace,Menlo,monospace}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  .bar{position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 26%);
+       padding:16px 0 0;display:flex;gap:10px;align-items:center}
+  button{background:var(--accent);color:#0b0e17;border:0;border-radius:7px;
+         padding:9px 16px;font-weight:600;cursor:pointer;font-size:13.5px}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:default}
+  #msg{font-size:13px}
+  #msg.ok{color:var(--ok)} #msg.err{color:var(--err)} #msg.warn{color:var(--warn)}
+  code{background:#0e1220;border:1px solid var(--line);border-radius:4px;padding:1px 5px;
+       font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Settings</h1>
+  <p class="sub">Tuning dials for ingestion, models and graph construction.</p>
+
+  <div class="note">
+    <strong>Changes apply on restart.</strong> Settings are read once when a process
+    starts, so saving stores the value — it does not change a running worker.
+    Restart with <code>docker compose up -d</code>, which is also what
+    <code>WORKER_REPLICAS</code> needs in order to change the number of containers.
+    <br /><br />
+    Only tuning settings appear here. Credentials and the safety switches
+    (<code>ALLOW_CYPHER_INGEST</code>, <code>ALLOW_DB_RESET</code>) are deliberately
+    not editable from a web page.
+  </div>
+
+  <div id="groups"></div>
+
+  <div class="bar">
+    <button id="save">Save changes</button>
+    <button id="reset" class="ghost">Reset all to deployed values</button>
+    <span id="msg"></span>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var ctx = { user_id: "admin_001", role: "admin" };
+  try {
+    var saved = JSON.parse(localStorage.getItem("graphrag_ctx") || "{}");
+    if (saved.user_id) ctx.user_id = saved.user_id;
+    if (saved.role) ctx.role = saved.role;
+  } catch (e) {}
+
+  var qs = new URLSearchParams({ user_id: ctx.user_id, role: ctx.role }).toString();
+  var state = [];
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  function field(s) {
+    if (s.kind === "bool") {
+      return '<select data-name="' + esc(s.name) + '">' +
+        '<option value="true"' + (s.value === "true" ? " selected" : "") + ">true</option>" +
+        '<option value="false"' + (s.value !== "true" ? " selected" : "") + ">false</option>" +
+        "</select>";
+    }
+    if (s.kind === "choice") {
+      return '<select data-name="' + esc(s.name) + '">' +
+        (s.choices || []).map(function (c) {
+          return '<option value="' + esc(c) + '"' + (c === s.value ? " selected" : "") +
+                 ">" + esc(c) + "</option>";
+        }).join("") + "</select>";
+    }
+    var extra = s.kind === "int" || s.kind === "float"
+      ? ' type="number"' + (s.minimum != null ? ' min="' + s.minimum + '"' : "") +
+        (s.maximum != null ? ' max="' + s.maximum + '"' : "")
+      : ' type="text"';
+    return '<input data-name="' + esc(s.name) + '"' + extra + ' value="' + esc(s.value) + '" />';
+  }
+
+  function render(rows) {
+    state = rows;
+    var groups = [];
+    rows.forEach(function (r) {
+      var g = groups.filter(function (x) { return x.name === r.group; })[0];
+      if (!g) { g = { name: r.group, items: [] }; groups.push(g); }
+      g.items.push(r);
+    });
+    document.getElementById("groups").innerHTML = groups.map(function (g) {
+      return '<div class="group"><h2>' + esc(g.name) + "</h2>" +
+        g.items.map(function (s) {
+          var tag = s.source === "override"
+            ? '<span class="tag override">overridden</span>' : "";
+          var where = s.applies_to === "compose"
+            ? '<span class="tag">needs compose up</span>'
+            : (s.applies_to === "workers" ? '<span class="tag">workers</span>' : "");
+          return '<div class="row"><div><span class="name">' + esc(s.name) + "</span>" +
+            tag + where + '<div class="help">' + esc(s.help) + "</div></div>" +
+            "<div>" + field(s) + "</div></div>";
+        }).join("") + "</div>";
+    }).join("");
+  }
+
+  function say(text, cls) {
+    var el = document.getElementById("msg");
+    el.textContent = text;
+    el.className = cls || "";
+  }
+
+  function load() {
+    fetch("/admin/settings?" + qs)
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.status === 403 ? "Admin role required" : "HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) { render(d.settings); say(""); })
+      .catch(function (e) { say(e.message, "err"); });
+  }
+
+  document.getElementById("save").addEventListener("click", function () {
+    var values = {};
+    document.querySelectorAll("[data-name]").forEach(function (el) {
+      var original = state.filter(function (s) { return s.name === el.dataset.name; })[0];
+      // Send only what actually changed, so an untouched setting is never
+      // pinned as an override just because the page was opened.
+      if (original && String(el.value) !== String(original.value)) {
+        values[el.dataset.name] = el.value;
+      }
+    });
+    if (!Object.keys(values).length) { say("Nothing changed.", "warn"); return; }
+
+    say("Saving…");
+    fetch("/admin/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values: values, user_id: ctx.user_id, role: ctx.role })
+    })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, b: b }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.b.detail || "Save failed");
+        say(res.b.message, "ok");
+        load();
+      })
+      .catch(function (e) { say(e.message, "err"); });
+  });
+
+  document.getElementById("reset").addEventListener("click", function () {
+    if (!confirm("Clear every override and fall back to the deployed values?")) return;
+    fetch("/admin/settings?" + qs, { method: "DELETE" })
+      .then(function (r) { return r.json(); })
+      .then(function (b) { say(b.message || "Cleared.", "ok"); load(); })
+      .catch(function (e) { say(e.message, "err"); });
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

@@ -80,7 +80,7 @@ from ..shared.feedback import (
     retrieval_pattern,
 )
 
-from .routes import admin, documents, feedback, ingest, pages, query
+from .routes import admin, documents, feedback, ingest, pages, query, settings as settings_routes
 
 logger = logging.getLogger(__name__)
 
@@ -130,3 +130,4 @@ app.include_router(feedback.router)
 app.include_router(ingest.router)
 app.include_router(documents.router)
 app.include_router(admin.router)
+app.include_router(settings_routes.router)

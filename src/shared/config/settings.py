@@ -4,6 +4,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Stored overrides from the settings screen, applied before anything below
+# reads the environment. Every constant in this file is evaluated once at
+# import, so an override has to be in place first -- which is also why a
+# change made in the UI only takes effect when the process restarts.
+# Never raises: a settings store that is down must not stop startup.
+try:
+    from .overrides import apply_to_environ as _apply_setting_overrides
+
+    _apply_setting_overrides()
+except Exception:  # pragma: no cover - startup must survive a missing store
+    pass
+
 # Anchored on this file's depth: src/shared/config/settings.py.
 # These indices decide where the app READS AND WRITES -- blob store,
 # feedback and audit dirs all hang off PROJECT_ROOT -- and a wrong index

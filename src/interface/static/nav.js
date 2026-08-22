@@ -37,6 +37,7 @@
       match: ["/graph-inspector", "/static/graph_inspector.html"],
     },
     { label: "Feedback", href: "/feedback", match: ["/feedback", "/static/feedback.html"] },
+    { label: "Settings", href: "/settings", match: ["/settings", "/static/settings.html"] },
   ];
 
   // Not tabs: /docs is FastAPI's own Swagger page and /health returns JSON,
