@@ -101,6 +101,12 @@ async def graph_inspector_page():
     return RedirectResponse(url="/static/graph_inspector.html")
 
 
+@router.get("/settings")
+async def settings_page() -> RedirectResponse:
+    """Friendly route for the settings screen, matching the other tabs."""
+    return RedirectResponse(url="/static/settings.html")
+
+
 @router.get("/feedback")
 async def feedback_dashboard_page():
     """Ops dashboard: feedback store, hints, and routing apply status."""
