@@ -1,0 +1,25 @@
+{
+  "note": "Retrieval-only ground truth. `answer_phrase` is located in the PDF at run time, so the expected page is derived from the document rather than asserted by hand. A case whose phrase is not found is reported as UNGROUNDED, never silently passed.",
+  "cases": [
+    {"doc": "arxiv_attention", "q": "What BLEU score did the big Transformer reach on English-to-German translation?", "answer_phrase": "28.4"},
+    {"doc": "arxiv_attention", "q": "How many layers does the encoder stack have?", "answer_phrase": "N = 6"},
+    {"doc": "arxiv_attention", "q": "What is the formula for scaled dot-product attention?", "answer_phrase": "Scaled Dot-Product Attention"},
+    {"doc": "arxiv_bert", "q": "What GLUE score did BERT large achieve?", "answer_phrase": "80.5"},
+    {"doc": "arxiv_bert", "q": "What are the two pre-training tasks used by BERT?", "answer_phrase": "Next Sentence Prediction"},
+    {"doc": "arxiv_resnet", "q": "What top-5 error did the residual network achieve on ImageNet?", "answer_phrase": "3.57"},
+    {"doc": "arxiv_resnet", "q": "How deep was the network evaluated on ImageNet?", "answer_phrase": "152"},
+    {"doc": "arxiv_rag", "q": "Which retriever does RAG use to fetch passages?", "answer_phrase": "DPR"},
+    {"doc": "arxiv_rag", "q": "What are the two RAG formulations compared?", "answer_phrase": "RAG-Token"},
+    {"doc": "irs_p969_hsa", "q": "What is a health savings account?", "answer_phrase": "health savings account"},
+    {"doc": "irs_p969_hsa", "q": "What is the last-month rule for HSA contributions?", "answer_phrase": "Last-month rule"},
+    {"doc": "irs_p501_dependents", "q": "What is the standard deduction amount?", "answer_phrase": "Standard Deduction"},
+    {"doc": "irs_p501_dependents", "q": "Who qualifies as a qualifying relative?", "answer_phrase": "Qualifying Relative"},
+    {"doc": "irs_p926_household", "q": "Do I need to pay employment taxes for a household employee?", "answer_phrase": "household employee"},
+    {"doc": "nist_csf_2", "q": "What are the CSF Functions?", "answer_phrase": "GOVERN"},
+    {"doc": "nist_csf_2", "q": "What is a CSF Profile?", "answer_phrase": "Profile"},
+    {"doc": "nist_ir_8259", "q": "What are the pre-market activities for IoT device manufacturers?", "answer_phrase": "Activity 1"},
+    {"doc": "nist_ir_8259", "q": "What is device identification?", "answer_phrase": "Device Identification"},
+    {"doc": "nist_ir_8425_iot", "q": "What are the baseline product criteria for consumer IoT?", "answer_phrase": "Product Criteria"},
+    {"doc": "nist_ir_8425_iot", "q": "What documentation should IoT product developers provide?", "answer_phrase": "Documentation"}
+  ]
+}

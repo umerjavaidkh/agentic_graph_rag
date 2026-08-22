@@ -868,6 +868,18 @@
         border-color:#14532d; color:#ffffff;
       }
       .source-opt.is-active span{ color:rgba(255,255,255,.78); }
+
+      .doc-picker{ margin-top:12px; padding:11px 13px; border:1px solid #cadcc3;
+        border-radius:12px; background:#f4f8f1; }
+      .doc-picker-label{ font-size:12.5px; color:#405249; margin-bottom:8px; font-weight:600; }
+      .doc-picker-row{ display:flex; flex-wrap:wrap; gap:7px; }
+      .doc-pick{ font-size:12.5px; padding:6px 12px; border-radius:999px;
+        background:#ffffff; border:1px solid #cadcc3; color:#1c4e30;
+        cursor:pointer; font-weight:600; }
+      .doc-pick:hover{ background:#e6f0e2; border-color:#aecda5; }
+      .doc-pick.is-chosen{ background-color:#1c6b3c;
+        background-image:linear-gradient(180deg,#23864b 0%,#1c6b3c 100%);
+        border-color:#14532d; color:#ffffff; }
 </style>
 <link rel="stylesheet" href="/static/theme.css?v=cc1baf0f" />
   <script defer src="/static/ambient.js?v=7430ec62"></script>
@@ -1109,6 +1121,55 @@
     function firstSourcePage(sources) {
       const s = sources && sources[0];
       return s && (s.pdf_page || s.document_page || s.page_start);
+    }
+
+
+    // ── Document picker ──────────────────────────────────────────────────
+    // Shown only when the backend could not tell which document a question
+    // meant. Guessing is measurably worse at corpus scale: unscoped, a
+    // question about a decedent's return was answered from an IRS
+    // medical-expenses publication -- and answered "not covered", which
+    // reads as the corpus lacking the answer rather than the wrong document
+    // having been searched. Picking one re-asks the same question scoped to
+    // it, and the thread stays grounded there for follow-ups.
+    function appendDocumentPicker(bubble, candidates, question) {
+      if (!candidates || !candidates.length) return;
+
+      const box = document.createElement('div');
+      box.className = 'doc-picker';
+
+      const label = document.createElement('div');
+      label.className = 'doc-picker-label';
+      label.textContent = candidates.length === 1
+        ? 'Did you mean this document?'
+        : 'Which document did you mean?';
+      box.appendChild(label);
+
+      const row = document.createElement('div');
+      row.className = 'doc-picker-row';
+      // Capped server-side at 10; a picker long enough to scroll is a worse
+      // answer than the guess it replaces.
+      candidates.forEach((c) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'doc-pick';
+        b.textContent = c.title || c.document_id;
+        b.title = c.document_id;
+        b.addEventListener('click', () => {
+          box.querySelectorAll('.doc-pick').forEach((x) => x.classList.remove('is-chosen'));
+          b.classList.add('is-chosen');
+          // Re-ask the same question, naming the document. That is the same
+          // path a user gets by naming it themselves, so there is one
+          // scoping mechanism rather than two.
+          const q = document.getElementById('q');
+          q.value = `In ${c.title || c.document_id}, ${question}`;
+          const send = document.getElementById('send') || document.querySelector('.send');
+          if (send) send.click();
+        });
+        row.appendChild(b);
+      });
+      box.appendChild(row);
+      bubble.appendChild(box);
     }
 
     function appendSourceOpenLink(container, source, documentId, documentTitle) {
@@ -1804,7 +1865,12 @@
       if (bar) inner.appendChild(bar);
     }
 
-    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType, followUp, telemetry, requestId, documentTitle, documentId) {
+    // The question the picker re-asks when a document is chosen. Kept here
+    // rather than read back from the transcript, which may have been
+    // cleared or scrolled away.
+    let lastAskedQuestion = '';
+
+    function addAssistantResponse(answer, sources, accessLevel, agent, strategy, routeTool, routeMethod, presentation, queryType, followUp, telemetry, requestId, documentTitle, documentId, documentCandidates, askedQuestion) {
       removeThinking();
       const wrap = document.createElement('div');
       wrap.className = 'msg assistant';
@@ -1861,6 +1927,10 @@
       }
       inner.appendChild(metaRow);
       appendFeedbackBar(inner, requestId);
+
+      // Offered before the sources, because it is a correction to the
+      // answer above rather than a detail about it.
+      appendDocumentPicker(bubble, documentCandidates, askedQuestion);
 
       if (sources && sources.length) {
         const details = document.createElement('details');
@@ -1957,6 +2027,7 @@
     }
 
     async function sendClassic(question, ctx) {
+      lastAskedQuestion = question;
       const res = await fetch('/query', {
         method: 'POST',
         headers: authHeaders(),
@@ -1988,7 +2059,9 @@
         payload.telemetry,
         payload.request_id,
         payload.document_title,
-        payload.document_id
+        payload.document_id,
+        payload.document_candidates,
+        payload.question || (payload.telemetry && payload.telemetry.question) || lastAskedQuestion
       );
     }
 
@@ -2122,6 +2195,7 @@
     }
 
     async function sendStreaming(question, ctx) {
+      lastAskedQuestion = question;
       const res = await fetch('/query/stream', {
         method: 'POST',
         headers: authHeaders(),

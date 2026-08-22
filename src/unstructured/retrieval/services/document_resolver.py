@@ -56,17 +56,46 @@ _PAREN_RE = re.compile(r"\([^)]*\)")
 # didn't already have, only removes accidental substring collisions) and
 # works correctly across hyphenated/structured ids too (hyphens are
 # non-word characters, so "10k" still \b-matches inside "gs-10k-2026-02-25").
+# A term must not match inside a longer word ("559" must not hit "8559"),
+# but \b is the wrong tool for document identifiers: there is no word
+# boundary between "p" and "559" in "doc_irs_p559", so a publication number
+# -- the single most distinctive thing a user can name -- matched nothing at
+# all. Digit runs are bounded by digits instead, which is what actually
+# distinguishes "559" from "8559" while still matching "p559" and "ir8286".
 _WORD_BOUNDARY_PATTERN = "('(?s).*\\\\b' + term + '\\\\b.*')"
+_DIGIT_BOUNDARY_PATTERN = "('(?s).*(?<![0-9])' + term + '(?![0-9]).*')"
 _POSSESSIVE_RE = re.compile(r"'s?$")
+
+#: "Publication 559", "Pub. 502", "NIST IR 8286", "SP 800-53", "Form 1040".
+#: Anchored on the document-type word so a dollar amount or a year in the
+#: question is never taken for an identifier.
+_DOC_NUMBER_RE = re.compile(
+    r"\b(?:publication|pub\.?|form|report|bulletin|circular|ir|nistir|sp|no\.?|#)\s*"
+    r"([0-9]{2,5}(?:[-–][0-9]{1,4})?[a-z]?)\b",
+    re.I,
+)
 
 
 class DocumentResolver:
     def __init__(self, graph_seeds: GraphSeedService):
         self._graph_seeds = graph_seeds
 
-    def resolve_document_for_query_strict(
+    def score_documents_for_query(
         self, session, query: str, tenant_id: str = ""
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> list[tuple[float, str, str]]:
+        """Every candidate document for `query`, ranked, as (score, id, title).
+
+        The ranking the strict resolver already computed and then discarded
+        whenever it could not pick a winner. Keeping it is what lets a
+        caller offer the choice to the user instead of guessing or giving
+        up: on a 50-document corpus an unscoped question lands on the wrong
+        document often enough that guessing is the worse option.
+        """
+        return self._scored_documents(session, query, tenant_id)
+
+    def _scored_documents(
+        self, session, query: str, tenant_id: str = ""
+    ) -> list[tuple[float, str, str]]:
         """
         Resolve the document a user named, scoring each logical document by how
         distinctively its content matches the query's document-name terms.
@@ -87,7 +116,7 @@ class DocumentResolver:
         """
         terms = self.doc_name_terms(query)
         if not terms:
-            return None, None
+            return []
 
         lc = lifecycle_active("d")
         lc_n = lifecycle_active("n")
@@ -104,7 +133,10 @@ class DocumentResolver:
             WHERE {lc_n}
               AND {tenant_filter("n")}
               AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
-                   OR toLower(coalesce(n.search_text, '')) =~ {_WORD_BOUNDARY_PATTERN})
+                   OR toLower(coalesce(n.search_text, '')) =~ {_WORD_BOUNDARY_PATTERN}
+                   OR (term =~ '\\d+' AND (
+                        toLower(coalesce(n.title, '')) =~ {_DIGIT_BOUNDARY_PATTERN}
+                        OR toLower(coalesce(n.search_text, '')) =~ {_DIGIT_BOUNDARY_PATTERN})))
             WITH dl, term, count(DISTINCT n) AS cnt,
                  // Bare 4-digit years never count as a title match: our own
                  // logical_ids are systematically date-suffixed (ticker_form_
@@ -117,7 +149,10 @@ class DocumentResolver:
                  // the query's year).
                  (NOT term =~ '\\d{{4}}'
                   AND (toLower(coalesce(dl.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
-                       OR toLower(dl.logical_id) =~ {_WORD_BOUNDARY_PATTERN})) AS title_match
+                       OR toLower(dl.logical_id) =~ {_WORD_BOUNDARY_PATTERN}
+                       OR (term =~ '\\d+' AND (
+                            toLower(coalesce(dl.title, '')) =~ {_DIGIT_BOUNDARY_PATTERN}
+                            OR toLower(dl.logical_id) =~ {_DIGIT_BOUNDARY_PATTERN})))) AS title_match
             RETURN dl.logical_id AS id,
                    coalesce(dl.title, dl.logical_id) AS title,
                    collect({{term: term, cnt: cnt, title_match: title_match}}) AS term_hits
@@ -128,7 +163,7 @@ class DocumentResolver:
 
         docs: list[dict] = [dict(r) for r in rows]
         if not docs:
-            return None, None
+            return []
 
         # Document frequency per term (how many docs contain it at all).
         term_doc_freq: dict[str, int] = {t: 0 for t in terms}
@@ -175,17 +210,74 @@ class DocumentResolver:
             scored.append((score, str(d["id"]), _clean_doc_title(str(d["title"] or d["id"]))))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        top = scored[0]
-        if top[0] <= 0.0:
-            return None, None  # no real match → caller clarifies
+        return scored
 
-        # Require a clear lead over the runner-up to avoid guessing on near-ties.
+    #: A winner must lead the runner-up by this much to be taken without
+    #: asking. Below it the two documents are, on the evidence in the query,
+    #: equally plausible.
+    AMBIGUITY_LEAD = 1.5
+
+    def resolve_document_for_query_strict(
+        self, session, query: str, tenant_id: str = ""
+    ) -> tuple[Optional[str], Optional[str]]:
+        """The single document this query names, or (None, None).
+
+        Unchanged behaviour: returns nothing when there is no real match or
+        when the top two are too close to separate, so the caller can ask
+        rather than guess.
+        """
+        scored = self._scored_documents(session, query, tenant_id)
+        if not scored or scored[0][0] <= 0.0:
+            return None, None
+
         if len(scored) > 1:
             runner = scored[1][0]
-            if runner > 0.0 and top[0] < runner * 1.5:
-                return None, None  # ambiguous → caller clarifies
+            if runner > 0.0 and scored[0][0] < runner * self.AMBIGUITY_LEAD:
+                return None, None
 
-        return top[1], top[2]
+        return scored[0][1], scored[0][2]
+
+    def names_an_unresolvable_document(
+        self, session, query: str, tenant_id: str = ""
+    ) -> bool:
+        """Did this query name a document that cannot be pinned down?
+
+        Distinct from naming none at all, and the two want opposite
+        handling. A question with no document vocabulary ("what's on page
+        6?") should fall through to the thread, the vectors, and finally
+        the largest document -- guessing is the only thing left, and it is
+        usually right.
+
+        A near-tie is not that. The user named something; two documents
+        simply match it about equally, and picking one is wrong about as
+        often as it is right. Verified: "the arXiv paper Attention Is All
+        You Need" scored arxiv_attention at 1.000 and arxiv_t5 at 0.972,
+        and the lower tiers returned t5.
+        """
+        scored = [x for x in self._scored_documents(session, query, tenant_id) if x[0] > 0.0]
+        return len(scored) > 1 and scored[0][0] < scored[1][0] * self.AMBIGUITY_LEAD
+
+    def candidates_for_query(
+        self, session, query: str, tenant_id: str = "", limit: int = 10
+    ) -> list[dict]:
+        """Plausible documents for a query that named none clearly.
+
+        Empty when one document wins outright -- there is nothing to ask
+        about -- and empty when nothing matches at all, since a list of
+        documents that match nothing is worse than saying so.
+        """
+        scored = [s for s in self._scored_documents(session, query, tenant_id) if s[0] > 0.0]
+        if not scored:
+            return []
+        if len(scored) == 1 or scored[0][0] >= scored[1][0] * self.AMBIGUITY_LEAD:
+            return []          # unambiguous; the resolver will just use it
+
+        top = scored[0][0]
+        return [
+            {"document_id": doc_id, "title": title, "score": round(score, 2),
+             "relative": round(score / top, 3)}
+            for score, doc_id, title in scored[:limit]
+        ]
 
     @staticmethod
     def _logical_id_from_node_id(node_id: str) -> Optional[str]:
@@ -457,6 +549,22 @@ class DocumentResolver:
             if hint_title is not None:
                 return document_id_hint, hint_title
 
+        # Below this point every tier guesses -- by broad term overlap, by
+        # vector majority, and finally by document size. That is the right
+        # behaviour for a question carrying no document name, which is what
+        # those tiers were built for.
+        #
+        # It is the wrong behaviour when the query named a document clearly
+        # enough to produce two close candidates: the guess then lands on
+        # the runner-up about as often as the winner, and the user is given
+        # a confident answer from the wrong document. Declining here lets
+        # the caller offer the candidates instead, which is the one thing
+        # that reliably resolves a tie between documents that share a
+        # vocabulary. The thread hint above still wins, so follow-ups in a
+        # grounded conversation are unaffected.
+        if self.names_an_unresolvable_document(session, query, tenant_id):
+            return None, None
+
         terms = self.document_match_terms(query)
         lc = lifecycle_active("d")
         lc_n = lifecycle_active("n")
@@ -612,6 +720,17 @@ class DocumentResolver:
         """
         cleaned = _PAREN_RE.sub(" ", _STRUCTURAL_REF_RE.sub(" ", query or ""))
         terms: list[str] = list(_query_anchor_terms(cleaned))
+
+        # A document number is the most distinctive thing a query can carry,
+        # and the token scan below cannot see it: it requires a leading
+        # letter, so "IRS Publication 559" yielded ['irs', 'publication'] --
+        # terms every IRS publication shares. Only numbers introduced by a
+        # document-type word count, so an amount or a year in the question
+        # is not mistaken for an identifier.
+        for m in _DOC_NUMBER_RE.finditer(cleaned):
+            token = m.group(1).lower()
+            if token not in terms:
+                terms.append(token)
 
         # Tokens that are capitalised mid-sentence are likely proper nouns / doc names
         words = re.findall(r"[A-Za-z][\w'-]*", cleaned)

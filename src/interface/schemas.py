@@ -173,6 +173,12 @@ class QueryResponse(BaseModel):
     low_confidence:  bool = False        # structured-path answer verification signal
     confidence_note: Optional[str] = None  # reason when low_confidence is True
     document_id:    Optional[str] = None  # logical doc id the answer was grounded in (document paths only)
+    # Plausible documents when the question named none clearly. Present only
+    # when the resolver declined to pick: on a 50-document corpus an unscoped
+    # question lands on the wrong document often enough that offering the
+    # choice beats guessing, and beats answering "not covered" from a
+    # document the user never meant.
+    document_candidates: Optional[List[dict]] = None
     document_title: Optional[str] = None  # UI transparency: "answering from <document>"
     # Per-claim citations: [{text, source_id, page, title, overlap}], with
     # source_id None where a sentence has no confident support. Declared here

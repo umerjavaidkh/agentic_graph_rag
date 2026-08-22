@@ -19,6 +19,12 @@ class ESGState(TypedDict, total=False):
     # any key a node returns that the state schema does not name -- the value
     # was being computed and silently discarded.
     claims: List[Dict]
+    # Documents this query might have meant, when the resolver declined to
+    # pick between them. Declared for the same reason `claims` above is: a
+    # node returned it, the schema did not name it, and LangGraph discarded
+    # it without a word -- the picker rendered nothing and looked like a
+    # resolver that had simply given up.
+    document_candidates: List[Dict]
     skip_structured_guard: bool
     strategy: Optional[str]
     _autofix_agent: Optional[str]

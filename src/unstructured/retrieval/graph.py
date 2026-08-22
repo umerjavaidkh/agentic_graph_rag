@@ -99,11 +99,26 @@ def retrieve_node(state: ESGState):
             document_id_hint=document_id_hint,
         )
     strategy = context.get("strategy", "graph_rag")
+
+    # When the question named no document clearly, carry the plausible ones
+    # through so the caller can offer the choice. Guessing is measurably
+    # worse at corpus scale: unscoped, a question about a decedent's return
+    # was answered from an IRS medical-expenses publication, and answered
+    # "not covered" -- which reads as the corpus lacking the answer rather
+    # than as the wrong document having been searched.
+    candidates: list = []
+    if not document_id_hint:
+        try:
+            candidates = retriever.document_candidates(question, user_context=user_context)
+        except Exception:  # never fail a working answer over a suggestion
+            candidates = []
+
     return {
         "retrieved_context": context,
         "keywords": [],
         "sources": context.get("chunks", []),
         "query_type": strategy,
+        "document_candidates": candidates,
     }
 
 

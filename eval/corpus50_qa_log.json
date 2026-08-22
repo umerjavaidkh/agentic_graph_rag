@@ -1,0 +1,62 @@
+[
+ {
+  "doc": "irs_p502",
+  "page": 11,
+  "expect": "4,810",
+  "passed": true
+ },
+ {
+  "doc": "irs_p559",
+  "page": 10,
+  "expect": "108.28",
+  "passed": true
+ },
+ {
+  "doc": "nist_ir_8286",
+  "page": 44,
+  "expect": "750,000",
+  "passed": true
+ },
+ {
+  "doc": "irs_p575",
+  "page": 6,
+  "expect": "7,500",
+  "passed": true
+ },
+ {
+  "doc": "irs_p575",
+  "page": 10,
+  "expect": "150,000",
+  "passed": false
+ },
+ {
+  "doc": "arxiv_alexnet_ref",
+  "page": 7,
+  "expect": "42.63",
+  "passed": true
+ },
+ {
+  "doc": "arxiv_attention",
+  "page": 1,
+  "expect": "28.4",
+  "passed": false
+ },
+ {
+  "doc": "irs_p517",
+  "page": 10,
+  "expect": "125",
+  "passed": true
+ },
+ {
+  "doc": "nist_ir_8228",
+  "page": 33,
+  "expect": "CP-9",
+  "passed": false
+ },
+ {
+  "doc": "irs_p926_household",
+  "page": 2,
+  "expect": "employment tax",
+  "passed": true
+ }
+]
