@@ -1,0 +1,93 @@
+/* theme.css — the shared "calm nature" layer.
+ *
+ * Per-page stylesheets carry the palette (already swapped to forest greens
+ * and sage); this file carries the feel that no palette alone gives you:
+ * air between things, edges that are soft rather than drawn, and shadows
+ * that read as depth instead of outline.
+ *
+ * Loaded after each page's own <style>, so these win where they overlap.
+ * Deliberately restricted to surfaces, edges and motion -- it does not
+ * touch layout, so no page can be broken by it.
+ */
+
+:root{
+  --n-shadow-sm: 0 1px 2px rgba(29,48,38,.05);
+  --n-shadow:    0 1px 2px rgba(29,48,38,.04), 0 8px 24px rgba(29,48,38,.06);
+  --n-shadow-lg: 0 24px 60px rgba(29,48,38,.13);
+  --n-radius: 14px;
+  --n-ease: cubic-bezier(.4,0,.2,1);
+}
+
+/* A sky, not a flat fill: two very soft green washes over sage mist.
+   Fixed so the page scrolls against a calm ground rather than with it. */
+body{
+  background-color:#eaf1e5;
+  background-image:
+    radial-gradient(1100px 520px at 12% -8%,  rgba(47,132,85,.14), transparent 60%),
+    radial-gradient(900px 460px at 92% 4%,    rgba(168,111,31,.09), transparent 62%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Cards and panels: rounded, lifted, hairline-edged. The selector list is
+   the union of what the five pages actually call their surfaces. */
+.card,.panel,.group,.shell,.box,.tile,.stat,.section,
+.doc-panel,.sidebar,.main,.chat-panel,.upload-card,.metric{
+  border-radius: var(--n-radius);
+  box-shadow: var(--n-shadow);
+}
+
+/* Buttons: soft, and they respond. Nothing here is a colour change --
+   the palette already did that -- only shape and motion. */
+button,.btn,.source-open-link{
+  border-radius: 10px;
+  transition: transform .16s var(--n-ease), box-shadow .16s var(--n-ease),
+              background-color .16s var(--n-ease), opacity .16s var(--n-ease);
+}
+button:hover:not(:disabled),.btn:hover:not(:disabled){
+  transform: translateY(-1px);
+  box-shadow: var(--n-shadow-sm);
+}
+button:active:not(:disabled),.btn:active:not(:disabled){ transform: translateY(0); }
+
+/* Inputs: calm until focused, then a green ring rather than a hard border. */
+input,select,textarea{
+  border-radius: 10px;
+  transition: border-color .16s var(--n-ease), box-shadow .16s var(--n-ease);
+}
+input:focus,select:focus,textarea:focus{
+  outline: none;
+  border-color:#27673f;
+  box-shadow: 0 0 0 3px rgba(47,125,79,.14);
+}
+
+/* Room to breathe: the single biggest contributor to "calm" after colour. */
+body{ line-height: 1.62; }
+h1,h2,h3{ letter-spacing:-.011em; }
+
+/* Tables read as rows of a page, not cells of a grid. */
+table{ border-collapse: separate; border-spacing: 0; }
+th{ font-weight:600; letter-spacing:.02em; }
+tbody tr{ transition: background-color .14s var(--n-ease); }
+tbody tr:hover{ background: rgba(47,125,79,.045); }
+
+/* Scrollbars, so even the chrome is quiet. */
+*{ scrollbar-width: thin; scrollbar-color:#aecda5 transparent; }
+*::-webkit-scrollbar{ width:10px; height:10px; }
+*::-webkit-scrollbar-thumb{ background:#aecda5; border-radius:10px;
+  border:3px solid transparent; background-clip:content-box; }
+*::-webkit-scrollbar-thumb:hover{ background:#a8c79f; background-clip:content-box; }
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{ transition:none !important; animation:none !important; }
+  button:hover,.btn:hover{ transform:none; }
+}
+
+
+/* Legibility: the first pass was pretty and too pale to read comfortably.
+   Body copy now sits near-black-forest on white, and secondary text is
+   dark enough to scan rather than merely decorate. */
+body{ color:#15251c; }
+.help,.sub,.muted,small,.hint{ color:#5c7568; }
+label,th{ color:#2f4539; }

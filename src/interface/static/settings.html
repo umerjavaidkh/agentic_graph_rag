@@ -7,8 +7,8 @@
 <script defer src="/static/nav.js"></script>
 <style>
   :root{
-    --bg:#0f1117; --panel:#171a23; --line:#262b38; --ink:#e7eaf3;
-    --muted:#98a1b8; --accent:#6c8cff; --ok:#3ecf8e; --warn:#f0b849; --err:#ff6b6b;
+    --bg:#eaf1e5; --panel:#ffffff; --line:#cadcc3; --ink:#15251c;
+    --muted:#5c7568; --accent:#27673f; --ok:#2f8455; --warn:#a86f1f; --err:#a94b39;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
@@ -16,8 +16,8 @@
   .wrap{max-width:900px;margin:0 auto;padding:22px 20px 60px}
   h1{font-size:20px;margin:0 0 4px}
   .sub{color:var(--muted);margin:0 0 20px}
-  .note{background:#1b2030;border:1px solid var(--line);border-left:3px solid var(--warn);
-        border-radius:6px;padding:10px 13px;margin:0 0 20px;color:#cfd6e6;font-size:13px}
+  .note{background:#dcecdc;border:1px solid var(--line);border-left:3px solid var(--warn);
+        border-radius:6px;padding:10px 13px;margin:0 0 20px;color:#2f4539;font-size:13px}
   .group{background:var(--panel);border:1px solid var(--line);border-radius:9px;
          padding:16px 18px;margin:0 0 16px}
   .group h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;
@@ -30,20 +30,21 @@
   .tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:20px;
        border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:1px}
   .tag.override{color:var(--accent);border-color:var(--accent)}
-  input,select{width:100%;background:#0e1220;color:var(--ink);border:1px solid var(--line);
+  input,select{width:100%;background:#fafdf8;color:var(--ink);border:1px solid var(--line);
        border-radius:6px;padding:7px 9px;font:13px ui-monospace,Menlo,monospace}
   input:focus,select:focus{outline:none;border-color:var(--accent)}
   .bar{position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 26%);
        padding:16px 0 0;display:flex;gap:10px;align-items:center}
-  button{background:var(--accent);color:#0b0e17;border:0;border-radius:7px;
+  button{background:var(--accent);color:#ffffff;border:0;border-radius:7px;
          padding:9px 16px;font-weight:600;cursor:pointer;font-size:13.5px}
   button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
   button:disabled{opacity:.5;cursor:default}
   #msg{font-size:13px}
   #msg.ok{color:var(--ok)} #msg.err{color:var(--err)} #msg.warn{color:var(--warn)}
-  code{background:#0e1220;border:1px solid var(--line);border-radius:4px;padding:1px 5px;
+  code{background:#fafdf8;border:1px solid var(--line);border-radius:4px;padding:1px 5px;
        font-size:12px}
 </style>
+<link rel="stylesheet" href="/static/theme.css" />
 </head>
 <body>
 <div class="wrap">

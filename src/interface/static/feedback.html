@@ -8,9 +8,9 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     :root {
-      --bg: #0f172a; --panel: #1e293b; --border: #334155;
-      --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
-      --ok: #4ade80; --bad: #f87171; --warn: #fbbf24;
+      --bg: #eaf1e5; --panel: #ffffff; --border: #cadcc3;
+      --text: #15251c; --muted: #5c7568; --accent: #27673f;
+      --ok: #2f8455; --bad: #a94b39; --warn: #a86f1f;
     }
     body {
       font-family: "Segoe UI", system-ui, sans-serif;
@@ -20,7 +20,7 @@
     header {
       padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
       display: flex; flex-wrap: wrap; align-items: center; gap: 1rem;
-      background: #0b1220;
+      background: #ffffff;
     }
     header h1 { margin: 0; font-size: 1.25rem; font-weight: 700; }
     header nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; font-size: 0.9rem; }
@@ -39,9 +39,9 @@
       display: inline-block; padding: 0.2rem 0.55rem; border-radius: 999px;
       font-size: 0.75rem; font-weight: 700;
     }
-    .badge-on { background: #14532d; color: var(--ok); }
-    .badge-off { background: #450a0a; color: var(--bad); }
-    .badge-warn { background: #422006; color: var(--warn); }
+    .badge-on { background: #1c4e30; color: var(--ok); }
+    .badge-off { background: #fbf1ef; color: var(--bad); }
+    .badge-warn { background: #f7efdb; color: var(--warn); }
     table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
     th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
     th { color: var(--muted); font-weight: 600; }
@@ -49,13 +49,13 @@
     .chart-box { position: relative; height: 240px; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
     button, input {
-      background: #334155; color: var(--text); border: 1px solid var(--border);
+      background: #cadcc3; color: var(--text); border: 1px solid var(--border);
       border-radius: 8px; padding: 0.45rem 0.75rem; font-size: 0.85rem;
     }
     button { cursor: pointer; }
-    button:hover { background: #475569; }
+    button:hover { background: #2f4539; }
     input { flex: 1; min-width: 200px; }
-    .error { background: #450a0a; color: #fecaca; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+    .error { background: #fbf1ef; color: #e8c3b9; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
     .hidden { display: none !important; }
     .hint-active { color: var(--ok); font-weight: 600; }
     .hint-none { color: var(--muted); }
@@ -65,7 +65,7 @@
     .result-success { color: var(--ok); }
     .result-denied { color: var(--bad); }
     .result-error { color: var(--warn); }
-    select { background: #334155; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.45rem 0.75rem; font-size: 0.85rem; }
+    select { background: #cadcc3; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.45rem 0.75rem; font-size: 0.85rem; }
     footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 1.5rem; }
     .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
     .tab-btn {
@@ -78,6 +78,7 @@
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
   </style>
+<link rel="stylesheet" href="/static/theme.css" />
 </head>
 <body>
   <header>
@@ -256,9 +257,9 @@
         type: "doughnut",
         data: {
           labels: ["Pass", "Fail", "Unlabeled"],
-          datasets: [{ data: [t.pass, t.fail, t.unlabeled], backgroundColor: ["#4ade80", "#f87171", "#64748b"] }]
+          datasets: [{ data: [t.pass, t.fail, t.unlabeled], backgroundColor: ["#2f8455", "#a94b39", "#2f4539"] }]
         },
-        options: { plugins: { legend: { labels: { color: "#cbd5e1" } } }, maintainAspectRatio: false }
+        options: { plugins: { legend: { labels: { color: "#aecda5" } } }, maintainAspectRatio: false }
       });
 
       const modes = Object.entries(data.mode_totals || {});
@@ -270,12 +271,12 @@
         type: "bar",
         data: {
           labels,
-          datasets: [{ label: "Pass rate", data: passRates, backgroundColor: "#38bdf8" }]
+          datasets: [{ label: "Pass rate", data: passRates, backgroundColor: "#27673f" }]
         },
         options: {
           scales: {
-            y: { min: 0, max: 1, ticks: { color: "#94a3b8" }, grid: { color: "#334155" } },
-            x: { ticks: { color: "#94a3b8", maxRotation: 45 }, grid: { display: false } }
+            y: { min: 0, max: 1, ticks: { color: "#5c7568" }, grid: { color: "#cadcc3" } },
+            x: { ticks: { color: "#5c7568", maxRotation: 45 }, grid: { display: false } }
           },
           plugins: { legend: { display: false } },
           maintainAspectRatio: false
