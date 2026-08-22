@@ -154,3 +154,44 @@ They are also all single-hop lookups: find a page, read a value. Nothing here
 tests multi-hop or cross-document reasoning, which is where a graph should
 beat flat retrieval. That suite does not exist yet, and it is the honest next
 thing to build.
+
+## Why some questions take minutes — a composite index missed by half
+
+Measured on the Go.Data report, same thread, document already grounded:
+
+```
+"What is Box 9 about in this report?"          0.5s
+"What is the table of contents?"               4.3s
+"What does Figure 1 show in this report?"    143.1s
+"What does the list of abbreviations...?"    183.2s
+```
+
+Sampling Neo4j during a slow one catches a single query running 21+ seconds,
+scoped by document. The index exists:
+
+```
+Page(logical_doc_id, lifecycle_status)      composite
+Section(logical_doc_id, lifecycle_status)   composite
+```
+
+Composite indexes are only seekable when the predicate names the leading
+properties. Measured on Page:
+
+| predicate | DbHits |
+|---|---|
+| `logical_doc_id = $doc_id` | **1,110,037** |
+| `logical_doc_id = $doc_id AND lifecycle_status = 'ACTIVE'` | **53** |
+
+A factor of ~21,000. Any retrieval path that scopes to a document without
+also filtering `lifecycle_status` scans the whole database -- which now holds
+the structured business graph as well, so the scan is over half a million
+nodes rather than a few thousand pages.
+
+Fast paths (Box, TOC) filter lifecycle. Slow paths do not. That is the whole
+difference between 0.5s and 183s, and it explains the streaming client
+appearing to hang: the answer is correct and arrives, minutes later.
+
+**Fix, not yet applied:** make the shared scope fragments in
+`retrieval/cypher_scope.py` always emit the lifecycle predicate alongside the
+document predicate, so a scoped query cannot accidentally omit half of its
+own index.
