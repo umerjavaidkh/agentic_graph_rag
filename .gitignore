@@ -64,3 +64,8 @@ agentic_rag_session.jsonl
 agentic_graph_rag_trace.zip
 pytest_passed.txt
 *.patch
+sample_data_to_test/unstructured/corpus10/
+sample_data_to_test/unstructured/corpus100/
+sample_data_to_test/unstructured/corpus500/
+sample_data_to_test/unstructured/corpus500_ingest/
+sample_data_to_test/unstructured/corpus1000/

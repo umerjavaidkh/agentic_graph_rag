@@ -131,6 +131,19 @@ class Neo4jExporter:
             f"CREATE CONSTRAINT doc_revision_id IF NOT EXISTS "
             f"FOR (n:{DOC_REVISION_LABEL}) REQUIRE n.id IS UNIQUE"
         )
+        # Backfill before the indexes: lifecycle_active() now emits a
+        # direct equality so the composite indexes below are seekable, and a
+        # node written before lifecycle_status existed would otherwise become
+        # invisible rather than merely slow. This is its own statement: when
+        # it shared a session.run() with the CREATE INDEX below, the index
+        # string landed in the `parameters` slot and the index was silently
+        # never created -- which is exactly the index the scoped-read path
+        # depends on.
+        session.run(
+            "MATCH (n) WHERE n.logical_doc_id IS NOT NULL "
+            "AND n.lifecycle_status IS NULL "
+            "SET n.lifecycle_status = 'ACTIVE'"
+        )
         session.run(
             "CREATE INDEX doc_revision_logical IF NOT EXISTS "
             f"FOR (n:{DOC_REVISION_LABEL}) ON (n.logical_doc_id)"

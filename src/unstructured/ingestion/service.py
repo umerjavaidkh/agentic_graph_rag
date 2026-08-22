@@ -246,7 +246,18 @@ class IngestionManager:
                 raise ValueError(f"Unsupported ingestion type: {job.type}")
 
             job.finished_at = datetime.utcnow()
-            self._set_status(job, IngestionStatus.completed, "Job completed successfully")
+            # A document that parsed, embedded and summarised but never
+            # reached Neo4j has produced nothing retrievable. Reporting that
+            # as success is how 46 documents in a row appeared to ingest
+            # while the corpus count did not move.
+            if job.neo4j_load_status == "failed":
+                self._set_status(
+                    job,
+                    IngestionStatus.failed,
+                    f"Graph load failed: {job.neo4j_load_message}",
+                )
+            else:
+                self._set_status(job, IngestionStatus.completed, "Job completed successfully")
             self._clear_structured_query_caches()
         except ModelRateLimitError as exc:
             # Surfaced on its own terms rather than behind "Job failed:".
@@ -646,8 +657,14 @@ class IngestionManager:
                         self._log(job, job.neo4j_load_message)
                         self._persist_source_file(job, plan)
                 except Exception as exc:
+                    # Logged with a traceback, not just str(exc). This failure
+                    # cost a 104-document run: every document reported
+                    # "dictionary update sequence element #0 has length 1",
+                    # which names the symptom and not one frame of where it
+                    # happened, and the message was the only record.
                     job.neo4j_load_status = "failed"
                     job.neo4j_load_message = str(exc)
+                    logger.exception("Neo4j load failed for job %s", job.id)
                     self._log(job, f"Neo4j load failed: {exc}")
         else:
             job.neo4j_load_status = "skipped"
