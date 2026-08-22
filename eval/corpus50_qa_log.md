@@ -113,3 +113,44 @@ Settings now differ by job, which they always could:
 Also worth recording: **the same question failed and then passed on the same
 model**, so a single pass over five questions carries real noise. Treat these
 numbers as directional until a suite runs them repeatedly.
+
+## Re-run after the fixes — 10/10
+
+All ten questions, current configuration (`CHAT_MODEL=gpt-4o-mini`,
+`AXIS2_MODEL=gpt-4.1-nano`, ambiguous references declining to the picker):
+
+```
+10/10 correct · 9/10 resolved a single document · 8/10 cited the page I expected
+```
+
+The two rows where the document or page column reads ✗ are measurement
+artifacts, not failures:
+
+- **arxiv_attention** — `document_id` is null because the resolver correctly
+  declined between four transformer papers and offered the picker. Retrieval
+  still found the answer, and the cited sections (`Results`,
+  `Machine Translation`, `Model Variations`) all belong to
+  `doc_arxiv_attention`. My expected page was 1, the abstract; page 8 restates
+  the same figure, so both are ground truth.
+- **irs_p926_household** — the expected page was my guess for a general
+  question with no single home.
+
+## What each fix was worth
+
+| fix | rows recovered |
+|---|---|
+| Naming the document in turn 1 (thread scoping) | 3 |
+| `CHAT_MODEL` back to gpt-4o-mini for synthesis | 1 |
+| Document numbers parsed and matched (`Publication 559`) | resolution 0/5 → 4/5 |
+| Ambiguous references decline instead of guessing | 1 |
+
+## What this number is and is not
+
+Ten questions, one pass. During this work the same question failed and then
+passed with nothing changed, so a single pass carries real noise and 10/10
+should be read as "no known failures" rather than as a score.
+
+They are also all single-hop lookups: find a page, read a value. Nothing here
+tests multi-hop or cross-document reasoning, which is where a graph should
+beat flat retrieval. That suite does not exist yet, and it is the honest next
+thing to build.
