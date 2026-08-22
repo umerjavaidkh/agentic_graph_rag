@@ -21,10 +21,10 @@
 /* A sky, not a flat fill: two very soft green washes over sage mist.
    Fixed so the page scrolls against a calm ground rather than with it. */
 body{
-  background-color:#f2f7ef;
+  background-color:#eaf1e5;
   background-image:
-    radial-gradient(1100px 520px at 12% -8%,  rgba(63,158,106,.10), transparent 60%),
-    radial-gradient(900px 460px at 92% 4%,    rgba(201,138,46,.07), transparent 62%);
+    radial-gradient(1100px 520px at 12% -8%,  rgba(47,132,85,.14), transparent 60%),
+    radial-gradient(900px 460px at 92% 4%,    rgba(168,111,31,.09), transparent 62%);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -58,7 +58,7 @@ input,select,textarea{
 }
 input:focus,select:focus,textarea:focus{
   outline: none;
-  border-color:#2f7d4f;
+  border-color:#27673f;
   box-shadow: 0 0 0 3px rgba(47,125,79,.14);
 }
 
@@ -73,9 +73,9 @@ tbody tr{ transition: background-color .14s var(--n-ease); }
 tbody tr:hover{ background: rgba(47,125,79,.045); }
 
 /* Scrollbars, so even the chrome is quiet. */
-*{ scrollbar-width: thin; scrollbar-color:#c3d9bc transparent; }
+*{ scrollbar-width: thin; scrollbar-color:#aecda5 transparent; }
 *::-webkit-scrollbar{ width:10px; height:10px; }
-*::-webkit-scrollbar-thumb{ background:#c3d9bc; border-radius:10px;
+*::-webkit-scrollbar-thumb{ background:#aecda5; border-radius:10px;
   border:3px solid transparent; background-clip:content-box; }
 *::-webkit-scrollbar-thumb:hover{ background:#a8c79f; background-clip:content-box; }
 
@@ -83,3 +83,11 @@ tbody tr:hover{ background: rgba(47,125,79,.045); }
   *,*::before,*::after{ transition:none !important; animation:none !important; }
   button:hover,.btn:hover{ transform:none; }
 }
+
+
+/* Legibility: the first pass was pretty and too pale to read comfortably.
+   Body copy now sits near-black-forest on white, and secondary text is
+   dark enough to scan rather than merely decorate. */
+body{ color:#15251c; }
+.help,.sub,.muted,small,.hint{ color:#5c7568; }
+label,th{ color:#2f4539; }

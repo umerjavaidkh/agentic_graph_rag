@@ -12,21 +12,21 @@
        helper reference) -- near-black panels floating on a soft lavender
        page background, vivid indigo/purple accent, Inter throughout. */
     :root{
-      --bg0:#e7f1e2;
+      --bg0:#dfebd8;
       --bg1:#d5e8cf;
       --surface:#ffffff;
       --surface-elevated:#fafdf8;
       --card: rgba(47,125,79,0.035);
-      --border: #dce9d7;
-      --border-strong: #c3d9bc;
-      --text:#1d3026;
-      --text-secondary:#456051;
-      --text-muted:#7a9285;
-      --accent:#2f7d4f;
+      --border: #cadcc3;
+      --border-strong: #aecda5;
+      --text:#15251c;
+      --text-secondary:#2f4539;
+      --text-muted:#5c7568;
+      --accent:#27673f;
       --accent-soft:rgba(47,125,79,0.10);
       --accent-glow:rgba(47,125,79,0.22);
-      --success:#3f9e6a;
-      --danger:#c05f4c;
+      --success:#2f8455;
+      --danger:#a94b39;
       --shadow: 0 1px 2px rgba(29,48,38,.05), 0 6px 20px rgba(29,48,38,.07);
       --shadow-lg: 0 24px 60px rgba(29,48,38,.14);
       --radius: 10px;
@@ -166,7 +166,7 @@
       font-family: var(--mono);
       font-size: 0.85em;
       color: var(--text);
-      background: #dce9d7;
+      background: #cadcc3;
       padding: 1px 5px;
       border-radius: 4px;
     }
@@ -1421,7 +1421,7 @@
           legend: {
             display: isPie,
             position: 'bottom',
-            labels: { color: '#456051', boxWidth: 12, padding: 10 },
+            labels: { color: '#2f4539', boxWidth: 12, padding: 10 },
           },
           tooltip: {
             callbacks: {
@@ -1440,15 +1440,15 @@
       if (!isPie) {
         options.scales = {
           x: {
-            ticks: { color: '#456051', maxRotation: 45, minRotation: 0 },
-            grid: { color: '#dce9d7' },
+            ticks: { color: '#2f4539', maxRotation: 45, minRotation: 0 },
+            grid: { color: '#cadcc3' },
           },
           y: {
             ticks: {
-              color: '#456051',
+              color: '#2f4539',
               callback: (v) => formatChartValue(v, block),
             },
-            grid: { color: '#dce9d7' },
+            grid: { color: '#cadcc3' },
             beginAtZero: true,
           },
         };
