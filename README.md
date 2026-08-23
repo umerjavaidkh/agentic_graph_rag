@@ -229,8 +229,12 @@ known without an LLM being asked to invent one. **271 questions across five runs
   (`DocumentLogical`, `HAS_REVISION`, supersede), but supersede *deletes* the previous
   revision, so there is nothing to diff. Retention, `CanonicalSection` and `SUPERSEDES`
   edges are all required, and only the first is a change to existing behaviour.
-- **The graph has no entity layer to retrieve on** — `Concept` 0 nodes, `Entity` 2. The
-  graph earns its place at expansion today, not at recall.
+- **The entity layer is thin by choice.** Entity extraction is the one LLM-dependent
+  ingest step, and it is kept limited to avoid rate-limit exhaustion on a corpus this
+  size: 19.8% of content nodes carry entities, and 434 of 998 documents carry none.
+  That is why `Concept` has 0 nodes and `Entity` has 2 corpus-wide — so the graph
+  earns its place at *expansion* today, not at recall. A graph recall channel would
+  need that layer built out first.
 - Two failures on the IRS suite have not been diagnosed.
 
 </details>
