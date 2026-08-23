@@ -28,6 +28,7 @@ from ....shared.config.settings import (
 )
 from ....shared.feedback import get_feedback_routing
 from ....shared.telemetry.pipeline import record_pipeline_step
+from ..cypher_scope import as_doc_id_list
 from ..constants import (
     _FULLTEXT_LIMIT,
     _GRAPH_1HOP_LIMIT,
@@ -91,6 +92,35 @@ class FullHybridStrategy:
         with self._driver.session() as session:
             return fn(session, *args, **kwargs)
 
+    def _refine_scope(
+        self,
+        query: str,
+        tenant_id: str,
+        document_id: Optional[str],
+        document_title: Optional[str],
+        embed_future,
+    ) -> tuple[Optional[str], Optional[str], list[str]]:
+        """Last chance to decide which documents this query is about.
+
+        A no-op here: this strategy's scope is exactly what DocumentResolver
+        returned -- the single document, or nothing. It exists so an
+        alternative scoping approach can be tried as its own registered
+        strategy, measured against this one, without either editing this
+        path or duplicating the 250 lines of retrieval below it.
+
+        Returns the id and title as before, plus the list of documents the
+        lexical passes should search. The list is what allows an override to
+        answer "these eight documents" where this one can only answer "this
+        document" or "no idea" -- and "no idea" meant searching all 998.
+
+        `embed_future` is passed rather than an embedding because this call
+        sits between submitting the embedding and awaiting it. An override
+        that needs the vector can await it and pay nothing extra -- the
+        result is cached, so the `embed_future.result()` on the next line
+        does not call the API a second time.
+        """
+        return document_id, document_title, as_doc_id_list(document_id) or []
+
     def retrieve(
         self,
         session: Any,
@@ -152,6 +182,9 @@ class FullHybridStrategy:
         embed_future = None if skip_vector else pool.submit(self._graph_seeds.get_embedding, query)
 
         document_id, document_title = doc_id_future.result()
+        document_id, document_title, document_ids = self._refine_scope(
+            query, tenant_id, document_id, document_title, embed_future
+        )
         document_id = document_id or ""
         embedding = None if embed_future is None else embed_future.result()
 
@@ -164,14 +197,14 @@ class FullHybridStrategy:
             self._lexical.structural_phrase_retrieve,
             query,
             tenant_id=tenant_id,
-            document_id=document_id,
+            document_id=document_ids,
         )
         keyword_future = pool.submit(
             self._neo4j_session_call,
             self._lexical.structural_keyword_retrieve,
             query,
             tenant_id=tenant_id,
-            document_id=document_id,
+            document_id=document_ids,
         )
         if skip_vector:
             vector_future = None

@@ -29,6 +29,7 @@ from .full_hybrid import FullHybridStrategy
 from .page import PageStrategy
 from .subsection import SubsectionStrategy
 from .toc import TocStrategy
+from .vector_first_hybrid import VectorFirstHybridStrategy
 
 ranking = RankingService()
 graph_seeds = GraphSeedService(ranking)
@@ -47,6 +48,25 @@ register_unstructured("structural_filing_date", lambda: FilingDateStrategy(docum
 register_unstructured(
     "graph_rag_hybrid",
     lambda: FullHybridStrategy(
+        get_neo4j_driver(),
+        ranking,
+        graph_seeds,
+        lexical,
+        formatter,
+        document_resolver,
+        chapter_summaries,
+        reranker=reranker,
+    ),
+)
+
+# Registered alongside `graph_rag_hybrid`, never in place of it. Same
+# retrieval, different answer to "which document is this about" -- it reports
+# its own mode/strategy label, so telemetry separates the two without any
+# downstream change, and a bad result is attributable to one path rather than
+# to "retrieval". Opt-in per request; nothing routes here on its own.
+register_unstructured(
+    "graph_rag_vector_first",
+    lambda: VectorFirstHybridStrategy(
         get_neo4j_driver(),
         ranking,
         graph_seeds,

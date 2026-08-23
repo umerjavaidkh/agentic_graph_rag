@@ -140,3 +140,25 @@ def test_candidate_ids_are_shaped_for_multi_document_scoping():
 
     assert ids == ["doc_a", "doc_b"]
     assert all(isinstance(i, str) for i in ids)
+
+
+def test_junk_query_gets_no_opinion_rather_than_confident_nonsense():
+    """A query matching nothing must return nothing, not "best of a bad lot".
+
+    Rank and relative score are scale-free: the top hit is rel=1.00 whether
+    its similarity is 0.55 or 0.33. Without an absolute floor, a question
+    about something absent from the corpus scoped retrieval to eight
+    unrelated documents exactly as confidently as a real one -- and a
+    document excluded from the scope is invisible, not merely ranked low.
+    """
+    junk = [(f"doc_x{i}:rev1::n", 0.31, f"doc_x{i}") for i in range(10)]
+    svc, _ = _svc(junk)
+
+    assert svc.candidates("a question about nothing in this corpus") == []
+
+
+def test_a_genuine_match_still_passes_the_floor():
+    good = [(f"doc_right:rev1::n{i}", 0.55 - i / 1000, "doc_right") for i in range(10)]
+    svc, _ = _svc(good)
+
+    assert [c.document_id for c in svc.candidates("q")] == ["doc_right"]

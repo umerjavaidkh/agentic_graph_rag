@@ -14,7 +14,12 @@ from ...graph.constants import DOCUMENT_ROOT_CYPHER, INDEXED_NODE_CYPHER
 from ....shared.neo4j.tenancy import tenant_filter
 from ....shared.storage.hydrator import get_hydrator
 from ..constants import _TEXT_NODE_LABELS
-from ..cypher_scope import _doc_scope_cypher, content_match_cypher, content_scope_where
+from ..cypher_scope import (
+    _doc_scope_cypher,
+    as_doc_id_list,
+    content_match_cypher,
+    content_scope_where_multi,
+)
 from ..text_utils import _extract_urls
 from .document_resolver import DocumentResolver
 from .ranking import RankingService
@@ -89,28 +94,31 @@ class LexicalService:
         # extra generic-word hits.
         min_hits = 2
         if document_id is None:
-            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+            resolved, _ = self._document_resolver.resolve_document_for_query(
+                session, query, tenant_id
+            )
+            doc_ids = as_doc_id_list(resolved)
         else:
-            # "" means the caller resolved and got no confident match —
-            # normalize to None so _doc_scope_cypher's `$doc_id IS NULL`
-            # branch degrades to unscoped, instead of comparing every
-            # document's id against the literal empty string and matching
-            # none of them.
-            doc_id = document_id or None
+            # "" (or []) means the caller resolved and got no confident
+            # match — as_doc_id_list normalises it to None so the scope
+            # predicate's empty branch degrades to unscoped, instead of
+            # comparing every document's id against the literal empty
+            # string and matching none of them.
+            doc_ids = as_doc_id_list(document_id)
 
         # Document frequency per keyword — how many scoped nodes contain it
         # at all, regardless of the min_hits threshold below.
         freq_rows = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where("n")}
+            WHERE {content_scope_where_multi("n")}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
             UNWIND $keywords AS k
             WITH k, n WHERE toLower(n.search_text) CONTAINS k
             RETURN k AS keyword, count(DISTINCT n) AS df
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             keywords=keywords,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
@@ -130,7 +138,7 @@ class LexicalService:
         rows = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where("n")}
+            WHERE {content_scope_where_multi("n")}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
             WITH n,
@@ -150,7 +158,7 @@ class LexicalService:
             ORDER BY w DESC, size(coalesce(n.search_text, '')) ASC
             LIMIT 6
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             keywords=keywords,
             min_hits=min_hits,
             labels=list(_TEXT_NODE_LABELS),
@@ -200,13 +208,16 @@ class LexicalService:
             return []
 
         if document_id is None:
-            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+            resolved, _ = self._document_resolver.resolve_document_for_query(
+                session, query, tenant_id
+            )
+            doc_ids = as_doc_id_list(resolved)
         else:
-            doc_id = document_id or None
+            doc_ids = as_doc_id_list(document_id)
         rows = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where("n")}
+            WHERE {content_scope_where_multi("n")}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
               AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
@@ -227,7 +238,7 @@ class LexicalService:
             ORDER BY phrase_hits DESC, size(coalesce(n.search_text, '')) ASC
             LIMIT 6
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             phrases=[p.lower() for p in phrases],
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
@@ -361,9 +372,12 @@ class LexicalService:
             return []
 
         if document_id is None:
-            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+            resolved, _ = self._document_resolver.resolve_document_for_query(
+                session, query, tenant_id
+            )
+            doc_ids = as_doc_id_list(resolved)
         else:
-            doc_id = document_id or None
+            doc_ids = as_doc_id_list(document_id)
 
         # "<number> <noun>", allowing thousands separators and an optional
         # qualifier between them ("over 65 countries", "115 total institutions").
@@ -371,7 +385,7 @@ class LexicalService:
         rows = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where("n")}
+            WHERE {content_scope_where_multi("n")}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
               AND any(p IN $patterns WHERE toLower(n.search_text) =~ p)
@@ -392,7 +406,7 @@ class LexicalService:
             ORDER BY matched DESC, size(coalesce(n.search_text, '')) DESC
             LIMIT $limit
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             patterns=patterns,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
@@ -457,9 +471,12 @@ class LexicalService:
             return []
 
         if document_id is None:
-            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+            resolved, _ = self._document_resolver.resolve_document_for_query(
+                session, query, tenant_id
+            )
+            doc_ids = as_doc_id_list(resolved)
         else:
-            doc_id = document_id or None
+            doc_ids = as_doc_id_list(document_id)
 
         lowered = [p.lower() for p in phrases]
         # One pass to measure each phrase's document frequency, so a phrase
@@ -467,7 +484,7 @@ class LexicalService:
         stats = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where("n")}
+            WHERE {content_scope_where_multi("n")}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
             WITH collect(toLower(n.search_text)) AS texts
@@ -476,7 +493,7 @@ class LexicalService:
                    size([t IN texts WHERE t CONTAINS phrase]) AS df,
                    size(texts) AS total
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             phrases=lowered,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
@@ -505,7 +522,7 @@ class LexicalService:
         rows = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where("n")}
+            WHERE {content_scope_where_multi("n")}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
               AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
@@ -528,7 +545,7 @@ class LexicalService:
             ORDER BY phrase_weight DESC, size(coalesce(n.search_text, '')) DESC
             LIMIT $limit
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             phrases=scoping,
             weights=weights,
             labels=list(_TEXT_NODE_LABELS),

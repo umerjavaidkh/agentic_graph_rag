@@ -140,3 +140,27 @@ def content_scope_where(alias: str = "n", param: str = "$doc_id") -> str:
         f"({param} IS NULL OR {alias}.logical_doc_id = {param}) "
         f"AND {alias}.lifecycle_status = '{LIFECYCLE_ACTIVE}'"
     )
+
+
+def content_scope_where_multi(alias: str = "n", param: str = "$doc_ids") -> str:
+    """Indexed document scope for a content node, across several documents.
+
+    The multi-document sibling of `content_scope_where`, and index-friendly
+    for the same reason: `IN` becomes one seek per value against the same
+    composite (logical_doc_id, lifecycle_status) index a single equality
+    would use, so scoping to eight documents costs eight seeks rather than
+    a scan.
+
+    This is what makes "search each candidate document completely" cheap.
+    The alternative to scoping -- what the caller did when the resolver
+    could not name a document -- was searching all 998 documents unscoped.
+
+    An empty or NULL list still means unscoped, matching the single-id
+    form's NULL behaviour, so a caller with no opinion degrades exactly as
+    before rather than silently matching nothing.
+    """
+    return (
+        f"({param} IS NULL OR size({param}) = 0 "
+        f"OR {alias}.logical_doc_id IN {param}) "
+        f"AND {alias}.lifecycle_status = '{LIFECYCLE_ACTIVE}'"
+    )

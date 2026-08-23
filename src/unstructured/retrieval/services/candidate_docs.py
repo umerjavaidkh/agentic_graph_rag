@@ -66,6 +66,31 @@ CORROBORATION_WEIGHT = 0.5
 # depends on how many chunks a document contributed, never on the corpus.
 MIN_RELATIVE_SCORE = 0.15
 
+# An absolute quality floor, because every other signal here is scale-free.
+#
+# Rank and relative score cannot tell "the best match in the corpus" from
+# "the best of a uniformly bad lot": the top hit is rel=1.00 either way.
+# Measured against this corpus, all three of these returned 8 candidates at
+# rel=1.00 and were indistinguishable in the output --
+#
+#   "table of contents of Go.Data annual report"  best cosine 0.554
+#   "best recipe for Neapolitan pizza dough"      best cosine 0.330
+#   "zxqw plorbin fnargle wibbet"                 best cosine 0.358
+#
+# -- so a question about nothing in the corpus scoped retrieval to eight
+# unrelated documents as confidently as a real one. That is worse than not
+# scoping: excluded documents are invisible, not merely ranked low.
+#
+# Below this floor the pass returns nothing, which callers already treat as
+# "no opinion" and degrade to their previous behaviour.
+#
+# PROVISIONAL: the gap between 0.55 and 0.33-0.36 is wide and this sits in
+# it, but three queries is not a calibration. Validate across a real query
+# set before trusting it; note gibberish (0.358) scored above an ordinary
+# out-of-corpus question (0.330), so cosine separates in-corpus from
+# out-of-corpus here, not "sensible" from "nonsense".
+MIN_TOP_SIMILARITY = 0.42
+
 
 @dataclass(frozen=True)
 class DocCandidate:
@@ -103,21 +128,33 @@ class CandidateDocService:
         *,
         probe_k: int = PROBE_K,
         limit: int = MAX_CANDIDATE_DOCS,
+        embedding: Optional[list[float]] = None,
     ) -> list[DocCandidate]:
         """Documents this query is plausibly about, best first.
 
         Empty when the query is empty or the vector store returns nothing --
         an empty result means "no opinion", and the caller should fall back
         rather than treat it as "no documents match".
+
+        `embedding`: pass one the caller has already computed. The retrieval
+        path embeds the query anyway to seed vector search, and that call was
+        measured at 1339ms against 420ms for the ANN lookup itself -- so
+        re-embedding here would more than triple the cost of this pass for a
+        vector the process is already holding.
         """
         if not (query or "").strip():
             return []
 
         filters = {"tenant_id": tenant_id} if (MULTI_TENANCY_ENABLED and tenant_id) else None
-        hits = self._store().query_with_docs(
-            self._embedding(query), top_k=probe_k, filters=filters
-        )
+        vector = embedding if embedding else self._embedding(query)
+        hits = self._store().query_with_docs(vector, top_k=probe_k, filters=filters)
         if not hits:
+            return []
+
+        # Absolute floor first: if the nearest chunk in the entire corpus is
+        # not close to the query, no ranking among the rest can rescue it.
+        best_similarity = max((sc for _id, sc, _d in hits), default=0.0)
+        if best_similarity < MIN_TOP_SIMILARITY:
             return []
 
         agg: dict[str, dict] = {}
