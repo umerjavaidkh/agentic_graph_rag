@@ -43,6 +43,7 @@ re-phrasings that arrive without a hint.
 """
 from __future__ import annotations
 
+import re
 import threading
 from typing import Any, Optional
 
@@ -62,6 +63,25 @@ MIN_NAME_MATCH = 8
 # publication with total fluency. A close runner-up is a different problem
 # with a different gate; this one is the absence of any signal at all.
 MIN_KEYWORDS_UNSCOPED = 2
+
+
+def _tokens(text: str) -> tuple[set, set]:
+    """Alphabetic and numeric runs of a name, separately.
+
+    Squashing to a single string compares "IRS Publication 225" against
+    "irs_p225" as `irspublication225` vs `irsp225`, and containment fails --
+    the abbreviation sits between the letters and the number. Comparing runs
+    instead lets "irs" and "225" match across "p" vs "publication", which is
+    the only difference that matters.
+
+    Measured before this existed: 12 of 28 questions that each named "IRS
+    Publication 225" outright were answered from a different IRS
+    publication, because the corpus holds dozens of near-identical ones.
+    """
+    low = (text or "").lower()
+    alpha = {w for w in re.findall(r"[a-z]+", low) if len(w) > 1}
+    nums = {w for w in re.findall(r"\d+", low) if len(w) > 1}
+    return alpha, nums
 
 
 def _squash(text: str) -> str:
@@ -132,15 +152,40 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         return getattr(self._local, "candidates", []) or []
 
     def _named_document(self, tenant_id: str, query: str) -> Optional[str]:
-        """The document this query names outright, ignoring punctuation."""
+        """The document this query names outright, however it is written."""
         q = _squash(query)
-        if not q:
-            return None
-        best, best_len = None, 0
-        for doc_id, key in self._name_index(tenant_id):
-            if len(key) >= MIN_NAME_MATCH and key in q and len(key) > best_len:
-                best, best_len = doc_id, len(key)
+        q_alpha, q_nums = _tokens(query)
+
+        best, best_score = None, 0
+        for doc_id, key, raw in self._name_index(tenant_id):
+            # Exact-ish: the whole name appears verbatim once punctuation is
+            # gone. Strongest evidence, so it outranks token agreement.
+            if len(key) >= MIN_NAME_MATCH and key in q:
+                score = 1000 + len(key)
+            else:
+                d_alpha, d_nums = self._name_tokens(raw)
+                # A document identified by a number must have that number in
+                # the query -- "Publication 225" must not match p17. Without
+                # a number to anchor on, fall back to the verbatim test
+                # above rather than matching on words alone, or "document"
+                # would match anything.
+                if not d_nums or not d_nums <= q_nums:
+                    continue
+                shared = d_alpha & q_alpha
+                if not shared:
+                    continue
+                score = len(d_nums) * 10 + len(shared)
+            if score > best_score:
+                best, best_score = doc_id, score
         return best
+
+    def _name_tokens(self, key: str):
+        cache = getattr(self, "_tokcache", None)
+        if cache is None:
+            cache = self._tokcache = {}
+        if key not in cache:
+            cache[key] = _tokens(key)
+        return cache[key]
 
     def _name_index(self, tenant_id: str) -> list:
         """(logical_id, squashed name) for every document, built once.
@@ -162,9 +207,10 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                     continue
                 # The "doc_" prefix is ours, not part of the name the user
                 # would type.
-                idx.append((lid, _squash(lid[4:] if lid.startswith("doc_") else lid)))
+                raw = lid[4:] if lid.startswith("doc_") else lid
+                idx.append((lid, _squash(raw), raw))
                 if r["title"]:
-                    idx.append((lid, _squash(r["title"])))
+                    idx.append((lid, _squash(r["title"]), r["title"]))
             self._names = idx
         return self._names
 
