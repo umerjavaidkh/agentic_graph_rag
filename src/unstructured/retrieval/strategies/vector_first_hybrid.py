@@ -47,7 +47,9 @@ import threading
 from typing import Optional
 
 from ..cypher_scope import as_doc_id_list
+from ..query_plan import Shape, classify
 from ..services.candidate_docs import CandidateDocService
+from ..services.structural import StructuralService
 from .full_hybrid import FullHybridStrategy
 
 
@@ -57,6 +59,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
     def __init__(self, *args, candidate_docs: Optional[CandidateDocService] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self._candidate_docs = candidate_docs or CandidateDocService()
+        self._structural = StructuralService()
         # Follow-ups inside a thread must not re-run the ANN lookup. The
         # primary mechanism is `document_id_hint`, which DocumentResolver
         # already honours: a grounded follow-up arrives with the thread's
@@ -159,3 +162,56 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         )
         self.last_scope_source = "resolver_fallback"
         return document_id, document_title, as_doc_id_list(document_id) or []
+
+    def retrieve(self, session, query, *, tenant_id, limit, ctx, document_id_hint=""):
+        """Structural questions are answered from the hierarchy; everything
+        else falls through to the inherited hybrid path.
+
+        The short-circuit is here rather than inside the hybrid because the
+        hybrid's whole shape -- recall, rank, truncate -- is wrong for an
+        address. There is nothing to rank: the document either has a Box 9
+        or it does not.
+        """
+        plan = classify(query, default_limit=limit)
+        if plan.shape is not Shape.STRUCTURAL:
+            return super().retrieve(
+                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                document_id_hint=document_id_hint,
+            )
+
+        embed_future = self._pool.submit(self._graph_seeds.get_embedding, query)
+        document_id, document_title, doc_ids = self._scope_for_query(
+            query, tenant_id, document_id_hint, embed_future
+        )
+        if not doc_ids:
+            # No document to read a hierarchy from; the hybrid path at
+            # least searches, which beats answering nothing.
+            return super().retrieve(
+                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                document_id_hint=document_id_hint,
+            )
+
+        # ONE document, not the candidate set. The candidate list exists to
+        # widen lexical recall; a hierarchy belongs to a single document, and
+        # scoping an outline to eight of them merges eight tables of contents
+        # into one answer -- verified live, with NIST and arXiv headings
+        # appearing under a question about the Go.Data report.
+        target = [document_id] if document_id else doc_ids[:1]
+        items = self._neo4j_session_call(
+            self._structural.outline, target, tenant_id
+        ) if plan.exhaustive else self._neo4j_session_call(
+            self._structural.by_address, plan.address or query, target, tenant_id
+        )
+        if not items:
+            return super().retrieve(
+                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                document_id_hint=document_id_hint,
+            )
+
+        response = self._formatter.format(query, items, ctx=ctx)
+        response["mode"] = "structural"
+        response["strategy"] = self.name
+        response["document_id"] = document_id or (doc_ids[0] if doc_ids else None)
+        response["document_title"] = document_title
+        response["query_shape"] = plan.shape.value
+        return response
