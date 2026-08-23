@@ -46,6 +46,7 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
+from ..cypher_scope import as_doc_id_list
 from ..services.candidate_docs import CandidateDocService
 from .full_hybrid import FullHybridStrategy
 
@@ -73,73 +74,88 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         # which path actually decided the scope, rather than inferring it.
         self.last_scope_source: str = "unset"
 
-    def _refine_scope(
+    def _scope_for_query(
         self,
         query: str,
         tenant_id: str,
-        document_id: Optional[str],
-        document_title: Optional[str],
+        document_id_hint: str,
         embed_future,
     ) -> tuple[Optional[str], Optional[str], list[str]]:
-        """Fall back to vector evidence only where the resolver gave up.
+        """Cheap and certain first, similarity next, corpus scan last.
 
-        Deliberately does not override a resolved document. When the
-        resolver names one it had a strong reason -- an explicit reference,
-        a thread hint, a distinctive term -- and that evidence is better
-        than similarity. This only fills the gap that previously became an
-        unscoped corpus-wide search.
+        The parent asks `resolve_document_for_query`, whose first tier is a
+        15.61s scan of every document's subtree. That tier is both the most
+        expensive and the least reliable -- it is the one that produced the
+        1.215 near-tie and declined to answer. Here it runs only when
+        nothing cheaper decided, so the common case never pays it.
+
+        Order:
+          1. thread hint -- free, and the user already told us
+          2. an outright reference to a document's id or title -- one
+             indexed lookup
+          3. vector candidates -- the embedding is already in flight, so
+             this costs one ANN lookup (420ms measured)
+          4. the full resolver -- correct but expensive, so it is what we
+             fall back TO rather than start from
         """
-        if document_id:
-            # Includes every grounded follow-up: the thread's document
-            # arrives as document_id_hint and the resolver returns it, so
-            # no vector search happens for the rest of the conversation
-            # until a question the resolver cannot place.
-            self.last_scope_source = "resolver"
-            return document_id, document_title, [document_id]
+        if document_id_hint:
+            validated = self._neo4j_session_call(
+                self._document_resolver._validate_document_id, document_id_hint, tenant_id
+            )
+            if validated:
+                self.last_scope_source = "hint"
+                return document_id_hint, None, [document_id_hint]
+
+        named = self._neo4j_session_call(
+            self._document_resolver.exact_document_reference, query, tenant_id
+        )
+        if named and named[0]:
+            self.last_scope_source = "exact_reference"
+            return named[0], named[1], [named[0]]
 
         cache_key = (tenant_id or "", (query or "").strip().lower())
         with self._scope_lock:
             cached = self._scope_cache.get(cache_key)
         if cached:
             self.last_scope_source = "cache"
-            return cached[0], document_title, list(cached)
+            return cached[0], None, list(cached)
 
         embedding = None
         if embed_future is not None:
             try:
-                # Already in flight; result() is cached, so awaiting it here
-                # costs nothing the query was not paying anyway.
                 embedding = embed_future.result()
             except Exception:
                 embedding = None
 
+        candidates = []
         try:
-            candidates = self._candidate_docs.candidates(
-                query, tenant_id, embedding=embedding
-            )
+            candidates = self._candidate_docs.candidates(query, tenant_id, embedding=embedding)
         except Exception:
-            # Vector store unreachable is not a reason to fail the query --
-            # degrade to exactly what this strategy's parent would have done.
-            self.last_scope_source = "vector_error"
-            return document_id, document_title, []
+            # A vector store that is down must not fail the query; fall
+            # through to the resolver, which is what the parent would do.
+            candidates = []
 
-        if not candidates:
-            self.last_scope_source = "no_candidates"
-            return document_id, document_title, []
+        if candidates:
+            top = candidates[0]
+            doc_ids = [c.document_id for c in candidates]
+            with self._scope_lock:
+                if len(self._scope_cache) > 256:   # bounded; a cache, not a store
+                    self._scope_cache.clear()
+                self._scope_cache[cache_key] = doc_ids
+            self.last_scope_source = (
+                f"vector(n={len(doc_ids)},rel={top.relative:.2f},"
+                f"hits={top.hits},rank={top.best_rank})"
+            )
+            return top.document_id, None, doc_ids
 
-        top = candidates[0]
-        doc_ids = [c.document_id for c in candidates]
-        with self._scope_lock:
-            if len(self._scope_cache) > 256:      # bounded; this is a cache, not a store
-                self._scope_cache.clear()
-            self._scope_cache[cache_key] = doc_ids
-        self.last_scope_source = (
-            f"vector(n={len(doc_ids)},rel={top.relative:.2f},"
-            f"hits={top.hits},rank={top.best_rank})"
+        # Nothing cheap decided, and the vector pass had no opinion (it
+        # returns none when the nearest chunk in the corpus is not close).
+        # Only now is the scan worth its cost.
+        document_id, document_title = self._neo4j_session_call(
+            self._document_resolver.resolve_document_for_query,
+            query,
+            tenant_id=tenant_id,
+            document_id_hint=document_id_hint,
         )
-        # document_id stays the single best candidate -- vector/fulltext/
-        # graph-expand still scope to one document. The list is what the
-        # lexical passes search, so "fetch the related docs, then search
-        # each of them completely" happens in one indexed query via
-        # `logical_doc_id IN $doc_ids` rather than one query per document.
-        return top.document_id, document_title, doc_ids
+        self.last_scope_source = "resolver_fallback"
+        return document_id, document_title, as_doc_id_list(document_id) or []

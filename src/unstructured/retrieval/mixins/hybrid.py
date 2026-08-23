@@ -13,7 +13,8 @@ from ....shared.config.settings import (
 )
 from ....shared.neo4j.driver import get_neo4j_driver
 from ....shared.telemetry.context import TelemetryEvent, get_telemetry
-from ....shared.registries.strategy_registry import get_unstructured
+from ....shared.config.settings import HYBRID_STRATEGY
+from ....shared.registries.strategy_registry import get_unstructured, list_unstructured
 from ..executor import DocumentQueryExecutor
 from ..query_intent import (
     is_filing_date_question,
@@ -160,7 +161,14 @@ class HybridRetrieveMixin:
         # concurrently-submitted fetch needs its own, since Neo4j sessions
         # aren't thread-safe) — `session=None` is passed only for Protocol
         # conformance with the other strategies, which do use it.
-        return get_unstructured("graph_rag_hybrid").retrieve(
+        # Which hybrid runs is a setting, not a constant, so the
+        # vector-scoped alternative can be exercised end to end without a
+        # code change. An unknown name falls back rather than failing the
+        # query -- a typo in an env var should not take retrieval down.
+        key = HYBRID_STRATEGY or "graph_rag_hybrid"
+        if key not in list_unstructured():
+            key = "graph_rag_hybrid"
+        return get_unstructured(key).retrieve(
             None, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
             document_id_hint=document_id_hint,
         )

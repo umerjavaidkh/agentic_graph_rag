@@ -508,3 +508,10 @@ def estimate_route_max_tokens(question: str) -> int:
     # ~3 chars/token for JSON args + fixed overhead for tool name/metadata.
     estimated = ROUTE_MAX_TOKENS_BASE + (q_len // 3) + 96
     return max(ROUTE_MAX_TOKENS_MIN, min(estimated, ROUTE_MAX_TOKENS_CAP))
+
+
+# Which hybrid strategy the terminal fallthrough uses. Default is unchanged;
+# `graph_rag_vector_first` is the vector-scoped alternative, registered
+# alongside it so the two can be compared on real traffic. Per-request
+# override: `?strategy=` on the query endpoints, which beats this.
+HYBRID_STRATEGY = os.environ.get("HYBRID_STRATEGY", "graph_rag_hybrid")

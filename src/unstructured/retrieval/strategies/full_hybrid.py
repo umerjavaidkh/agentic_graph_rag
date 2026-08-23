@@ -92,33 +92,35 @@ class FullHybridStrategy:
         with self._driver.session() as session:
             return fn(session, *args, **kwargs)
 
-    def _refine_scope(
+    def _scope_for_query(
         self,
         query: str,
         tenant_id: str,
-        document_id: Optional[str],
-        document_title: Optional[str],
+        document_id_hint: str,
         embed_future,
     ) -> tuple[Optional[str], Optional[str], list[str]]:
-        """Last chance to decide which documents this query is about.
+        """Decide which documents this query is about.
 
-        A no-op here: this strategy's scope is exactly what DocumentResolver
-        returned -- the single document, or nothing. It exists so an
-        alternative scoping approach can be tried as its own registered
-        strategy, measured against this one, without either editing this
-        path or duplicating the 250 lines of retrieval below it.
+        The whole decision lives here, not just a chance to adjust it after
+        the fact, because the cost being optimised IS the decision: a
+        subclass that only got to amend the answer still paid the 15.61s
+        corpus scan that produced it.
 
-        Returns the id and title as before, plus the list of documents the
-        lexical passes should search. The list is what allows an override to
-        answer "these eight documents" where this one can only answer "this
-        document" or "no idea" -- and "no idea" meant searching all 998.
+        Returns the id and title as before, plus the documents the lexical
+        passes should search -- a list, so an override can answer "these
+        eight" where this one can only answer "this" or "no idea", and "no
+        idea" meant searching all 998.
 
-        `embed_future` is passed rather than an embedding because this call
-        sits between submitting the embedding and awaiting it. An override
-        that needs the vector can await it and pay nothing extra -- the
-        result is cached, so the `embed_future.result()` on the next line
-        does not call the API a second time.
+        `embed_future` is already in flight; `result()` is cached, so an
+        override that needs the vector pays nothing the query was not
+        already paying.
         """
+        document_id, document_title = self._neo4j_session_call(
+            self._document_resolver.resolve_document_for_query,
+            query,
+            tenant_id=tenant_id,
+            document_id_hint=document_id_hint,
+        )
         return document_id, document_title, as_doc_id_list(document_id) or []
 
     def retrieve(
@@ -172,18 +174,9 @@ class FullHybridStrategy:
         # start — the same pool is reused below for the phrase/keyword/
         # vector/fulltext fetches once both are in hand.
         pool = self._pool
-        doc_id_future = pool.submit(
-            self._neo4j_session_call,
-            self._document_resolver.resolve_document_for_query,
-            query,
-            tenant_id=tenant_id,
-            document_id_hint=document_id_hint,
-        )
         embed_future = None if skip_vector else pool.submit(self._graph_seeds.get_embedding, query)
-
-        document_id, document_title = doc_id_future.result()
-        document_id, document_title, document_ids = self._refine_scope(
-            query, tenant_id, document_id, document_title, embed_future
+        document_id, document_title, document_ids = self._scope_for_query(
+            query, tenant_id, document_id_hint, embed_future
         )
         document_id = document_id or ""
         embedding = None if embed_future is None else embed_future.result()
