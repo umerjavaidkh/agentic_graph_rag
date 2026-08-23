@@ -29,6 +29,7 @@ from ....shared.config.settings import (
 from ....shared.feedback import get_feedback_routing
 from ....shared.telemetry.pipeline import record_pipeline_step
 from ..cypher_scope import as_doc_id_list
+from ..query_plan import classify
 from ..constants import (
     _FULLTEXT_LIMIT,
     _GRAPH_1HOP_LIMIT,
@@ -143,11 +144,20 @@ class FullHybridStrategy:
         wants_overview = synthesis or is_overview_question(query)
         wants_firmwide = is_firmwide_financial_metric_question(query)
         wants_quarterly = is_quarterly_breakdown_question(query)
-        fetch_limit = limit
+        # The plan decides how much is enough, not a constant. An
+        # exhaustive question asked for every appendix and got three,
+        # because classify() marked it exhaustive and nothing below read
+        # that -- the rule existed and was never enforced.
+        plan = classify(query, default_limit=limit)
+        fetch_limit = max(limit, plan.limit) if plan.exhaustive else limit
         if synthesis:
-            fetch_limit = max(limit, 16)
+            fetch_limit = max(fetch_limit, 16)
         if enumeration:
             fetch_limit = max(fetch_limit, 18)
+        # Cap the per-query row limit the lexical passes apply. Exhaustive
+        # questions must not be truncated at all; everything else keeps the
+        # small, precise pool it had.
+        row_limit = plan.limit if plan.exhaustive else 6
         vector_limit = min(RETRIEVAL_CANDIDATE_POOL, 16) if synthesis else _VECTOR_SEED_LIMIT
         graph_1hop = 32 if synthesis else _GRAPH_1HOP_LIMIT
         graph_2hop = 24 if synthesis else _GRAPH_2HOP_LIMIT
@@ -191,6 +201,7 @@ class FullHybridStrategy:
             query,
             tenant_id=tenant_id,
             document_id=document_ids,
+            row_limit=row_limit,
         )
         keyword_future = pool.submit(
             self._neo4j_session_call,
@@ -198,6 +209,7 @@ class FullHybridStrategy:
             query,
             tenant_id=tenant_id,
             document_id=document_ids,
+            row_limit=row_limit,
         )
         if skip_vector:
             vector_future = None
@@ -427,6 +439,10 @@ class FullHybridStrategy:
         # telemetry -- which defeats running the two side by side.
         response["strategy"] = self.name
         response["scope_source"] = getattr(self, "last_scope_source", None)
+        # Surface a thin win rather than hiding it behind a fluent answer.
+        if getattr(self, "last_scope_ambiguous", False):
+            response["low_confidence"] = True
+            response["document_candidates"] = getattr(self, "last_candidates", [])
         response["vector_seeds"] = len(vector_hits)
         response["fulltext_hits"] = len(fulltext_hits)
         response["graph_expanded"] = len(graph_hits)

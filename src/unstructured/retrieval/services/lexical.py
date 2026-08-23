@@ -55,7 +55,8 @@ class LexicalService:
         self._document_resolver = document_resolver
 
     def structural_keyword_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
+        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None,
+        row_limit: int = 6,
     ) -> list[dict]:
         """
         Rank nodes by how many query keywords they match, weighted by each
@@ -156,7 +157,7 @@ class LexicalService:
               matched,
               w
             ORDER BY w DESC, size(coalesce(n.search_text, '')) ASC
-            LIMIT 6
+            LIMIT $row_limit
             """,
             doc_ids=doc_ids,
             keywords=keywords,
@@ -164,6 +165,7 @@ class LexicalService:
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
             weight=weight,
+            row_limit=int(row_limit),
         )
 
         hydrator = get_hydrator()
@@ -195,7 +197,8 @@ class LexicalService:
         return f"{body}\n\n[Extracted URLs]\n{url_block}".strip()
 
     def structural_phrase_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
+        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None,
+        row_limit: int = 6,
     ) -> list[dict]:
         """
         Direct phrase CONTAINS search for fact/URL questions vector search often misses.
@@ -236,10 +239,11 @@ class LexicalService:
               phrase_hits,
               coalesce(d.title, d.id) AS doc_title
             ORDER BY phrase_hits DESC, size(coalesce(n.search_text, '')) ASC
-            LIMIT 6
+            LIMIT $row_limit
             """,
             doc_ids=doc_ids,
             phrases=[p.lower() for p in phrases],
+            row_limit=int(row_limit),
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
         )

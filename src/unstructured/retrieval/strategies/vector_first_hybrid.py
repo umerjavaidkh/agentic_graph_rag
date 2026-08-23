@@ -47,6 +47,10 @@ import threading
 from typing import Optional
 
 from ..cypher_scope import as_doc_id_list
+
+# Above this share of the winner's score, the runner-up is not meaningfully
+# behind and the choice should be offered rather than made.
+AMBIGUOUS_LEAD_RATIO = 0.80
 from ..query_plan import Shape, classify
 from ..services.candidate_docs import CandidateDocService
 from ..services.structural import StructuralService
@@ -76,6 +80,8 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         # Set on each retrieve() so a caller reading the response can see
         # which path actually decided the scope, rather than inferring it.
         self.last_scope_source: str = "unset"
+        self.last_scope_ambiguous: bool = False
+        self.last_candidates: list = []
 
     def _scope_for_query(
         self,
@@ -140,6 +146,18 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
 
         if candidates:
             top = candidates[0]
+            # A thin lead is not a decision. Two documents that match about
+            # equally often means the query named neither clearly, and
+            # guessing is wrong about as often as it is right -- the failure
+            # that answered a NIST question from an IRS publication and
+            # attributed the formula to the wrong standard. Recorded so the
+            # caller can offer the choice instead of presenting one.
+            runner = candidates[1].relative if len(candidates) > 1 else 0.0
+            self.last_scope_ambiguous = runner >= AMBIGUOUS_LEAD_RATIO
+            self.last_candidates = [
+                {"document_id": c.document_id, "relative": round(c.relative, 3)}
+                for c in candidates[:5]
+            ]
             doc_ids = [c.document_id for c in candidates]
             with self._scope_lock:
                 if len(self._scope_cache) > 256:   # bounded; a cache, not a store
