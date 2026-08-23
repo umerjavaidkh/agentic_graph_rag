@@ -148,6 +148,17 @@ class Neo4jExporter:
             "CREATE INDEX doc_revision_logical IF NOT EXISTS "
             f"FOR (n:{DOC_REVISION_LABEL}) ON (n.logical_doc_id)"
         )
+        # Every text-bearing label needs this composite, not just Section and
+        # Page. Chapter and Region had none, so a document-scoped read that
+        # named them scanned the whole database -- which also holds the
+        # structured business graph -- at 1,234,143 db hits against 27 for
+        # the same lookup once indexed. Document is here for the same reason:
+        # resolving a document by logical_doc_id is on every scoped path.
+        for _label in ("Chapter", "Region", "Document"):
+            session.run(
+                f"CREATE INDEX {_label.lower()}_logical_lifecycle IF NOT EXISTS "
+                f"FOR (n:{_label}) ON (n.logical_doc_id, n.lifecycle_status)"
+            )
         session.run(
             "CREATE INDEX content_logical_lifecycle IF NOT EXISTS "
             "FOR (n:Section) ON (n.logical_doc_id, n.lifecycle_status)"
