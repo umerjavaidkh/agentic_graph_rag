@@ -291,6 +291,27 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         or it does not.
         """
         plan = classify(query, default_limit=limit)
+
+        if plan.shape is Shape.AGGREGATION:
+            # Answer from passages as usual, but put the document's own
+            # outline in front of them. A count of "critical success factors"
+            # is six because sections 3.1 to 3.6 exist, and no sentence in
+            # the document says so -- the structure is the evidence, and
+            # without it the honest answer is "no count is given".
+            response = super().retrieve(
+                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                document_id_hint=document_id_hint,
+            )
+            doc = (response or {}).get("document_id")
+            if response and doc:
+                outline = self._neo4j_session_call(
+                    self._structural.outline, [doc], tenant_id
+                )
+                if outline:
+                    response["chunks"] = outline + (response.get("chunks") or [])
+                    response["query_shape"] = plan.shape.value
+            return response
+
         if plan.shape is not Shape.STRUCTURAL:
             return super().retrieve(
                 session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,

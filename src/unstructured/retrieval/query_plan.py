@@ -48,6 +48,7 @@ class Shape(str, Enum):
     STRUCTURAL = "structural"      # a graph address: section/page/box/figure N
     ENUMERATIVE = "enumerative"    # "every", "all", "list" -- exhaustive
     THEMATIC = "thematic"          # "overall", "main risks" -- whole-document
+    AGGREGATION = "aggregation"    # "how many ..." -- counted, not read
     FACTOID = "factoid"            # the default: hybrid recall + rerank
 
 
@@ -73,6 +74,15 @@ _ADDRESS = re.compile(
 # query_intent.py, because that predicate also drives ranking weights and
 # fetch limits elsewhere; broadening it would change behaviour for shapes
 # this router does not own yet.
+# "How many X does this document identify?" The answer is often not stated
+# anywhere in the prose -- NIST SP 800-161r1 names six critical success
+# factors by giving them sections 3.1 to 3.6 and never writing "six" -- so a
+# passage search truthfully reports that no count is given. Counting is a
+# question about structure, and the hierarchy already holds the answer.
+_COUNT_ASK = re.compile(
+    r"\bhow\s+many\b|\b(?:total\s+)?number\s+of\b|\bcount\s+of\b", re.I
+)
+
 _EXHAUSTIVE_ASK = re.compile(
     r"\b(?:list|show|find|give\s+me|identify|extract)\b[^.?]*\b(?:every|all|each)\b"
     r"|\bevery\s+\w+\s+(?:that|which|mentioning|containing|with|referring)\b"
@@ -153,6 +163,16 @@ def classify(query: str, *, default_limit: int = 8) -> RetrievalPlan:
             limit=EXHAUSTIVE_LIMIT,
             document_order=True,
             notes=("hierarchy request (weaker signal than explicit TOC phrasing)",),
+        )
+
+    if _COUNT_ASK.search(q):
+        return RetrievalPlan(
+            shape=Shape.AGGREGATION,
+            use_vectors=True,
+            exhaustive=True,
+            limit=EXHAUSTIVE_LIMIT,
+            document_order=True,
+            notes=("counted from the hierarchy, which states what the prose does not",),
         )
 
     if is_synthesis_question(q) or is_overview_question(q):
