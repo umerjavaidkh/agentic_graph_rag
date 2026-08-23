@@ -359,7 +359,7 @@ table-aware variant). See [Pluggable by design](#pluggable-by-design).
 </td>
 <td width="50%">
 
-**Every cited answer opens its real source.** Click a `doc:` chip and the original ingested PDF opens in a side panel, scrolled to the cited page — no separate document viewer, no re-uploading, no "trust me."
+**Every cited answer opens its real source.** Click the page chip and the original ingested PDF opens beside the answer, on the cited page — here `p.20` of IRS Publication 225, which is where "the standard mileage rate... is 70 cents per mile" actually appears. No separate viewer, no re-uploading, no "trust me."
 
 ![Source document viewer — the original PDF open in a side panel next to the cited answer](docs/images/document_viewer.png)
 
