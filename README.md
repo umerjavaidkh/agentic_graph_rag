@@ -3,9 +3,95 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status: Development in Progress](https://img.shields.io/badge/status-development%20in%20progress-orange.svg)](#current-status)
 
-> **Structured retrieval is measured and reproducible** — 95/100 on a committed 100-question benchmark with ground truth computed from the graph ([re-run it](#structured-retrieval-95100-and-you-can-re-run-the-benchmark-yourself)). The document half now has measured numbers too: a **998-document corpus** (611,814 nodes) with retrieval profiled end to end and two committed category suites at **25/28** and **26/28** ([what it measures](#1000-document-corpus-what-the-demo-actually-measures)). RBAC, multi-tenancy, audit logging and the storage split are in place. 🚧 Still moving: shape-stratified testing across document types, two of the four LLM-judge suites still target a retired schema, and a tagged release is pending — see [Current status](#current-status).
+**Structured business data and unstructured documents in one Neo4j graph** — SQL-grade
+analytics *and* multi-hop reasoning over PDFs, with an explicit retrieval-mode switch
+instead of an LLM guessing which you meant.
 
-## Structured retrieval: 95/100, and you can re-run the benchmark yourself
+---
+
+## Two benchmarks, both committed, both re-runnable
+
+Most RAG projects report a vibe. These are the two numbers this project is built on.
+
+### 🎯 100-question structured benchmark — **95/100**
+
+Real business questions — delivery performance, satisfaction drivers, seller
+concentration, retention, payment mix, and questions the data *cannot* answer.
+Ground truth is a **hand-written Cypher query per question**, so a pass means the system
+agrees with the database, not with another model.
+
+**Zero LLM judges. Deterministic. Free to run. Same answer twice.**
+
+```bash
+python scripts/eval_structured.py --suite eval/olist_business_suite.json
+```
+
+Up from 79 when first baselined. Every remaining failure is committed with its generated
+Cypher — [a benchmark that hides its failures is not a measurement](#still-in-progress).
+
+### 📚 998 real documents — **611,814 nodes, profiled end to end**
+
+arXiv papers, IRS publications, NIST standards, WHO reports — ingested *alongside* the
+552k-node business graph, in one Neo4j instance. Not a demo corpus: real PDFs with real
+tables, figures, appendices and near-identical siblings.
+
+| | |
+| --- | --- |
+| **34s → 5s** | hard-question latency, 16,051,859 → **210 db hits** on the worst query |
+| **100%** | vector coverage — was 49%; every table and figure had been invisible |
+
+**Measured repeatedly on randomly sampled documents**, not on a hand-picked demo —
+**271 questions across five runs**, each generated from the sampled document's own text
+so the expected answer is known without an LLM inventing one:
+
+| Run | Corpus | Questions | Correct | Right document |
+| --- | --- | --- | --- | --- |
+| Spot-checks, rounds 1–2 | 50 docs | 10 | 7/10 | 9/10 |
+| Spot-checks, after fixes | 50 docs | 10 | **10/10** | 9/10 |
+| Random sample | 499 docs | 95 | 87/95 | 93/95 |
+| Random sample | 998 docs | 94 | 80/94 | **94/94** |
+| Random sample, after the index fixes | 998 docs | 62 | 61/62 | **62/62** |
+
+**Right-document resolution is 100% on both 998-document runs** — the hard part, in a
+corpus where dozens of IRS publications share vocabulary and structure. Full logs:
+[`eval/corpus500_qa_log.md`](eval/corpus500_qa_log.md),
+[`eval/corpus50_qa_log.md`](eval/corpus50_qa_log.md).
+
+Plus **two committed category suites** across 28 query shapes, on two deliberately
+different documents — **25/28** (NIST SP 800-161r1) and **26/28** (IRS Publication 225,
+one of dozens of near-identical siblings).
+
+> The question filters were tightened between the last two random runs, so their
+> accuracy figures are comparable *within* a filter version, not across. Latency and
+> right-document resolution are comparable throughout.
+
+### 🧠 Depth, not just lookup
+
+The document suites deliberately cover **28 distinct query shapes**, because "works on
+some questions, fails on others" is almost always a routing problem in disguise:
+
+`fact` · `definition` · `entity` · `structural` · `enumerative` · `filtering` ·
+`aggregation` · `comparison` · `temporal` · **`multi-hop`** · **`causal`** ·
+`thematic` · `summarization` · `procedural` · `requirements` · **`conditional`** ·
+`exception` · `numeric` · `table` · `figure` · `cross-document` · `cross-entity` ·
+`citation` · **`verification`** · `contradiction` · `recommendation` ·
+**`ambiguous`** · **`unanswerable`**
+
+The last two matter most: a question that names no document gets a **request to clarify**,
+and a question about something outside the corpus gets a **refusal** — not a fluent answer
+assembled from the nearest unrelated text.
+
+**Also in place:** RBAC enforced in the graph · per-tenant isolation · audit log ·
+lean-Neo4j storage split (text in MinIO, vectors in Qdrant) · pluggable parsers,
+providers, stores and retrieval strategies · streaming answers with charts.
+
+🚧 **Next:** shape-stratified testing across document types, then the first tagged
+release. Two LLM-judge suites still target a retired schema. See
+[Current status](#current-status).
+
+---
+
+## Structured data: 95/100 on a benchmark you can re-run
 
 Text-to-Cypher over your own schema, measured against
 **[100 questions a business user would actually ask](eval/olist_business_suite.json)** —
@@ -58,7 +144,101 @@ Five questions still fail. They are listed with their causes under
 [Still in progress](#still-in-progress), because a benchmark that hides its
 failures is not a measurement.
 
+## Documents: a 998-document corpus, profiled end to end
+
+998 documents (arXiv papers, IRS publications, NIST standards, WHO reports) ingested
+alongside the Olist business graph in one Neo4j instance — **611,814 nodes**, of which
+**61,366** are document content. This is the scale the project set out to validate, and
+it broke things that a ten-document corpus never touched.
+
+### Retrieval cost, before and after
+
+Every number below is from `PROFILE` against the live 998-document corpus, not an
+estimate.
+
+| | before | after |
+| --- | --- | --- |
+| Phrase query, one scoped question | 16,051,859 db hits / 2,658 ms | **210 db hits / 34 ms** |
+| Lexical phrase retrieval | 2,450 ms | **9 ms** |
+| Vector seed hydration | 4,613 ms | **1,176 ms** |
+| Chapter-summary fetch (overview questions) | still running at 120 s | **234 ms** |
+| Document resolution | 15.61 s on every query | bypassed unless nothing cheaper decides |
+| End to end, hard question | 33.98 s (or timeout) | **5–22 s** |
+
+Four causes, all the same shape: **a query that could not use an index**. Unlabelled
+`MATCH (n)` (constraints in Neo4j are per label, so there is nothing to seek against),
+a six-hop `EXISTS` membership test re-walked per candidate node, three composite indexes
+that a *restore* had never created because they are built at ingest, and — self-inflicted
+— a `$doc_ids IS NULL OR ...` null-guard that made the predicate unseekable and cost more
+than the traversal it replaced.
+
+### Vector coverage was the other half
+
+An audit per label found the dense channel blind to **51% of the corpus**:
+
+| label | before | after |
+| --- | --- | --- |
+| Section | 100% | 100% |
+| Chapter | 100% | 100% |
+| Page | **1.0%** | 99.9% |
+| Region (8,068 tables, 4,750 figures) | **0%** | 100% |
+
+Every table and every figure was unreachable by similarity. `scripts/backfill_missing_embeddings.py`
+embedded 29,297 nodes in 19 minutes for roughly $0.44.
+
+### Answer quality, by query shape
+
+Two suites, both committed and re-runnable, one question per category from a
+28-category taxonomy (fact, definition, structural, enumerative, temporal, table,
+figure, ambiguous, unanswerable, …). Questions are grounded in content **verified
+present before the question was written**, and refusal tests are grounded in content
+verified *absent* — asking about a figure in a document that has none has a correct
+answer of "no".
+
+| suite | score | note |
+| --- | --- | --- |
+| NIST SP 800-161r1 (`scripts/verify_category_answers.py`) | **25/28** | distinctive document, easy to disambiguate |
+| IRS Publication 225 (`scripts/category_suite_irs225.py`) | **26/28 strict** | one of dozens of near-identical IRS publications |
+
+Strict means **right document _and_ right answer**. That distinction is the point: on
+the IRS suite the same questions first scored 14/28, with 12 answered from a *different*
+IRS publication — and six of those still passed a token check, because a sibling tax
+publication contains the same words. A fluent answer citing the wrong source is the
+failure mode this system exists to avoid, and it had reached into the measurement
+itself.
+
+A separate corpus-wide harness (`scripts/qa_log_sample.py`) samples documents at random
+and generates cloze questions from each document's own text, so the expected answer is
+known without an LLM being asked to invent one. **271 questions across five runs**, on
+50-, 499- and 998-document corpora — right-document resolution reached **94/94 and
+62/62** on the two 998-document runs, at a median of 9 s
+(`eval/corpus500_qa_log.md`, `eval/corpus50_qa_log.md`).
+
+<details>
+<summary><b>What this does not yet show</b> — the limits, named</summary>
+
+<br>
+
+
+- The category suites are **one document each**. The random-sample harness covers many
+  documents but only the factoid shape; a set stratified across *both* is the next
+  measurement.
+- The corpus harness changed its question filters between runs, so its accuracy figures
+  are not comparable across runs — only within one filter version.
+- **Temporal / version questions cannot work by design.** The machinery exists
+  (`DocumentLogical`, `HAS_REVISION`, supersede), but supersede *deletes* the previous
+  revision, so there is nothing to diff. Retention, `CanonicalSection` and `SUPERSEDES`
+  edges are all required, and only the first is a change to existing behaviour.
+- **The graph has no entity layer to retrieve on** — `Concept` 0 nodes, `Entity` 2. The
+  graph earns its place at expansion today, not at recall.
+- Two failures on the IRS suite have not been diagnosed.
+
+</details>
+
 ## Why this is different
+
+Most RAG projects are one chunk index and a similarity search. This is two graphs, an
+explicit router, and the operational parts you need before anyone else can use it.
 
 | Typical flat RAG                   | Agentic GraphRAG                                            |
 | ---------------------------------- | ----------------------------------------------------------- |
@@ -68,31 +248,111 @@ failures is not a measurement.
 | Loses document structure           | Hierarchy: Document → Chapter → Section → Page → Region     |
 | Guesses when context is missing    | Eval suite covers anti-hallucination and empty-result cases |
 
-The same user session can ask _"Top 5 product categories by revenue"_ (structured) and _"Which network deployed fellows to Greece and Kosovo?"_ (unstructured, multi-hop) — you pick the source per query (**Documents** / **Structured data** tabs in the UI, `retrieval_mode` in the API), RBAC enforces who sees what, and the chat UI renders tables, charts, or narrative as appropriate.
+### Production-grade, not a notebook
+
+The parts that decide whether a RAG system can face real users — and are usually missing:
+
+| | |
+| --- | --- |
+| **RBAC enforced in the graph** | not a filter bolted on after retrieval — denied users get a denial, not thinner results |
+| **Multi-tenancy** | property-based `tenant_id` isolation, spliced into every query at the Cypher level |
+| **Audit log** | who ingested what, who queried what, who was denied and why — filterable admin API + dashboard |
+| **Versioning** | content-hash logical ids, revisions, supersede-and-purge across Neo4j, blobs and vectors together |
+| **Degrades instead of failing** | vector store down → falls back to the graph path; no chat key → structural ingest still runs |
+| **Bounded everything** | LLM timeouts, per-node edge caps, capped candidate pools — no unbounded loop on the request path |
+| **Measured ingestion** | LLM-free per-document quality report (`GET /ingest/quality`), so quality is a number, not a hope |
+
+### Built to scale, and measured at scale
+
+Not a claim — the numbers come from a live 611,814-node graph holding **both** a 552k-node
+business dataset and 998 documents at once.
+
+- **Neo4j stays a lean skeleton.** Full text lives in MinIO, embeddings in Qdrant. Graph
+  size tracks node and edge count, not corpus bytes.
+- **Axis-2 edges are linear, not quadratic.** Per-node degree caps mean edges grow as
+  O(nodes × k). An earlier build emitted 2.17M edges from one document; that is fixed.
+- **Ingestion is horizontally scalable.** Redis + RQ workers, one bounded build per
+  document — a corpus of N documents is N independent jobs.
+- **Retrieval is corpus-independent.** Scoping is an indexed property seek, so cost
+  tracks the answer, not the corpus: 16,051,859 → 210 db hits on the worst query.
+
+### Up in minutes with Docker
+
+One compose file brings up the API, workers, Neo4j, Redis, MinIO and Qdrant together —
+no hand-wiring six services before you can ask a question.
+
+```bash
+cp .env.example .env     # add OPENAI_API_KEY
+docker compose up -d
+```
+
+Slim and full images are both provided (`Dockerfile`, `Dockerfile.full`) so you can trade
+image size against having every parser backend baked in. See [DOCKER.md](DOCKER.md).
+
+
+
+The same session can ask *"Top 5 product categories by revenue"* (structured) and
+*"Which network deployed fellows to Greece and Kosovo?"* (unstructured, multi-hop).
+You pick the source per query — **Documents** / **Structured data** in the UI,
+`retrieval_mode` in the API — so a question can't silently get the wrong kind of answer.
 
 ![Two axes over one corpus: pages linked in reading order around the ring (Axis 1 — PRECEDES / FOLLOWS), and semantic edges cutting across the middle to connect related pages that are nowhere near each other in the document (Axis 2)](docs/images/Gemini_Generated_Image_y27bnoy27bnoy27b.png)
 
 <sub>*Conceptual illustration.* The ring is **Axis 1** — pages in reading order. The chords across the middle are **Axis 2** — semantic links between pages that are far apart structurally. Both axes live in the same graph, which is what lets a question reach a related page that keyword or page-order navigation would never surface.</sub>
 
-**One Neo4j graph. Two knowledge modes. Structured business data and unstructured documents under the same roof — answers that flat RAG cannot reliably give.**
+<details>
+<summary><b>Two axes, one graph</b> — and why that matters</summary>
 
-**Every layer is a plug-in point, not a fixed pipeline.** Parsing, ingestion, and retrieval are each built behind a real interface — `DocumentParser`, `ModelProvider`/`BlobStore`/`VectorStore`, `StructuredStrategy`/`UnstructuredStrategy` — so you can bring your own PDF parser, embedding/LLM provider, storage backend, or retrieval strategy and register it, without forking or touching existing code. Retrieval alone already ships 6 unstructured + 2 structured strategies resolved by name at runtime; parsing ships 3 (a geometry-first default with correct RTL/bidi handling and vector-rule table detection, a plain PyMuPDF/pdfplumber fallback, and a table-aware variant that fixes real over-segmentation bugs found on live SEC filings). See [Pluggable by design](#pluggable-by-design) below for the exact seams and how to add your own.
+<br>
 
-Agentic GraphRAG keeps **structured business data** and **unstructured documents** in the same graph database, with an explicit retrieval-mode switch — structured, unstructured, or hybrid — instead of an LLM guessing which one you meant. SQL-grade analytics _and_ multi-hop reasoning over PDFs/DOCX, without separate vector DBs, ETL pipelines, or ad-hoc orchestration glue, and without a misrouted question silently producing the wrong kind of answer.
+The ring is **Axis 1**: pages in reading order. The chords are **Axis 2**: semantic links
+between pages far apart structurally. Both live in the same graph, which is what lets a
+question reach a related page that keyword or page-order navigation would never surface.
 
-It brings **your own** Neo4j schema and **your own** documents: the query router reads the live graph schema at runtime rather than hardcoding a demo domain, so it isn't tied to the bundled Olist + Go.Data sample data used below.
+</details>
 
-Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, Anthropic (Claude), or Gemini** — pick with `MODEL_PROVIDER`; embeddings always use OpenAI. **Cost-effective by default, not just at ingestion**: chat/synthesis defaults to a low-cost model too (`gpt-4o-mini` on the default `openai` provider, `gemini-2.5-flash` on `gemini`) — not a frontier-tier model — so running the full pipeline end to end (ingest **and** chat) doesn't require frontier-model spend. Swap to a stronger model per-provider any time via `CHAT_MODEL` if you want it.
+<details>
+<summary><b>Bring your own graph, documents, and models</b></summary>
+
+<br>
+
+The query router reads the **live Neo4j schema at runtime** rather than hardcoding a demo
+domain — so it isn't tied to the bundled Olist + Go.Data sample data.
+
+Built on **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, Anthropic, or
+Gemini** via `MODEL_PROVIDER`; embeddings always use OpenAI.
+
+**Cost-effective by default, not just at ingestion.** Chat/synthesis defaults to a
+low-cost model (`gpt-4o-mini`, or `gemini-2.5-flash` on Gemini) — so running the full
+pipeline end to end doesn't require frontier-model spend. Swap up with `CHAT_MODEL`.
+
+</details>
+
+<details>
+<summary><b>Every layer is a plug-in point</b></summary>
+
+<br>
+
+Parsing, ingestion and retrieval each sit behind a real interface — `DocumentParser`,
+`ModelProvider`/`BlobStore`/`VectorStore`, `StructuredStrategy`/`UnstructuredStrategy` —
+so you can bring your own PDF parser, model provider, storage backend or retrieval
+strategy and register it without forking.
+
+Already shipping: **7 unstructured + 2 structured** retrieval strategies and **3 parsers**
+(a geometry-first default with correct RTL/bidi handling, a PyMuPDF fallback, and a
+table-aware variant). See [Pluggable by design](#pluggable-by-design).
+
+</details>
 
 ## See it in action
 
-**Fully transparent, audit-ready at every step — not just at the final answer.** Every ingestion is logged, every document's construction quality is a measured report (not a claim), every cited answer traces back to its real source, and every stage is a swappable plug-in rather than a black box.
+**Transparent at every step, not just the final answer.** Every ingestion logged, every document's quality measured, every citation traceable to its source.
 
 <table>
 <tr>
 <td width="50%">
 
-**One chat, both retrieval modes.** The same session answers a structured e-commerce query (`text2cypher` → live table) and an unstructured 10-K question (hybrid graph RAG → cited answer with a clickable source), each turn tagged with exactly which strategy, tool, and access level produced it.
+**Every claim carries its page.** A document answer comes back with per-claim citations (`p.1`, `p.77`) and chips naming the exact strategy, tool and access level that produced it — here `graph_rag_vector_first` over IRS Publication 225. The same session answers structured queries as a live table.
 
 ![Agentic GraphRAG chat — structured and unstructured retrieval in one session](docs/images/chat_demo.png)
 
@@ -124,14 +384,14 @@ Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, A
 <tr>
 <td width="50%">
 
-**Drop in a PDF, get a queryable graph.** Multiple files, concurrent submission, stable logical keys for versioning — same upload path whether it's one document or a batch.
+**Drop in a PDF, get a queryable graph.** Multiple files submitted concurrently, live Redis queue depth and failed-job count, and stable logical keys for versioning — same key + same file is skipped, same key + new file becomes a revision.
 
 ![Document Ingestion — upload single or batch documents](docs/images/document_ingestion.png)
 
 </td>
 <td width="50%">
 
-**Inspect graph construction at every pipeline stage.** Interactively explore and debug knowledge graph nodes, edge relationships, and entity schemas across structural (X1), semantic (X2), and final Neo4j stages directly in the UI.
+**Inspect graph construction at every stage.** Load any document at X1 (structural), X2 (+ semantic) or final Neo4j and explore the tree — node and edge counts by type, click any node or edge for detail. Shown: 122 nodes / 420 edges across Document → Chapter → Section → Page → Region.
 
 ![Graph Inspector — interactive graph visualization across pipeline construction stages](docs/images/graph_inspector.png)
 
@@ -141,7 +401,13 @@ Built with **Neo4j · FastAPI · LangGraph**. Chat/synthesis runs on **OpenAI, A
 
 ### Pluggable by design
 
-Most RAG repos hardcode one parser, one embedding provider, and one retrieval path. Here every one of those is a named implementation of a real interface, resolved at runtime — not a hypothetical "you could refactor this later." These are the actual seams in the code today:
+Most RAG repos hardcode one parser, one embedding provider, and one retrieval path.
+Here each is a named implementation of a real interface, resolved at runtime.
+
+<details>
+<summary><b>The seams, and how to add your own</b></summary>
+
+<br>
 
 | Seam                         | Interface                                                                                                                          | Registered implementations                                                                                                                                                                                                                                                                                                          | Add your own                                                                                             |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -159,6 +425,9 @@ Two consequences worth calling out:
 - **Ingestion quality is measured, not assumed.** [`scripts/validate_ingestion.py`](scripts/validate_ingestion.py) and `GET /ingest/quality/{doc_id}` compute a cheap, LLM-free per-document report (text/NER/embedding coverage, orphan nodes, page continuity) straight from the ingested graph — the same tool that caught the regressions above, and how any new parser/provider gets evaluated before it's recommended.
 - **Schema-driven, not domain-hardcoded.** The query router reads the live Neo4j schema (`structured_entity_summary()`) at runtime instead of hardcoding a demo domain — bring your own graph and the routing adapts.
 - **LLMs are optional at ingestion, not required.** Parsing and structural graph construction (Document → Chapter → Section → Page → Region, all edges) are pure PDF-geometry heuristics — zero LLM calls, works with no API key at all. An LLM is only used for the _semantic_ enrichment layer on top (entity extraction, `SHARES_ENTITY`/`SAME_CATEGORY` linking, optional `CONTRADICTS`/`ELABORATES` reasoning, chapter summaries) — and it degrades gracefully (structural graph still gets built, semantic step just gets skipped) if no chat-provider key is configured. When it does run, it defaults to a low-cost model (`gpt-4o-mini`, configurable via `AXIS2_MODEL`), not a frontier-tier model — ingesting a large corpus doesn't require frontier-model spend.
+
+
+</details>
 
 ## Architecture
 
@@ -310,6 +579,11 @@ A Northwind dump is still present at `sample_data_to_test/structured/northwind-d
 
 ## Dataset migration: what swapping the dataset exposed
 
+<details>
+<summary><b>What swapping Northwind for 552k rows of real Olist data exposed</b></summary>
+
+<br>
+
 The bundled structured dataset changed from Northwind to the
 [Olist Brazilian e-commerce](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
 data — **552,299 nodes, 99,441 orders**, roughly 100× the old sample. Swapping it
@@ -366,7 +640,14 @@ Named specifically, because a number without its failures is not a measurement.
 - **The document half has no equivalent suite.** These 100 questions cover structured
   retrieval only.
 
+</details>
+
 ## How it scales
+
+<details>
+<summary><b>How it scales — stated from the code, not from intent</b></summary>
+
+<br>
 
 Stated from the code rather than intent, because the two get confused easily.
 
@@ -407,6 +688,8 @@ chapter, no extra graph-algorithm dependency.
 - **Per-document ingestion cost.** Embeddings and NER run per document; throughput and
   provider quotas, not graph size, are the practical ceiling on a large corpus.
 
+</details>
+
 ## Tech stack
 
 | Layer                                       | Technology                                                                     |
@@ -421,88 +704,6 @@ chapter, no extra graph-algorithm dependency.
 | Vector storage                              | Qdrant, authoritative for embeddings                                           |
 | Job queue                                   | Redis + RQ _(optional — in-process fallback when unset)_                       |
 | Containers                                  | Docker / Docker Compose                                                        |
-
-## 1000-document corpus: what the demo actually measures
-
-998 documents (arXiv papers, IRS publications, NIST standards, WHO reports) ingested
-alongside the Olist business graph in one Neo4j instance — **611,814 nodes**, of which
-**61,366** are document content. This is the scale the project set out to validate, and
-it broke things that a ten-document corpus never touched.
-
-### Retrieval cost, before and after
-
-Every number below is from `PROFILE` against the live 998-document corpus, not an
-estimate.
-
-| | before | after |
-| --- | --- | --- |
-| Phrase query, one scoped question | 16,051,859 db hits / 2,658 ms | **210 db hits / 34 ms** |
-| Lexical phrase retrieval | 2,450 ms | **9 ms** |
-| Vector seed hydration | 4,613 ms | **1,176 ms** |
-| Chapter-summary fetch (overview questions) | still running at 120 s | **234 ms** |
-| Document resolution | 15.61 s on every query | bypassed unless nothing cheaper decides |
-| End to end, hard question | 33.98 s (or timeout) | **5–22 s** |
-
-Four causes, all the same shape: **a query that could not use an index**. Unlabelled
-`MATCH (n)` (constraints in Neo4j are per label, so there is nothing to seek against),
-a six-hop `EXISTS` membership test re-walked per candidate node, three composite indexes
-that a *restore* had never created because they are built at ingest, and — self-inflicted
-— a `$doc_ids IS NULL OR ...` null-guard that made the predicate unseekable and cost more
-than the traversal it replaced.
-
-### Vector coverage was the other half
-
-An audit per label found the dense channel blind to **51% of the corpus**:
-
-| label | before | after |
-| --- | --- | --- |
-| Section | 100% | 100% |
-| Chapter | 100% | 100% |
-| Page | **1.0%** | 99.9% |
-| Region (8,068 tables, 4,750 figures) | **0%** | 100% |
-
-Every table and every figure was unreachable by similarity. `scripts/backfill_missing_embeddings.py`
-embedded 29,297 nodes in 19 minutes for roughly $0.44.
-
-### Answer quality, by query shape
-
-Two suites, both committed and re-runnable, one question per category from a
-28-category taxonomy (fact, definition, structural, enumerative, temporal, table,
-figure, ambiguous, unanswerable, …). Questions are grounded in content **verified
-present before the question was written**, and refusal tests are grounded in content
-verified *absent* — asking about a figure in a document that has none has a correct
-answer of "no".
-
-| suite | score | note |
-| --- | --- | --- |
-| NIST SP 800-161r1 (`scripts/verify_category_answers.py`) | **25/28** | distinctive document, easy to disambiguate |
-| IRS Publication 225 (`scripts/category_suite_irs225.py`) | **26/28 strict** | one of dozens of near-identical IRS publications |
-
-Strict means **right document _and_ right answer**. That distinction is the point: on
-the IRS suite the same questions first scored 14/28, with 12 answered from a *different*
-IRS publication — and six of those still passed a token check, because a sibling tax
-publication contains the same words. A fluent answer citing the wrong source is the
-failure mode this system exists to avoid, and it had reached into the measurement
-itself.
-
-A separate corpus-wide harness (`scripts/qa_log_sample.py`) samples documents at random
-and generates cloze questions from each document's own text, so the expected answer is
-known without an LLM being asked to invent one. Latest run: **62/62 right document,
-median 9 s** (`eval/corpus500_qa_log.md`).
-
-### What this does not yet show
-
-- Both category suites are **one document each**. A stratified set across document types
-  is the next measurement, not a claim we can make now.
-- The corpus harness changed its question filters between runs, so its accuracy figures
-  are not comparable across runs — only within one filter version.
-- **Temporal / version questions cannot work by design.** The machinery exists
-  (`DocumentLogical`, `HAS_REVISION`, supersede), but supersede *deletes* the previous
-  revision, so there is nothing to diff. Retention, `CanonicalSection` and `SUPERSEDES`
-  edges are all required, and only the first is a change to existing behaviour.
-- **The graph has no entity layer to retrieve on** — `Concept` 0 nodes, `Entity` 2. The
-  graph earns its place at expansion today, not at recall.
-- Two failures on the IRS suite have not been diagnosed.
 
 ## Current status
 
@@ -525,7 +726,8 @@ median 9 s** (`eval/corpus500_qa_log.md`).
 | **Business-question eval — 100 questions a business user would actually ask** (delivery performance, satisfaction drivers, seller concentration, retention, payment mix, and absence), each with ground truth computed from the graph by hand-written Cypher (`eval/olist_business_suite.json`) | ✅ **95/100** — deterministic, no LLM judge, free to run. Every remaining failure is named in `eval/baseline_olist_business.json` |
 | LLM-judge eval suites — 4 suites, 101 cases (structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ⚠️ last measured 95/101 against the Northwind sample; the two structured suites still target that schema and have not been re-pointed at Olist, so those numbers are stale |
 | Storage split — lean Neo4j (structure, `search_text` and pointers only), full text in a blob store, embeddings in a vector store, `Hydrator` seam on the read path        | ✅ write-side strip and dual-write are in place and tested; `BLOB_STORE_BACKEND` / `VECTOR_STORE_BACKEND` still default to `local` / `memory`, so MinIO + Qdrant are opt-in |
-| 1000-document corpus validation, then a tagged release                                                                                                                                        | 🚧 corpus ingested and measured (998 docs / 611,814 nodes — see [1000-document corpus](#1000-document-corpus-what-the-demo-actually-measures)); broader shape-stratified testing in progress, first tagged release to follow |
+| **1000-document corpus validation** — 998 docs / 611,814 nodes ingested, retrieval profiled end to end, two category suites committed ([details](#documents-a-998-document-corpus-profiled-end-to-end)) | ✅ done |
+| Shape-stratified testing across document types, then a tagged release                                                                                                                          | 🚧 in progress                                                                                           |
 | CI (tests on push/PR)                                                                                                                                                                         | 🚧 in progress                                                                                           |
 
 **Roadmap:** the 1000-document corpus is ingested and measured; two more days of shape-stratified testing across document types, then the first tagged release. After that: per-user short/long memory across threads; multi-language query & answer support; Kubernetes/Terraform deployment reference.
