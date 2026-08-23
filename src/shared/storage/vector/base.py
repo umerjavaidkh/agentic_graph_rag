@@ -24,6 +24,39 @@ class VectorStore(ABC):
     ) -> list[tuple[str, float]]:
         """Return [(id, score), ...] ordered by descending similarity."""
 
+    def query_with_docs(
+        self, embedding: list[float], top_k: int = 10, *, filters: Optional[dict] = None
+    ) -> list[tuple[str, float, Optional[str]]]:
+        """Return [(id, score, logical_doc_id), ...] ordered by descending similarity.
+
+        Which documents a question is about is a question the vector index
+        can already answer, and answer in time that does not grow with the
+        corpus. The graph-side alternative walks every document's subtree
+        applying a regex per node; this is one ANN lookup.
+
+        The default implementation derives the document from the node id,
+        which is correct for any backend whose ids carry the logical id as a
+        prefix, and returns None when it cannot. A backend that stores the
+        document alongside the vector should override and read it back
+        rather than parse it.
+        """
+        return [
+            (id, score, self.doc_id_for_node_id(id))
+            for id, score in self.query(embedding, top_k, filters=filters)
+        ]
+
+    @staticmethod
+    def doc_id_for_node_id(node_id: str) -> Optional[str]:
+        """The logical document id embedded in a content node's id, if any.
+
+        Revision-scoped ids look like ``<logical_id>:<revision>::<rest>``.
+        Mirrors DocumentResolver._logical_id_from_node_id -- kept here too so
+        a store can answer without importing retrieval code.
+        """
+        if not node_id:
+            return None
+        return node_id.split(":", 1)[0] or None
+
     @abstractmethod
     def delete(self, id: str) -> None: ...
 

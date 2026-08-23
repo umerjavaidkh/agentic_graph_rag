@@ -77,6 +77,36 @@ class QdrantVectorStore(VectorStore):
         )
         return [(hit.payload.get("_source_id", str(hit.id)), hit.score) for hit in response.points]
 
+    def query_with_docs(
+        self, embedding: list[float], top_k: int = 10, *, filters: Optional[dict] = None
+    ) -> list[tuple[str, float, Optional[str]]]:
+        """As `query`, plus the document each hit belongs to.
+
+        Read from the payload `_write_lean_storage` already writes, rather
+        than parsed back out of the node id: the payload is what the
+        exporter actually recorded, so it stays right for any id shape.
+        """
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+        query_filter = None
+        if filters:
+            query_filter = Filter(
+                must=[FieldCondition(key=k, match=MatchValue(value=v)) for k, v in filters.items()]
+            )
+        response = self._client.query_points(
+            collection_name=self.collection_name,
+            query=embedding,
+            limit=top_k,
+            query_filter=query_filter,
+        )
+        out: list[tuple[str, float, Optional[str]]] = []
+        for hit in response.points:
+            payload = hit.payload or {}
+            node_id = payload.get("_source_id", str(hit.id))
+            doc_id = payload.get("logical_doc_id") or self.doc_id_for_node_id(node_id)
+            out.append((node_id, hit.score, doc_id))
+        return out
+
     def delete(self, id: str) -> None:
         self._client.delete(
             collection_name=self.collection_name,
