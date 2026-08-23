@@ -118,7 +118,16 @@ class StructuralService:
             where = ("(toString(coalesce(n.document_page, n.page_start)) = $number "
                      "OR toString(n.pdf_page) = $number)")
         else:
-            where = ("(toLower(coalesce(n.title, '')) =~ $pat "
+            # Two shapes, because documents write addresses two ways. A
+            # heading carries the bare number -- "1.1. Purpose",
+            # "2. INTEGRATION OF C-SCRM" -- and never the word "section" or
+            # "chapter", so requiring the kind word matched nothing and both
+            # "what does Section 1.1 say" and "summarize Chapter 2" fell
+            # through to a hybrid search that reported the section missing.
+            # A box or figure caption does carry its kind word ("Box 9"), so
+            # that form is kept alongside.
+            where = ("(toLower(coalesce(n.title, '')) =~ $numpat "
+                     "OR toLower(coalesce(n.title, '')) =~ $pat "
                      "OR toLower(coalesce(n.search_text, '')) =~ $pat)")
 
         region_clause = " AND n.region_kind = $region_kind" if region_kind else ""
@@ -144,6 +153,9 @@ class StructuralService:
             tenant_id=tenant_id,
             number=number,
             pat=rf"(?s).*\b{re.escape(kind)}\s*{re.escape(number)}\b.*",
+            # Anchored, and requiring a separator after the number, so "1.1"
+            # does not also match the "1.1.1" beneath it.
+            numpat=rf"(?s)\s*{re.escape(number)}\.?[\s).:-].*",
             region_kind=region_kind,
         )
         hydrator = get_hydrator()
