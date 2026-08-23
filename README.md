@@ -229,8 +229,12 @@ known without an LLM being asked to invent one. **271 questions across five runs
   (`DocumentLogical`, `HAS_REVISION`, supersede), but supersede *deletes* the previous
   revision, so there is nothing to diff. Retention, `CanonicalSection` and `SUPERSEDES`
   edges are all required, and only the first is a change to existing behaviour.
-- **The graph has no entity layer to retrieve on** — `Concept` 0 nodes, `Entity` 2. The
-  graph earns its place at expansion today, not at recall.
+- **The entity layer is thin by choice.** Entity extraction is the one LLM-dependent
+  ingest step, and it is kept limited to avoid rate-limit exhaustion on a corpus this
+  size: 19.8% of content nodes carry entities, and 434 of 998 documents carry none.
+  That is why `Concept` has 0 nodes and `Entity` has 2 corpus-wide — so the graph
+  earns its place at *expansion* today, not at recall. A graph recall channel would
+  need that layer built out first.
 - Two failures on the IRS suite have not been diagnosed.
 
 </details>
@@ -359,7 +363,7 @@ table-aware variant). See [Pluggable by design](#pluggable-by-design).
 </td>
 <td width="50%">
 
-**Every cited answer opens its real source.** Click a `doc:` chip and the original ingested PDF opens in a side panel, scrolled to the cited page — no separate document viewer, no re-uploading, no "trust me."
+**Every cited answer opens its real source.** Click the page chip and the original ingested PDF opens beside the answer, on the cited page — here `p.20` of IRS Publication 225, which is where "the standard mileage rate... is 70 cents per mile" actually appears. No separate viewer, no re-uploading, no "trust me."
 
 ![Source document viewer — the original PDF open in a side panel next to the cited answer](docs/images/document_viewer.png)
 
