@@ -83,7 +83,7 @@ def test_keyword_retrieve_skips_resolution_when_document_id_given(lexical, resol
     )
     assert resolver.resolve_calls == 0
     # doc_id flows through to the Cypher params of at least one query.
-    assert any(kwargs.get("doc_id") == "aapl-10k-2024" for _cypher, kwargs in session.calls)
+    assert any(kwargs.get("doc_ids") == ["aapl-10k-2024"] for _cypher, kwargs in session.calls)
 
 
 def test_keyword_retrieve_normalizes_empty_document_id_to_none(lexical, resolver):
@@ -112,7 +112,7 @@ def test_phrase_retrieve_skips_resolution_when_document_id_given(lexical, resolv
         session, _QUERY, tenant_id="default", document_id="aapl-10k-2024"
     )
     assert resolver.resolve_calls == 0
-    assert any(kwargs.get("doc_id") == "aapl-10k-2024" for _cypher, kwargs in session.calls)
+    assert any(kwargs.get("doc_ids") == ["aapl-10k-2024"] for _cypher, kwargs in session.calls)
 
 
 def test_phrase_retrieve_normalizes_empty_document_id_to_none(lexical, resolver):

@@ -71,6 +71,20 @@ class InMemoryVectorStore(VectorStore):
         scored.sort(key=lambda pair: pair[1], reverse=True)
         return scored[:top_k]
 
+    def query_with_docs(
+        self, embedding: list[float], top_k: int = 10, *, filters: Optional[dict] = None
+    ) -> list[tuple[str, float, Optional[str]]]:
+        """As `query`, plus each hit's document, read from stored metadata."""
+        return [
+            (
+                id,
+                score,
+                self._metadata.get(id, {}).get("logical_doc_id")
+                or self.doc_id_for_node_id(id),
+            )
+            for id, score in self.query(embedding, top_k, filters=filters)
+        ]
+
     def delete(self, id: str) -> None:
         self._vectors.pop(id, None)
         self._metadata.pop(id, None)

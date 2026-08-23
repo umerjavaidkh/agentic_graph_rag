@@ -1,5 +1,13 @@
 """chapter_summary.py — fetch chapter-level rollup summaries for a document.
 
+This ran the `EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}` membership test
+that lexical.py was migrated off, and it is reached only by overview-shaped
+questions -- which is why exactly one question in a nine-question set timed
+out while the other eight answered in seconds. Knowing the document did not
+help: the cost is O(corpus), not O(document), because the traversal is
+re-explored per candidate node regardless of scope. Measured before the fix:
+still running after 120s for a single, already-resolved document.
+
 Query-side counterpart to src/semantic/chapter_summary.py (which writes
 Chapter.summary at ingestion time). Only meaningful for synthesis-shaped
 questions ("what does this document/chapter discuss") — callers should
@@ -8,9 +16,8 @@ side only runs when OPENAI_API_KEY is set.
 """
 from __future__ import annotations
 
-from ...graph.constants import DOCUMENT_ROOT_CYPHER
 from ....shared.neo4j.tenancy import tenant_filter
-from ..cypher_scope import _doc_scope_cypher
+from ..cypher_scope import content_scope_where
 
 
 class ChapterSummaryService:
@@ -21,15 +28,10 @@ class ChapterSummaryService:
             return []
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-              AND {tenant_filter("d")}
             MATCH (n:Chapter)
-            WHERE coalesce(n.summary, '') <> ''
-              AND (
-                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
-                OR n.id STARTS WITH d.id + '_'
-              )
+            WHERE {content_scope_where("n")}
+              AND {tenant_filter("n")}
+              AND coalesce(n.summary, '') <> ''
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,

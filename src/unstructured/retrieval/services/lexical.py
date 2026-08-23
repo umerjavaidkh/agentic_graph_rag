@@ -14,7 +14,12 @@ from ...graph.constants import DOCUMENT_ROOT_CYPHER, INDEXED_NODE_CYPHER
 from ....shared.neo4j.tenancy import tenant_filter
 from ....shared.storage.hydrator import get_hydrator
 from ..constants import _TEXT_NODE_LABELS
-from ..cypher_scope import _doc_scope_cypher
+from ..cypher_scope import (
+    _doc_scope_cypher,
+    as_doc_id_list,
+    content_match_cypher,
+    content_scope_where_multi,
+)
 from ..text_utils import _extract_urls
 from .document_resolver import DocumentResolver
 from .ranking import RankingService
@@ -50,7 +55,8 @@ class LexicalService:
         self._document_resolver = document_resolver
 
     def structural_keyword_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
+        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None,
+        row_limit: int = 6,
     ) -> list[dict]:
         """
         Rank nodes by how many query keywords they match, weighted by each
@@ -89,34 +95,31 @@ class LexicalService:
         # extra generic-word hits.
         min_hits = 2
         if document_id is None:
-            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+            resolved, _ = self._document_resolver.resolve_document_for_query(
+                session, query, tenant_id
+            )
+            doc_ids = as_doc_id_list(resolved)
         else:
-            # "" means the caller resolved and got no confident match —
-            # normalize to None so _doc_scope_cypher's `$doc_id IS NULL`
-            # branch degrades to unscoped, instead of comparing every
-            # document's id against the literal empty string and matching
-            # none of them.
-            doc_id = document_id or None
+            # "" (or []) means the caller resolved and got no confident
+            # match — as_doc_id_list normalises it to None so the scope
+            # predicate's empty branch degrades to unscoped, instead of
+            # comparing every document's id against the literal empty
+            # string and matching none of them.
+            doc_ids = as_doc_id_list(document_id)
 
         # Document frequency per keyword — how many scoped nodes contain it
         # at all, regardless of the min_hits threshold below.
         freq_rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-              AND {tenant_filter("d")}
-            MATCH (n)
-            WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.search_text, '') <> ''
-              AND (
-                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
-                OR n.id STARTS WITH d.id + '_'
-              )
+            MATCH {content_match_cypher("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
+              AND n.search_text IS NOT NULL AND n.search_text <> ''
+              AND {tenant_filter("n")}
             UNWIND $keywords AS k
             WITH k, n WHERE toLower(n.search_text) CONTAINS k
             RETURN k AS keyword, count(DISTINCT n) AS df
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             keywords=keywords,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
@@ -135,16 +138,10 @@ class LexicalService:
         # ORDER BY ... LIMIT keeps the truncation itself relevance-informed.
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-              AND {tenant_filter("d")}
-            MATCH (n)
-            WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.search_text, '') <> ''
-              AND (
-                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
-                OR n.id STARTS WITH d.id + '_'
-              )
+            MATCH {content_match_cypher("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
+              AND n.search_text IS NOT NULL AND n.search_text <> ''
+              AND {tenant_filter("n")}
             WITH n,
               [k IN $keywords WHERE toLower(n.search_text) CONTAINS k] AS matched
             WHERE size(matched) >= $min_hits
@@ -160,14 +157,15 @@ class LexicalService:
               matched,
               w
             ORDER BY w DESC, size(coalesce(n.search_text, '')) ASC
-            LIMIT 6
+            LIMIT $row_limit
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             keywords=keywords,
             min_hits=min_hits,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
             weight=weight,
+            row_limit=int(row_limit),
         )
 
         hydrator = get_hydrator()
@@ -199,7 +197,8 @@ class LexicalService:
         return f"{body}\n\n[Extracted URLs]\n{url_block}".strip()
 
     def structural_phrase_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
+        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None,
+        row_limit: int = 6,
     ) -> list[dict]:
         """
         Direct phrase CONTAINS search for fact/URL questions vector search often misses.
@@ -212,22 +211,22 @@ class LexicalService:
             return []
 
         if document_id is None:
-            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+            resolved, _ = self._document_resolver.resolve_document_for_query(
+                session, query, tenant_id
+            )
+            doc_ids = as_doc_id_list(resolved)
         else:
-            doc_id = document_id or None
+            doc_ids = as_doc_id_list(document_id)
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-              AND {tenant_filter("d")}
-            MATCH (n)
-            WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.search_text, '') <> ''
-              AND (
-                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
-                OR n.id STARTS WITH d.id + '_'
-              )
+            MATCH {content_match_cypher("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
+              AND n.search_text IS NOT NULL AND n.search_text <> ''
+              AND {tenant_filter("n")}
               AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
+            OPTIONAL MATCH (d:Document)
+              WHERE d.logical_doc_id = n.logical_doc_id
+                AND d.lifecycle_status = '""" + "ACTIVE" + """'
             WITH n, d,
               size([p IN $phrases WHERE toLower(n.search_text) CONTAINS p]) AS phrase_hits
             RETURN
@@ -240,10 +239,11 @@ class LexicalService:
               phrase_hits,
               coalesce(d.title, d.id) AS doc_title
             ORDER BY phrase_hits DESC, size(coalesce(n.search_text, '')) ASC
-            LIMIT 6
+            LIMIT $row_limit
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             phrases=[p.lower() for p in phrases],
+            row_limit=int(row_limit),
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
         )
@@ -376,26 +376,26 @@ class LexicalService:
             return []
 
         if document_id is None:
-            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+            resolved, _ = self._document_resolver.resolve_document_for_query(
+                session, query, tenant_id
+            )
+            doc_ids = as_doc_id_list(resolved)
         else:
-            doc_id = document_id or None
+            doc_ids = as_doc_id_list(document_id)
 
         # "<number> <noun>", allowing thousands separators and an optional
         # qualifier between them ("over 65 countries", "115 total institutions").
         patterns = [rf"(?s).*\d[\d,.]*\s+(?:\w+\s+){{0,2}}{re.escape(n)}.*" for n in nouns]
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-              AND {tenant_filter("d")}
-            MATCH (n)
-            WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.search_text, '') <> ''
-              AND (
-                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
-                OR n.id STARTS WITH d.id + '_'
-              )
+            MATCH {content_match_cypher("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
+              AND n.search_text IS NOT NULL AND n.search_text <> ''
+              AND {tenant_filter("n")}
               AND any(p IN $patterns WHERE toLower(n.search_text) =~ p)
+            OPTIONAL MATCH (d:Document)
+              WHERE d.logical_doc_id = n.logical_doc_id
+                AND d.lifecycle_status = 'ACTIVE'
             WITH n, d,
               size([p IN $patterns WHERE toLower(n.search_text) =~ p]) AS matched
             RETURN
@@ -410,7 +410,7 @@ class LexicalService:
             ORDER BY matched DESC, size(coalesce(n.search_text, '')) DESC
             LIMIT $limit
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             patterns=patterns,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
@@ -475,32 +475,29 @@ class LexicalService:
             return []
 
         if document_id is None:
-            doc_id, _ = self._document_resolver.resolve_document_for_query(session, query, tenant_id)
+            resolved, _ = self._document_resolver.resolve_document_for_query(
+                session, query, tenant_id
+            )
+            doc_ids = as_doc_id_list(resolved)
         else:
-            doc_id = document_id or None
+            doc_ids = as_doc_id_list(document_id)
 
         lowered = [p.lower() for p in phrases]
         # One pass to measure each phrase's document frequency, so a phrase
         # that is really boilerplate never gets to scope anything.
         stats = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-              AND {tenant_filter("d")}
-            MATCH (n)
-            WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.search_text, '') <> ''
-              AND (
-                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
-                OR n.id STARTS WITH d.id + '_'
-              )
+            MATCH {content_match_cypher("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
+              AND n.search_text IS NOT NULL AND n.search_text <> ''
+              AND {tenant_filter("n")}
             WITH collect(toLower(n.search_text)) AS texts
             UNWIND $phrases AS phrase
             RETURN phrase,
                    size([t IN texts WHERE t CONTAINS phrase]) AS df,
                    size(texts) AS total
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             phrases=lowered,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
@@ -528,17 +525,14 @@ class LexicalService:
 
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-              AND {tenant_filter("d")}
-            MATCH (n)
-            WHERE any(l IN labels(n) WHERE l IN $labels)
-              AND coalesce(n.search_text, '') <> ''
-              AND (
-                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
-                OR n.id STARTS WITH d.id + '_'
-              )
+            MATCH {content_match_cypher("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
+              AND n.search_text IS NOT NULL AND n.search_text <> ''
+              AND {tenant_filter("n")}
               AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
+            OPTIONAL MATCH (d:Document)
+              WHERE d.logical_doc_id = n.logical_doc_id
+                AND d.lifecycle_status = 'ACTIVE'
             WITH n, d,
               reduce(w = 0.0, i IN range(0, size($phrases) - 1) |
                 w + CASE WHEN toLower(n.search_text) CONTAINS $phrases[i]
@@ -555,7 +549,7 @@ class LexicalService:
             ORDER BY phrase_weight DESC, size(coalesce(n.search_text, '')) DESC
             LIMIT $limit
             """,
-            doc_id=doc_id,
+            doc_ids=doc_ids,
             phrases=scoping,
             weights=weights,
             labels=list(_TEXT_NODE_LABELS),

@@ -508,3 +508,23 @@ def estimate_route_max_tokens(question: str) -> int:
     # ~3 chars/token for JSON args + fixed overhead for tool name/metadata.
     estimated = ROUTE_MAX_TOKENS_BASE + (q_len // 3) + 96
     return max(ROUTE_MAX_TOKENS_MIN, min(estimated, ROUTE_MAX_TOKENS_CAP))
+
+
+# Which hybrid strategy the terminal fallthrough uses. Default is unchanged;
+# `graph_rag_vector_first` is the vector-scoped alternative, registered
+# alongside it so the two can be compared on real traffic. Per-request
+# override: `?strategy=` on the query endpoints, which beats this.
+HYBRID_STRATEGY = os.environ.get("HYBRID_STRATEGY", "graph_rag_hybrid")
+
+
+# One retrieval path for every document question, bypassing the structural
+# fast-paths (box / subsection / toc / filing-date / page).
+#
+# Those fast-paths each resolve their own document via DocumentResolver, so
+# a fix to document scoping in the hybrid path does not reach them -- a TOC
+# question never touched it. Routing everything through one strategy makes
+# the scoping decision happen in exactly one place, which is what makes it
+# measurable and attributable.
+UNIVERSAL_UNSTRUCTURED_RETRIEVAL = (
+    os.environ.get("UNIVERSAL_UNSTRUCTURED_RETRIEVAL", "true").lower() == "true"
+)

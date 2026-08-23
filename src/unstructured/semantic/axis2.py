@@ -101,6 +101,30 @@ SIMILARITY_EDGE_TYPES  = {NodeType.CHAPTER, NodeType.SECTION}
 CONCEPT_NODE_TYPES     = {NodeType.SECTION, NodeType.PAGE}
 
 
+
+def _as_type_map(value) -> dict[str, str]:
+    """Coerce one node's NER types to a dict, discarding anything else.
+
+    The merge below is `dict.update(value)`, which accepts any iterable of
+    pairs -- so a string arrives as a sequence of characters and raises
+    "dictionary update sequence element #0 has length 1; 2 is required".
+    That killed the Neo4j load for every document in a 104-document run,
+    after parsing, embedding and summarising had all succeeded.
+
+    Model output is untrusted input. It is validated where it is read, and
+    this is the second place it gets merged -- the batch-split retry path,
+    which only runs when a response failed to parse in the first place, so
+    it sees the malformed responses by construction.
+    """
+    if isinstance(value, dict):
+        return {
+            str(k): str(v)
+            for k, v in value.items()
+            if isinstance(k, str) and isinstance(v, str)
+        }
+    return {}
+
+
 def _cap_edges_by_degree(
     candidates: list[Tuple[int, int, float]], k: int
 ) -> list[Tuple[int, int, float]]:
@@ -1027,9 +1051,11 @@ class Axis2Builder:
                     entities_result: dict[str, list] = dict(left_entities)
                     for node_id, texts in right_entities.items():
                         entities_result.setdefault(node_id, []).extend(texts)
-                    types_result: dict[str, dict[str, str]] = dict(left_types)
+                    types_result: dict[str, dict[str, str]] = {
+                        k: _as_type_map(v) for k, v in left_types.items()
+                    }
                     for node_id, etypes in right_types.items():
-                        types_result.setdefault(node_id, {}).update(etypes)
+                        types_result.setdefault(node_id, {}).update(_as_type_map(etypes))
                     return entities_result, types_result
                 logger.warning(
                     "axis2 NER unit failed to parse even alone (node=%s); leaving its entities empty.",
@@ -1069,7 +1095,7 @@ class Axis2Builder:
                         node_types[text.lower()] = etype.strip().upper()
 
                 entities_result.setdefault(node.id, []).extend(texts)
-                types_result.setdefault(node.id, {}).update(node_types)
+                types_result.setdefault(node.id, {}).update(_as_type_map(node_types))
             return entities_result, types_result
 
         id_to_node = {n.id: n for n in targets}

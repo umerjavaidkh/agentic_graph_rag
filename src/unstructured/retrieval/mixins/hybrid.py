@@ -13,7 +13,8 @@ from ....shared.config.settings import (
 )
 from ....shared.neo4j.driver import get_neo4j_driver
 from ....shared.telemetry.context import TelemetryEvent, get_telemetry
-from ....shared.registries.strategy_registry import get_unstructured
+from ....shared.config.settings import HYBRID_STRATEGY, UNIVERSAL_UNSTRUCTURED_RETRIEVAL
+from ....shared.registries.strategy_registry import get_unstructured, list_unstructured
 from ..executor import DocumentQueryExecutor
 from ..query_intent import (
     is_filing_date_question,
@@ -83,6 +84,20 @@ class HybridRetrieveMixin:
             return denied
 
         tel = get_telemetry()
+
+        # One universal unstructured strategy: every document question takes
+        # the same path, so document scoping is decided in one place instead
+        # of five. The structural fast-paths below each resolve their own
+        # document, which is why a TOC question bypassed the scoping fix
+        # entirely and still answered from the wrong document.
+        if UNIVERSAL_UNSTRUCTURED_RETRIEVAL:
+            key = HYBRID_STRATEGY or "graph_rag_hybrid"
+            if key not in list_unstructured():
+                key = "graph_rag_hybrid"
+            return get_unstructured(key).retrieve(
+                None, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                document_id_hint=document_id_hint,
+            )
 
         # Box request (heading list or specific box content) — migrated to a
         # registered strategy; see strategies/box.py.
@@ -160,7 +175,14 @@ class HybridRetrieveMixin:
         # concurrently-submitted fetch needs its own, since Neo4j sessions
         # aren't thread-safe) — `session=None` is passed only for Protocol
         # conformance with the other strategies, which do use it.
-        return get_unstructured("graph_rag_hybrid").retrieve(
+        # Which hybrid runs is a setting, not a constant, so the
+        # vector-scoped alternative can be exercised end to end without a
+        # code change. An unknown name falls back rather than failing the
+        # query -- a typo in an env var should not take retrieval down.
+        key = HYBRID_STRATEGY or "graph_rag_hybrid"
+        if key not in list_unstructured():
+            key = "graph_rag_hybrid"
+        return get_unstructured(key).retrieve(
             None, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
             document_id_hint=document_id_hint,
         )

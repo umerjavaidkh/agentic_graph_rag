@@ -16,9 +16,8 @@ question shape these sections are noise.
 """
 from __future__ import annotations
 
-from ...graph.constants import DOCUMENT_ROOT_CYPHER
 from ....shared.neo4j.tenancy import tenant_filter
-from ..cypher_scope import _doc_scope_cypher
+from ..cypher_scope import content_scope_where
 
 # Case-insensitive title fragments that mark an authoritative firmwide summary
 # section in a 10-K/annual report. Segment/geographic sections never carry
@@ -46,11 +45,9 @@ class FinancialSummaryService:
         )
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-              AND {tenant_filter("d")}
-            MATCH (n)
-            WHERE (n:Section OR n:Chapter)
+            MATCH (n:Section|Chapter)
+            WHERE {content_scope_where("n")}
+              AND {tenant_filter("n")}
               AND coalesce(n.text, '') <> ''
               // A genuine Executive Overview/Financial Highlights section
               // runs to thousands of characters; a Table of Contents entry
@@ -63,10 +60,6 @@ class FinancialSummaryService:
               // of the actual overview text.
               AND size(n.text) > 200
               AND ({title_pred})
-              AND (
-                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
-                OR n.id STARTS WITH d.id + '_'
-              )
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
@@ -112,18 +105,12 @@ class FinancialSummaryService:
             return []
         rows = session.run(
             f"""
-            MATCH (d:{DOCUMENT_ROOT_CYPHER})
-            WHERE {_doc_scope_cypher("d")}
-              AND {tenant_filter("d")}
-            MATCH (n)
-            WHERE (n:Section OR n:Chapter)
+            MATCH (n:Section|Chapter)
+            WHERE {content_scope_where("n")}
+              AND {tenant_filter("n")}
               AND coalesce(n.text, '') <> ''
               AND size(n.text) > 200
               AND toLower(n.text) CONTAINS 'quarterly financial data'
-              AND (
-                EXISTS {{ MATCH (d)-[:CONTAINS*0..6]->(n) }}
-                OR n.id STARTS WITH d.id + '_'
-              )
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,

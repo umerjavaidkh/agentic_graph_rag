@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from ..shared.text_sanitize import sanitize_text
+
 
 # ─────────────────────────────────────────
 # NODE TYPES
@@ -78,6 +80,15 @@ class DKGNode:
     # and what every pre-existing node has.
     unit_id: Optional[str] = None
     unit_part: int = 0
+
+    def __post_init__(self) -> None:
+        # Extracted text can carry lone UTF-16 surrogates that no longer
+        # encode to UTF-8; unfixed, the Neo4j write fails and the whole
+        # document is lost at the very last step of ingestion. Doing it here
+        # -- rather than in each exporter -- means blob storage, embeddings
+        # and the LLM calls all see the same clean text as the graph does.
+        self.title = sanitize_text(self.title)
+        self.text = sanitize_text(self.text)
     # Ancestor titles, root-first ("Item 7 > Results of Operations"). Lets a
     # chunk state which part of the document it belongs to without a graph
     # walk, so a question naming a segment can be matched against it.

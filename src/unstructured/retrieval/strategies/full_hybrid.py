@@ -28,6 +28,8 @@ from ....shared.config.settings import (
 )
 from ....shared.feedback import get_feedback_routing
 from ....shared.telemetry.pipeline import record_pipeline_step
+from ..cypher_scope import as_doc_id_list
+from ..query_plan import classify
 from ..constants import (
     _FULLTEXT_LIMIT,
     _GRAPH_1HOP_LIMIT,
@@ -91,6 +93,37 @@ class FullHybridStrategy:
         with self._driver.session() as session:
             return fn(session, *args, **kwargs)
 
+    def _scope_for_query(
+        self,
+        query: str,
+        tenant_id: str,
+        document_id_hint: str,
+        embed_future,
+    ) -> tuple[Optional[str], Optional[str], list[str]]:
+        """Decide which documents this query is about.
+
+        The whole decision lives here, not just a chance to adjust it after
+        the fact, because the cost being optimised IS the decision: a
+        subclass that only got to amend the answer still paid the 15.61s
+        corpus scan that produced it.
+
+        Returns the id and title as before, plus the documents the lexical
+        passes should search -- a list, so an override can answer "these
+        eight" where this one can only answer "this" or "no idea", and "no
+        idea" meant searching all 998.
+
+        `embed_future` is already in flight; `result()` is cached, so an
+        override that needs the vector pays nothing the query was not
+        already paying.
+        """
+        document_id, document_title = self._neo4j_session_call(
+            self._document_resolver.resolve_document_for_query,
+            query,
+            tenant_id=tenant_id,
+            document_id_hint=document_id_hint,
+        )
+        return document_id, document_title, as_doc_id_list(document_id) or []
+
     def retrieve(
         self,
         session: Any,
@@ -111,11 +144,20 @@ class FullHybridStrategy:
         wants_overview = synthesis or is_overview_question(query)
         wants_firmwide = is_firmwide_financial_metric_question(query)
         wants_quarterly = is_quarterly_breakdown_question(query)
-        fetch_limit = limit
+        # The plan decides how much is enough, not a constant. An
+        # exhaustive question asked for every appendix and got three,
+        # because classify() marked it exhaustive and nothing below read
+        # that -- the rule existed and was never enforced.
+        plan = classify(query, default_limit=limit)
+        fetch_limit = max(limit, plan.limit) if plan.exhaustive else limit
         if synthesis:
-            fetch_limit = max(limit, 16)
+            fetch_limit = max(fetch_limit, 16)
         if enumeration:
             fetch_limit = max(fetch_limit, 18)
+        # Cap the per-query row limit the lexical passes apply. Exhaustive
+        # questions must not be truncated at all; everything else keeps the
+        # small, precise pool it had.
+        row_limit = plan.limit if plan.exhaustive else 6
         vector_limit = min(RETRIEVAL_CANDIDATE_POOL, 16) if synthesis else _VECTOR_SEED_LIMIT
         graph_1hop = 32 if synthesis else _GRAPH_1HOP_LIMIT
         graph_2hop = 24 if synthesis else _GRAPH_2HOP_LIMIT
@@ -142,16 +184,10 @@ class FullHybridStrategy:
         # start — the same pool is reused below for the phrase/keyword/
         # vector/fulltext fetches once both are in hand.
         pool = self._pool
-        doc_id_future = pool.submit(
-            self._neo4j_session_call,
-            self._document_resolver.resolve_document_for_query,
-            query,
-            tenant_id=tenant_id,
-            document_id_hint=document_id_hint,
-        )
         embed_future = None if skip_vector else pool.submit(self._graph_seeds.get_embedding, query)
-
-        document_id, document_title = doc_id_future.result()
+        document_id, document_title, document_ids = self._scope_for_query(
+            query, tenant_id, document_id_hint, embed_future
+        )
         document_id = document_id or ""
         embedding = None if embed_future is None else embed_future.result()
 
@@ -164,14 +200,16 @@ class FullHybridStrategy:
             self._lexical.structural_phrase_retrieve,
             query,
             tenant_id=tenant_id,
-            document_id=document_id,
+            document_id=document_ids,
+            row_limit=row_limit,
         )
         keyword_future = pool.submit(
             self._neo4j_session_call,
             self._lexical.structural_keyword_retrieve,
             query,
             tenant_id=tenant_id,
-            document_id=document_id,
+            document_id=document_ids,
+            row_limit=row_limit,
         )
         if skip_vector:
             vector_future = None
@@ -329,6 +367,11 @@ class FullHybridStrategy:
                 "chapter_summary": chapter_summary_hits,
             },
         )
+        # Before the other pins: a channel that cannot see the content is
+        # not evidence against it.
+        items = self._ranking._pin_strong_vector_chunks(
+            items, vector_hits, limit=max(1, int(fetch_limit))
+        )
         if lexical_hits:
             items = self._ranking._pin_precision_lexical_chunks(
                 query, items, lexical_hits, limit=max(1, int(fetch_limit))
@@ -394,7 +437,20 @@ class FullHybridStrategy:
                 response["mode"] = "graph_rag_hybrid"
             elif lexical_hits:
                 response["mode"] = "graph_rag_lexical"
-        response["strategy"] = "graph_rag"
+        # The subclass's own name, not a constant: `mode` is a data-driven
+        # label describing which sources contributed, so it cannot say which
+        # strategy produced the answer. Without this, a vector-first result
+        # was indistinguishable from the default path in the response and in
+        # telemetry -- which defeats running the two side by side.
+        response["strategy"] = self.name
+        response["scope_source"] = getattr(self, "last_scope_source", None)
+        # Surface a thin win rather than hiding it behind a fluent answer.
+        if getattr(self, "last_scope_ambiguous", False) or getattr(
+            self, "last_underspecified", False
+        ):
+            response["low_confidence"] = True
+            response["document_candidates"] = getattr(self, "last_candidates", [])
+            response["underspecified"] = getattr(self, "last_underspecified", False)
         response["vector_seeds"] = len(vector_hits)
         response["fulltext_hits"] = len(fulltext_hits)
         response["graph_expanded"] = len(graph_hits)

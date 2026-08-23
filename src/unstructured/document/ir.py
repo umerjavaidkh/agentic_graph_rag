@@ -28,6 +28,8 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from ...shared.text_sanitize import sanitize_text
+
 
 @dataclass
 class Block:
@@ -58,6 +60,14 @@ class Block:
     low_confidence: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # See shared/text_sanitize.py: extraction can emit lone UTF-16
+        # surrogates that are unencodable downstream. Cleaning them at
+        # the IR boundary keeps content_hash stable too -- it is
+        # computed from this text, so sanitizing later would change the
+        # idempotency key and re-ingest documents that had not changed.
+        self.text = sanitize_text(self.text)
+
 
 @dataclass
 class PageBlock:
@@ -69,6 +79,9 @@ class PageBlock:
     regions: list[Block] = field(default_factory=list)  # table/figure blocks, subset of `blocks`
     confidence: float = 0.0
     low_confidence: bool = False
+
+    def __post_init__(self) -> None:
+        self.text = sanitize_text(self.text)
 
 
 @dataclass

@@ -131,10 +131,34 @@ class Neo4jExporter:
             f"CREATE CONSTRAINT doc_revision_id IF NOT EXISTS "
             f"FOR (n:{DOC_REVISION_LABEL}) REQUIRE n.id IS UNIQUE"
         )
+        # Backfill before the indexes: lifecycle_active() now emits a
+        # direct equality so the composite indexes below are seekable, and a
+        # node written before lifecycle_status existed would otherwise become
+        # invisible rather than merely slow. This is its own statement: when
+        # it shared a session.run() with the CREATE INDEX below, the index
+        # string landed in the `parameters` slot and the index was silently
+        # never created -- which is exactly the index the scoped-read path
+        # depends on.
+        session.run(
+            "MATCH (n) WHERE n.logical_doc_id IS NOT NULL "
+            "AND n.lifecycle_status IS NULL "
+            "SET n.lifecycle_status = 'ACTIVE'"
+        )
         session.run(
             "CREATE INDEX doc_revision_logical IF NOT EXISTS "
             f"FOR (n:{DOC_REVISION_LABEL}) ON (n.logical_doc_id)"
         )
+        # Every text-bearing label needs this composite, not just Section and
+        # Page. Chapter and Region had none, so a document-scoped read that
+        # named them scanned the whole database -- which also holds the
+        # structured business graph -- at 1,234,143 db hits against 27 for
+        # the same lookup once indexed. Document is here for the same reason:
+        # resolving a document by logical_doc_id is on every scoped path.
+        for _label in ("Chapter", "Region", "Document"):
+            session.run(
+                f"CREATE INDEX {_label.lower()}_logical_lifecycle IF NOT EXISTS "
+                f"FOR (n:{_label}) ON (n.logical_doc_id, n.lifecycle_status)"
+            )
         session.run(
             "CREATE INDEX content_logical_lifecycle IF NOT EXISTS "
             "FOR (n:Section) ON (n.logical_doc_id, n.lifecycle_status)"
