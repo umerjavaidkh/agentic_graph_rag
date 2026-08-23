@@ -420,7 +420,13 @@ class FullHybridStrategy:
                 response["mode"] = "graph_rag_hybrid"
             elif lexical_hits:
                 response["mode"] = "graph_rag_lexical"
-        response["strategy"] = "graph_rag"
+        # The subclass's own name, not a constant: `mode` is a data-driven
+        # label describing which sources contributed, so it cannot say which
+        # strategy produced the answer. Without this, a vector-first result
+        # was indistinguishable from the default path in the response and in
+        # telemetry -- which defeats running the two side by side.
+        response["strategy"] = self.name
+        response["scope_source"] = getattr(self, "last_scope_source", None)
         response["vector_seeds"] = len(vector_hits)
         response["fulltext_hits"] = len(fulltext_hits)
         response["graph_expanded"] = len(graph_hits)
