@@ -142,25 +142,30 @@ def content_scope_where(alias: str = "n", param: str = "$doc_id") -> str:
     )
 
 
-def content_scope_where_multi(alias: str = "n", param: str = "$doc_ids") -> str:
+def content_scope_where_multi(
+    alias: str = "n", param: str = "$doc_ids", *, scoped: bool = False
+) -> str:
     """Indexed document scope for a content node, across several documents.
 
-    The multi-document sibling of `content_scope_where`, and index-friendly
-    for the same reason: `IN` becomes one seek per value against the same
-    composite (logical_doc_id, lifecycle_status) index a single equality
-    would use, so scoping to eight documents costs eight seeks rather than
-    a scan.
+    `scoped` must say whether the caller actually holds document ids, because
+    the convenient null-guard form is what stops the index being used:
 
-    This is what makes "search each candidate document completely" cheap.
-    The alternative to scoping -- what the caller did when the resolver
-    could not name a document -- was searching all 998 documents unscoped.
+        ($doc_ids IS NULL OR size($doc_ids) = 0 OR n.logical_doc_id IN $doc_ids)
 
-    An empty or NULL list still means unscoped, matching the single-id
-    form's NULL behaviour, so a caller with no opinion degrades exactly as
-    before rather than silently matching nothing.
+    Neo4j cannot seek through that disjunction -- the predicate might be
+    satisfied by every node, so the planner falls back to AllNodesScan and
+    then filters. Measured on the phrase query: 611,815 rows scanned with the
+    guard, against a seek per document id without it. The guard looked free
+    and cost more than the traversal it replaced.
+
+    So the shape is chosen up front: a seekable equality when there are ids,
+    and an honest "no filter" when there are none.
     """
+    lifecycle = f"{alias}.lifecycle_status = '{LIFECYCLE_ACTIVE}'"
+    if scoped:
+        return f"{alias}.logical_doc_id IN {param} AND {lifecycle}"
     return (
         f"({param} IS NULL OR size({param}) = 0 "
         f"OR {alias}.logical_doc_id IN {param}) "
-        f"AND {alias}.lifecycle_status = '{LIFECYCLE_ACTIVE}'"
+        f"AND {lifecycle}"
     )

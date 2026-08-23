@@ -64,7 +64,7 @@ class StructuralService:
             f"""
             MATCH (n)
             WHERE (n:Chapter OR n:Section)
-              AND {content_scope_where_multi("n")}
+              AND {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND {tenant_filter("n")}
               AND trim(coalesce(n.title, '')) <> ''
             RETURN trim(n.title) AS title,
@@ -125,7 +125,7 @@ class StructuralService:
         rows = session.run(
             f"""
             MATCH (n:{label})
-            WHERE {content_scope_where_multi("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND {tenant_filter("n")}
               AND {where}{region_clause}
             RETURN coalesce(n.id, '') AS id,

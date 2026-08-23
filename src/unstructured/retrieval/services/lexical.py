@@ -111,7 +111,7 @@ class LexicalService:
         freq_rows = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where_multi("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
             UNWIND $keywords AS k
@@ -138,7 +138,7 @@ class LexicalService:
         rows = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where_multi("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
             WITH n,
@@ -217,7 +217,7 @@ class LexicalService:
         rows = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where_multi("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
               AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
@@ -385,7 +385,7 @@ class LexicalService:
         rows = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where_multi("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
               AND any(p IN $patterns WHERE toLower(n.search_text) =~ p)
@@ -484,7 +484,7 @@ class LexicalService:
         stats = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where_multi("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
             WITH collect(toLower(n.search_text)) AS texts
@@ -522,7 +522,7 @@ class LexicalService:
         rows = session.run(
             f"""
             MATCH {content_match_cypher("n")}
-            WHERE {content_scope_where_multi("n")}
+            WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
               AND {tenant_filter("n")}
               AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)

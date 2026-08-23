@@ -92,3 +92,33 @@ percentage hides which one you are actually looking at.
 - latency: 25.1s
 - question: We define the loss of the matcher as Lmatch = −EMA↔B[R(MA↔B)] and the final training loss as \mathc a l {L}=\mathcal {L}
 - answer: The document does not provide a specific value for η controlling the strength of the non-matchable regularization term.
+
+
+## Run 2026-08-23 16:18 — strategy `graph_rag_vector_first`
+
+20 documents sampled (seed 20260823) from the most recently ingested 500, 5 questions each.
+
+**Answer accuracy 80/94 (85%) · right document 94/94 (100%) · median 16s**
+
+| Document | Score | Nodes | Avg s | Right doc |
+|---|---|---|---|---|
+| arxiv_2608_07947 | 5/5 | 57 | 18 | 5/5 |
+| arxiv_2608_10517 | 5/5 | 89 | 15 | 5/5 |
+| arxiv_2608_12440 | 5/5 | 48 | 9 | 5/5 |
+| arxiv_2608_12929 | 5/5 | 36 | 16 | 5/5 |
+| arxiv_2608_13612 | 5/5 | 41 | 13 | 5/5 |
+| arxiv_2608_17214 | 5/5 | 58 | 8 | 5/5 |
+| arxiv_2608_17613 | 5/5 | 72 | 21 | 5/5 |
+| arxiv_2608_18779 | 5/5 | 77 | 11 | 5/5 |
+| arxiv_2608_19269 | 5/5 | 48 | 13 | 5/5 |
+| arxiv_2608_19680 | 5/5 | 70 | 17 | 5/5 |
+| arxiv_2608_11034 | 4/5 | 52 | 13 | 5/5 |
+| arxiv_2608_11840 | 4/5 | 64 | 16 | 5/5 |
+| arxiv_2608_17694 | 4/5 | 33 | 18 | 5/5 |
+| arxiv_2608_18329 | 4/5 | 42 | 16 | 5/5 |
+| arxiv_2608_10555 | 3/3 | 28 | 17 | 3/3 |
+| arxiv_2608_13632 | 3/5 | 61 | 18 | 5/5 |
+| arxiv_2608_13681 | 3/5 | 60 | 25 | 5/5 |
+| arxiv_2608_16742 | 3/5 | 61 | 24 | 5/5 |
+| arxiv_2608_15943 | 1/5 | 75 | 20 | 5/5 |
+| arxiv_2608_16618 | 1/1 | 21 | 23 | 1/1 |

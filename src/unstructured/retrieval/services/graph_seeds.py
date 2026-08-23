@@ -13,6 +13,7 @@ from ....shared.neo4j.tenancy import tenant_filter
 from ....shared.neo4j.versioning import lifecycle_active
 from ....shared.storage.hydrator import get_hydrator
 from ....shared.storage.vector.factory import get_vector_store
+from ...graph.constants import INDEXED_NODE_CYPHER
 from ..constants import _GRAPH_REL_TYPES, _TEXT_NODE_LABELS
 from ....shared.model_providers.factory import get_embedding_provider
 from .ranking import RankingService
@@ -117,7 +118,15 @@ class GraphSeedService:
         """Similarity search against the external VectorStore, hydrated via
         blob_key_text (docs/DESIGN_unstructured_graph_v2.md phase 3) --
         full-text hydration, not search_text, since this is the LLM-context
-        payload and must not lose fidelity vs. today's `n.text` read."""
+        payload and must not lose fidelity vs. today's `n.text` read.
+
+        The id lookup names its labels. `MATCH (n) WHERE n.id = nid` cannot
+        use an index -- the uniqueness constraints are per label, and without
+        one Neo4j has nothing to seek against -- so it scanned every node in
+        the database once per seed id. Profiled on 12 seeds: 21,264,888 db
+        hits and 3,625ms, against 72 db hits and 85ms once labelled. This was
+        the single largest cost in retrieval, and it grew with the corpus
+        while looking like a fixed vector-search cost."""
         try:
             filters: dict = {}
             if tenant_id:
@@ -131,7 +140,7 @@ class GraphSeedService:
             rows = session.run(
                 f"""
                 UNWIND $ids AS nid
-                MATCH (n) WHERE n.id = nid
+                MATCH (n:{INDEXED_NODE_CYPHER}) WHERE n.id = nid
                   AND coalesce(n.search_text, '') <> ''
                   AND {lifecycle_active("n")}
                   AND {tenant_filter("n")}
