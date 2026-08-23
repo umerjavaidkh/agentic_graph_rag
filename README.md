@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status: Development in Progress](https://img.shields.io/badge/status-development%20in%20progress-orange.svg)](#current-status)
 
-> **Structured retrieval is measured and reproducible** — 95/100 on a committed 100-question benchmark with ground truth computed from the graph ([re-run it](#structured-retrieval-95100-and-you-can-re-run-the-benchmark-yourself)). RBAC, multi-tenancy, audit logging and the storage split are in place. 🚧 Still moving: the document (unstructured) half has no equivalent benchmark yet, two of the four LLM-judge suites still target a retired schema, and a tagged release is pending — see [Current status](#current-status).
+> **Structured retrieval is measured and reproducible** — 95/100 on a committed 100-question benchmark with ground truth computed from the graph ([re-run it](#structured-retrieval-95100-and-you-can-re-run-the-benchmark-yourself)). The document half now has measured numbers too: a **998-document corpus** (611,814 nodes) with retrieval profiled end to end and two committed category suites at **25/28** and **26/28** ([what it measures](#1000-document-corpus-what-the-demo-actually-measures)). RBAC, multi-tenancy, audit logging and the storage split are in place. 🚧 Still moving: shape-stratified testing across document types, two of the four LLM-judge suites still target a retired schema, and a tagged release is pending — see [Current status](#current-status).
 
 ## Structured retrieval: 95/100, and you can re-run the benchmark yourself
 
@@ -422,6 +422,88 @@ chapter, no extra graph-algorithm dependency.
 | Job queue                                   | Redis + RQ _(optional — in-process fallback when unset)_                       |
 | Containers                                  | Docker / Docker Compose                                                        |
 
+## 1000-document corpus: what the demo actually measures
+
+998 documents (arXiv papers, IRS publications, NIST standards, WHO reports) ingested
+alongside the Olist business graph in one Neo4j instance — **611,814 nodes**, of which
+**61,366** are document content. This is the scale the project set out to validate, and
+it broke things that a ten-document corpus never touched.
+
+### Retrieval cost, before and after
+
+Every number below is from `PROFILE` against the live 998-document corpus, not an
+estimate.
+
+| | before | after |
+| --- | --- | --- |
+| Phrase query, one scoped question | 16,051,859 db hits / 2,658 ms | **210 db hits / 34 ms** |
+| Lexical phrase retrieval | 2,450 ms | **9 ms** |
+| Vector seed hydration | 4,613 ms | **1,176 ms** |
+| Chapter-summary fetch (overview questions) | still running at 120 s | **234 ms** |
+| Document resolution | 15.61 s on every query | bypassed unless nothing cheaper decides |
+| End to end, hard question | 33.98 s (or timeout) | **5–22 s** |
+
+Four causes, all the same shape: **a query that could not use an index**. Unlabelled
+`MATCH (n)` (constraints in Neo4j are per label, so there is nothing to seek against),
+a six-hop `EXISTS` membership test re-walked per candidate node, three composite indexes
+that a *restore* had never created because they are built at ingest, and — self-inflicted
+— a `$doc_ids IS NULL OR ...` null-guard that made the predicate unseekable and cost more
+than the traversal it replaced.
+
+### Vector coverage was the other half
+
+An audit per label found the dense channel blind to **51% of the corpus**:
+
+| label | before | after |
+| --- | --- | --- |
+| Section | 100% | 100% |
+| Chapter | 100% | 100% |
+| Page | **1.0%** | 99.9% |
+| Region (8,068 tables, 4,750 figures) | **0%** | 100% |
+
+Every table and every figure was unreachable by similarity. `scripts/backfill_missing_embeddings.py`
+embedded 29,297 nodes in 19 minutes for roughly $0.44.
+
+### Answer quality, by query shape
+
+Two suites, both committed and re-runnable, one question per category from a
+28-category taxonomy (fact, definition, structural, enumerative, temporal, table,
+figure, ambiguous, unanswerable, …). Questions are grounded in content **verified
+present before the question was written**, and refusal tests are grounded in content
+verified *absent* — asking about a figure in a document that has none has a correct
+answer of "no".
+
+| suite | score | note |
+| --- | --- | --- |
+| NIST SP 800-161r1 (`scripts/verify_category_answers.py`) | **25/28** | distinctive document, easy to disambiguate |
+| IRS Publication 225 (`scripts/category_suite_irs225.py`) | **26/28 strict** | one of dozens of near-identical IRS publications |
+
+Strict means **right document _and_ right answer**. That distinction is the point: on
+the IRS suite the same questions first scored 14/28, with 12 answered from a *different*
+IRS publication — and six of those still passed a token check, because a sibling tax
+publication contains the same words. A fluent answer citing the wrong source is the
+failure mode this system exists to avoid, and it had reached into the measurement
+itself.
+
+A separate corpus-wide harness (`scripts/qa_log_sample.py`) samples documents at random
+and generates cloze questions from each document's own text, so the expected answer is
+known without an LLM being asked to invent one. Latest run: **62/62 right document,
+median 9 s** (`eval/corpus500_qa_log.md`).
+
+### What this does not yet show
+
+- Both category suites are **one document each**. A stratified set across document types
+  is the next measurement, not a claim we can make now.
+- The corpus harness changed its question filters between runs, so its accuracy figures
+  are not comparable across runs — only within one filter version.
+- **Temporal / version questions cannot work by design.** The machinery exists
+  (`DocumentLogical`, `HAS_REVISION`, supersede), but supersede *deletes* the previous
+  revision, so there is nothing to diff. Retention, `CanonicalSection` and `SUPERSEDES`
+  edges are all required, and only the first is a change to existing behaviour.
+- **The graph has no entity layer to retrieve on** — `Concept` 0 nodes, `Entity` 2. The
+  graph earns its place at expansion today, not at recall.
+- Two failures on the IRS suite have not been diagnosed.
+
 ## Current status
 
 | Area                                                                                                                                                                                          | Status                                                                                                   |
@@ -443,10 +525,10 @@ chapter, no extra graph-algorithm dependency.
 | **Business-question eval — 100 questions a business user would actually ask** (delivery performance, satisfaction drivers, seller concentration, retention, payment mix, and absence), each with ground truth computed from the graph by hand-written Cypher (`eval/olist_business_suite.json`) | ✅ **95/100** — deterministic, no LLM judge, free to run. Every remaining failure is named in `eval/baseline_olist_business.json` |
 | LLM-judge eval suites — 4 suites, 101 cases (structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ⚠️ last measured 95/101 against the Northwind sample; the two structured suites still target that schema and have not been re-pointed at Olist, so those numbers are stale |
 | Storage split — lean Neo4j (structure, `search_text` and pointers only), full text in a blob store, embeddings in a vector store, `Hydrator` seam on the read path        | ✅ write-side strip and dual-write are in place and tested; `BLOB_STORE_BACKEND` / `VECTOR_STORE_BACKEND` still default to `local` / `memory`, so MinIO + Qdrant are opt-in |
-| 1000-document corpus validation, then a tagged release                                                                                                                                        | 🚧 in progress                                                                                           |
+| 1000-document corpus validation, then a tagged release                                                                                                                                        | 🚧 corpus ingested and measured (998 docs / 611,814 nodes — see [1000-document corpus](#1000-document-corpus-what-the-demo-actually-measures)); broader shape-stratified testing in progress, first tagged release to follow |
 | CI (tests on push/PR)                                                                                                                                                                         | 🚧 in progress                                                                                           |
 
-**Roadmap:** validate ingestion + retrieval quality across a 1000-document real-world corpus before cutting a tagged release; per-user short/long memory across threads; multi-language query & answer support; Kubernetes/Terraform deployment reference.
+**Roadmap:** the 1000-document corpus is ingested and measured; two more days of shape-stratified testing across document types, then the first tagged release. After that: per-user short/long memory across threads; multi-language query & answer support; Kubernetes/Terraform deployment reference.
 
 ## Documentation
 
