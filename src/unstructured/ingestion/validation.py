@@ -14,6 +14,17 @@ _MIN_TEXT_CHARS = 20  # below this, a node's text is treated as effectively empt
 _CONTENT_LABELS = ("Chapter", "Section", "Page")
 _NER_LABELS = ("Section", "Page")  # matches axis2.py's CONCEPT_NODE_TYPES
 _EMBED_LABELS = ("Chapter", "Section", "Page")  # matches axis2.py's SEMANTIC_NODE_TYPES
+def _label_union(labels) -> str:
+    """`n:Chapter|Section|Page` — the labels named, so an index can be used.
+
+    `MATCH (n) ... AND any(l IN labels(n) WHERE l IN $labels)` is an
+    AllNodesScan followed by a per-node label test: no index can serve it,
+    and this database also holds the structured business graph, so a
+    per-document quality report walked every node in the corpus.
+    """
+    return ":" + "|".join(labels)
+
+
 _SEMANTIC_REL_TYPES = (
     "SEMANTICALLY_SIMILAR",
     "SHARES_ENTITY",
@@ -49,13 +60,19 @@ def list_ingested_documents(
     if tenant_id:
         where += " AND rev.tenant_id = $tenant_id"
         params["tenant_id"] = tenant_id
-    if search:
+    # Every whitespace-separated term must appear somewhere, in any order.
+    # A single CONTAINS over the raw string cannot match how people type a
+    # document's name: "irs 225" is not a substring of "irs_p225", so the
+    # obvious search returned nothing while the document sat in the corpus.
+    terms = [t for t in (search or "").lower().split() if t]
+    for i, term in enumerate(terms):
+        key = f"s{i}"
         where += (
-            " AND (toLower(rev.logical_doc_id) CONTAINS toLower($search)"
-            " OR toLower(coalesce(rev.title, '')) CONTAINS toLower($search)"
-            " OR toLower(coalesce(rev.source_filename, '')) CONTAINS toLower($search))"
+            f" AND (toLower(rev.logical_doc_id) CONTAINS ${key}"
+            f" OR toLower(coalesce(rev.title, '')) CONTAINS ${key}"
+            f" OR toLower(coalesce(rev.source_filename, '')) CONTAINS ${key})"
         )
-        params["search"] = search
+        params[key] = term
     rows = session.run(
         f"""
         MATCH (rev:{DOC_REVISION_LABEL})
@@ -111,36 +128,33 @@ def build_ingestion_quality_report(
         }
 
         text_row = session.run(
-            """
-            MATCH (n) WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
-              AND any(l IN labels(n) WHERE l IN $labels)
+            f"""
+            MATCH (n{_label_union(_CONTENT_LABELS)})
+            WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
             RETURN count(n) AS total,
                    sum(CASE WHEN size(coalesce(n.search_text, '')) < $min_chars THEN 1 ELSE 0 END) AS empty
             """,
-            labels=list(_CONTENT_LABELS),
             min_chars=_MIN_TEXT_CHARS,
             **scope,
         ).single()
 
         ner_row = session.run(
-            """
-            MATCH (n) WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
-              AND any(l IN labels(n) WHERE l IN $labels)
+            f"""
+            MATCH (n{_label_union(_NER_LABELS)})
+            WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
             RETURN count(n) AS total,
                    sum(CASE WHEN size(coalesce(n.entities, [])) > 0 THEN 1 ELSE 0 END) AS with_entities
             """,
-            labels=list(_NER_LABELS),
             **scope,
         ).single()
 
         embed_row = session.run(
-            """
-            MATCH (n) WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
-              AND any(l IN labels(n) WHERE l IN $labels)
+            f"""
+            MATCH (n{_label_union(_EMBED_LABELS)})
+            WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
             RETURN count(n) AS total,
-                   sum(CASE WHEN n.embedding IS NOT NULL THEN 1 ELSE 0 END) AS with_embedding
+                   sum(CASE WHEN n.vector_id IS NOT NULL THEN 1 ELSE 0 END) AS with_embedding
             """,
-            labels=list(_EMBED_LABELS),
             **scope,
         ).single()
 
@@ -156,13 +170,12 @@ def build_ingestion_quality_report(
         ]
 
         orphan_row = session.run(
-            """
-            MATCH (n) WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
-              AND any(l IN labels(n) WHERE l IN $labels)
+            f"""
+            MATCH (n{_label_union(_CONTENT_LABELS)})
+            WHERE n.logical_doc_id = $logical_doc_id AND n.revision_id = $revision_id
               AND NOT ( ()-[:CONTAINS]->(n) )
             RETURN count(n) AS n
             """,
-            labels=list(_CONTENT_LABELS),
             **scope,
         ).single()
 

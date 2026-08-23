@@ -199,7 +199,10 @@
           Cheap, LLM-free per-document report — pure Cypher aggregation over the ingested graph, no OpenAI calls.
         </p>
         <div class="toolbar">
-          <select id="iq-doc" style="flex:1;min-width:260px;"><option value="">Loading documents…</option></select>
+          <input id="iq-filter" placeholder="Filter 1,000 documents… (id, title or filename)"
+                 style="flex:1;min-width:240px;" autocomplete="off" />
+          <select id="iq-doc" size="1" style="flex:1;min-width:260px;"><option value="">Loading documents…</option></select>
+          <span id="iq-count" style="font-size:0.78rem;opacity:0.7;white-space:nowrap;"></span>
           <button type="button" id="btn-iq-load">Load report</button>
           <button type="button" id="btn-iq-refresh-list">Refresh list</button>
           <span style="margin-left:auto;color:var(--muted);font-size:0.8rem;">admin role (dev fallback):</span>
@@ -385,30 +388,55 @@
       }
     }
 
+    // Filtering happens on the server. The picker only ever fetched the
+    // first 200 of 998 documents, so a client-side filter could not find
+    // one that was never sent -- typing "irs 225" matched nothing while the
+    // document sat in the corpus.
+    let iqSearchTimer = null;
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const f = document.getElementById("iq-filter");
+      if (!f) return;
+      f.addEventListener("input", () => {
+        clearTimeout(iqSearchTimer);
+        iqSearchTimer = setTimeout(() => loadIngestionDocList(f.value.trim()), 220);
+      });
+    });
+
     function iqAdminParams() {
       const params = new URLSearchParams();
       params.set("role", document.getElementById("iq-admin-role").value.trim() || "admin");
       return params;
     }
 
-    async function loadIngestionDocList() {
+    async function loadIngestionDocList(search) {
       const sel = document.getElementById("iq-doc");
       sel.innerHTML = '<option value="">Loading documents…</option>';
       try {
-        const res = await fetch("/ingest/quality?" + iqAdminParams().toString());
+        const params = iqAdminParams();
+        if (search) params.set("search", search);
+        const res = await fetch("/ingest/quality?" + params.toString());
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(body.detail || res.statusText);
         }
         const docs = await res.json();
         if (!docs.length) {
-          sel.innerHTML = '<option value="">No ingested documents found</option>';
+          sel.innerHTML = search
+            ? '<option value="">No document matches that filter</option>'
+            : '<option value="">No ingested documents found</option>';
           return;
         }
+        // A thousand documents in a native <select> cannot be searched --
+        // typing only jumps to a prefix match, and these ids start with a
+        // 32-hex job prefix, so every one looks the same for the first 32
+        // characters. Keep the full list in memory and render the matches.
         sel.innerHTML = docs.map(d => {
           const label = (d.source_filename || d.title || d.logical_doc_id) + ` (v${d.version_number ?? "?"})`;
           return `<option value="${d.logical_doc_id}">${label}</option>`;
         }).join("");
+        const countEl = document.getElementById("iq-count");
+        if (countEl) countEl.textContent = `${docs.length} shown`;
       } catch (e) {
         sel.innerHTML = '<option value="">Failed to load</option>';
         document.getElementById("iq-report").innerHTML =
