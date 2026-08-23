@@ -367,6 +367,11 @@ class FullHybridStrategy:
                 "chapter_summary": chapter_summary_hits,
             },
         )
+        # Before the other pins: a channel that cannot see the content is
+        # not evidence against it.
+        items = self._ranking._pin_strong_vector_chunks(
+            items, vector_hits, limit=max(1, int(fetch_limit))
+        )
         if lexical_hits:
             items = self._ranking._pin_precision_lexical_chunks(
                 query, items, lexical_hits, limit=max(1, int(fetch_limit))

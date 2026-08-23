@@ -311,6 +311,50 @@ class RankingService:
         ]
         return list(dict.fromkeys(patterns))[:8]
 
+    def _pin_strong_vector_chunks(
+        self,
+        items: list[dict],
+        vector_hits: list[dict],
+        *,
+        limit: int,
+        near: float = 0.95,
+    ) -> list[dict]:
+        """Keep the nearest chunk, whatever rank fusion decided.
+
+        RERANK_BACKEND is `rrf`, which fuses by rank alone. A chunk found by
+        one channel scores 1/(k+rank) once, while a chunk found by three
+        channels scores three such terms -- so agreement beats strength, and
+        the single best match in the corpus can be dropped from the top 8.
+
+        That is usually right, and here it was not. Asked how a risk exposure
+        score is calculated, the vector channel returned the appendix page
+        holding the formula at rank 0 with 0.645 similarity -- the top hit in
+        the whole corpus -- and the answer came back "this document does not
+        cover it", because the lexical and graph channels could not
+        corroborate it. They could not corroborate it because `search_text`
+        is a truncated preview (2,014 chars against 2,971 in the blob), so
+        the lexical channel cannot see content past the cut at all. Fusion
+        was treating a blind channel's silence as disagreement.
+
+        Pinning is by rank, not by an absolute similarity threshold: "the
+        nearest chunk" needs no calibration and cannot drift with the
+        embedding model, where a fixed cutoff would need retuning for every
+        corpus.
+        """
+        if not vector_hits or not items:
+            return items
+        ranked = sorted(vector_hits, key=lambda h: float(h.get("score") or 0.0), reverse=True)
+        top_score = float(ranked[0].get("score") or 0.0)
+        if top_score <= 0:
+            return items
+        # The best hit, plus anything effectively tied with it.
+        keep = [h for h in ranked[:3] if float(h.get("score") or 0.0) >= top_score * near]
+        have = {i.get("id") for i in items}
+        missing = [h for h in keep if h.get("id") not in have]
+        if not missing:
+            return items
+        return (missing + items)[:limit]
+
     def _pin_precision_lexical_chunks(
         self,
         query: str,
