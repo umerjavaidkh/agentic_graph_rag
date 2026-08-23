@@ -241,16 +241,18 @@ known without an LLM being asked to invent one. **271 questions across five runs
 
 ## Why this is different
 
-Most RAG projects are one chunk index and a similarity search. This is two graphs, an
-explicit router, and the operational parts you need before anyone else can use it.
+Most RAG projects are one chunk index and a similarity search. The difference shows up
+in what happens to specific questions — including the ones a system should refuse.
 
-| Typical flat RAG                   | Agentic GraphRAG                                            |
-| ---------------------------------- | ----------------------------------------------------------- |
-| One chunk index for everything     | Dedicated graphs for tables vs. documents                   |
-| Similarity search only             | Cypher for metrics + hybrid retrieval for PDFs              |
-| Weak on counts, joins, time series | Aggregations, rankings, charts from live Neo4j              |
-| Loses document structure           | Hierarchy: Document → Chapter → Section → Page → Region     |
-| Guesses when context is missing    | Eval suite covers anti-hallucination and empty-result cases |
+| | Typical flat RAG | Agentic GraphRAG |
+| --- | --- | --- |
+| **"How many orders were cancelled?"** | Retrieves chunks about cancellations, guesses a number | Cypher against the live schema — **625**, checked against ground truth |
+| **"What's in section 4.2?"** | Similarity search; a section number is not a concept | A graph address. Reads the hierarchy — no vector search involved |
+| **"List every appendix"** | Top-k cut, answers 3 of 10, sounds certain | Exhaustive by plan. **All 10**, in document order |
+| **"What is the deadline?"** | Answers from the nearest document | Names no document → **asks which one** |
+| **"What will NIST publish in 2027?"** | Assembles a fluent answer from related text | **Refuses** — nothing in the corpus supports it |
+| **Which document answered?** | Whatever the index returned | **100% correct** across two 998-document runs |
+| **Where did that claim come from?** | A chunk id, maybe | Per-claim page citation that opens the PDF on that page |
 
 ### Production-grade, not a notebook
 
@@ -713,28 +715,28 @@ chapter, no extra graph-algorithm dependency.
 
 ## Current status
 
-| Area                                                                                                                                                                                          | Status                                                                                                   |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Dual-graph RAG (structured + documents + hybrid) via explicit retrieval-mode selection                                                                                                        | ✅                                                                                                       |
-| Olist e-commerce dataset replacing Northwind — 552k nodes, and a structured path that names no dataset's fields (see [Dataset migration](#dataset-migration-what-swapping-the-dataset-exposed)) | ✅ done — data loaded, retrieval driven entirely from the live schema, and a guard test fails the build if dataset-specific field names reappear |
-| Pluggable parser / retrieval strategy registries (see [Pluggable by design](#pluggable-by-design))                                                                                            | ✅                                                                                                       |
-| Multi-provider chat/synthesis (OpenAI, Anthropic, Gemini) — embeddings always OpenAI                                                                                                          | ✅                                                                                                       |
-| Scalable ingestion (Redis + RQ workers, versioning)                                                                                                                                           | ✅                                                                                                       |
-| Ingestion-quality validation (`GET /ingest/quality`, LLM-free per-document report)                                                                                                            | ✅                                                                                                       |
-| Tabular loading — live databases (any SQLAlchemy URL), SQLite, CSV directories, Excel, with declared or inferred relationships, per-source provenance and generated field descriptions | ✅ done via `scripts/load_tabular.py` and `POST /ingest/tabular`. The upload **screen** still accepts only PDFs and Cypher — no tables tab yet. `.sql` dumps are not parsed |
-| Source document viewer — click a citation, view the original PDF in a side panel                                                                                                              | ✅                                                                                                       |
-| Bulk-question queue — paste several questions, answered one at a time in order                                                                                                                | ✅                                                                                                       |
-| Multi-tenancy (property-based `tenant_id` isolation)                                                                                                                                          | ✅                                                                                                       |
-| Audit log (who / what / when / result, admin API + dashboard)                                                                                                                                 | ✅                                                                                                       |
-| Google OIDC auth, RBAC, per-user thread isolation                                                                                                                                             | ✅ (`release/v1.0`)                                                                                      |
-| Streaming answers with charts, retrieval feedback loop                                                                                                                                        | ✅                                                                                                       |
-| Fast deterministic eval — 12 cases across fact / aggregate / ranking / multihop / temporal / absence (`scripts/eval_structured.py`) | ✅ 11/12 — the quick tier, run during iteration |
-| **Business-question eval — 100 questions a business user would actually ask** (delivery performance, satisfaction drivers, seller concentration, retention, payment mix, and absence), each with ground truth computed from the graph by hand-written Cypher (`eval/olist_business_suite.json`) | ✅ **95/100** — deterministic, no LLM judge, free to run. Every remaining failure is named in `eval/baseline_olist_business.json` |
-| LLM-judge eval suites — 4 suites, 101 cases (structured, advanced multi-hop structured, ingested documents incl. multi-turn continuity, SEC 10-K/10-Q filings incl. cross-document) | ⚠️ unscored. The two structured suites target the retired Northwind schema; the deterministic 100-question benchmark replaced them for structured retrieval. No judge score is claimed until they are re-pointed and re-run |
-| Storage split — lean Neo4j (structure, `search_text` and pointers only), full text in a blob store, embeddings in a vector store, `Hydrator` seam on the read path        | ✅ write-side strip and dual-write are in place and tested; `BLOB_STORE_BACKEND` / `VECTOR_STORE_BACKEND` still default to `local` / `memory`, so MinIO + Qdrant are opt-in |
+| Area | Status |
+| --- | --- |
+| Dual-graph RAG (structured + documents + hybrid) via explicit retrieval-mode selection | ✅ |
+| Olist dataset — 552k nodes, structured path names no dataset's fields ([why it matters](#dataset-migration-what-swapping-the-dataset-exposed)) | ✅ retrieval reads the live schema; a guard test fails the build if hardcoded field names reappear |
+| Pluggable parser / retrieval strategy registries (see [Pluggable by design](#pluggable-by-design)) | ✅ |
+| Multi-provider chat/synthesis (OpenAI, Anthropic, Gemini) — embeddings always OpenAI | ✅ |
+| Scalable ingestion (Redis + RQ workers, versioning) | ✅ |
+| Ingestion-quality validation (`GET /ingest/quality`, LLM-free per-document report) | ✅ |
+| Tabular loading — any SQLAlchemy URL, SQLite, CSV, Excel, with provenance and generated field descriptions | ✅ via `scripts/load_tabular.py` and `POST /ingest/tabular`.<br>🚧 no tables tab in the upload screen; `.sql` dumps unparsed |
+| Source document viewer — click a citation, view the original PDF in a side panel | ✅ |
+| Bulk-question queue — paste several questions, answered one at a time in order | ✅ |
+| Multi-tenancy (property-based `tenant_id` isolation) | ✅ |
+| Audit log (who / what / when / result, admin API + dashboard) | ✅ |
+| Google OIDC auth, RBAC, per-user thread isolation | ✅ (`release/v1.0`) |
+| Streaming answers with charts, retrieval feedback loop | ✅ |
+| Fast deterministic eval — 12 cases (`scripts/eval_structured.py`) | ✅ 11/12 — the quick tier, run during iteration |
+| **Business-question eval — 100 real questions**, ground truth computed from the graph by hand-written Cypher (`eval/olist_business_suite.json`) | ✅ **95/100** — deterministic, no judge, free to run. Every failure named in `eval/baseline_olist_business.json` |
+| LLM-judge eval suites — 4 suites, 101 cases | ⚠️ **unscored.** Two still target the retired Northwind schema. The deterministic 100-question benchmark replaced them for structured retrieval; no judge score claimed until they are re-pointed |
+| Storage split — lean Neo4j, text in a blob store, embeddings in a vector store, `Hydrator` on the read path | ✅ write-side strip and dual-write tested.<br>🚧 backends default to `local`/`memory`, so MinIO + Qdrant are opt-in |
 | **1000-document corpus validation** — 998 docs / 611,814 nodes ingested, retrieval profiled end to end, two category suites committed ([details](#documents-a-998-document-corpus-profiled-end-to-end)) | ✅ done |
-| Shape-stratified testing across document types, then a tagged release                                                                                                                          | 🚧 in progress                                                                                           |
-| CI (tests on push/PR)                                                                                                                                                                         | 🚧 in progress                                                                                           |
+| Shape-stratified testing across document types, then a tagged release | 🚧 in progress |
+| CI (tests on push/PR) | 🚧 in progress |
 
 **Roadmap:** the 1000-document corpus is ingested and measured; two more days of shape-stratified testing across document types, then the first tagged release. After that: per-user short/long memory across threads; multi-language query & answer support; Kubernetes/Terraform deployment reference.
 
