@@ -440,9 +440,12 @@ class FullHybridStrategy:
         response["strategy"] = self.name
         response["scope_source"] = getattr(self, "last_scope_source", None)
         # Surface a thin win rather than hiding it behind a fluent answer.
-        if getattr(self, "last_scope_ambiguous", False):
+        if getattr(self, "last_scope_ambiguous", False) or getattr(
+            self, "last_underspecified", False
+        ):
             response["low_confidence"] = True
             response["document_candidates"] = getattr(self, "last_candidates", [])
+            response["underspecified"] = getattr(self, "last_underspecified", False)
         response["vector_seeds"] = len(vector_hits)
         response["fulltext_hits"] = len(fulltext_hits)
         response["graph_expanded"] = len(graph_hits)

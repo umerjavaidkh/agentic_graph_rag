@@ -44,13 +44,36 @@ re-phrasings that arrive without a hint.
 from __future__ import annotations
 
 import threading
-from typing import Optional
+from typing import Any, Optional
 
 from ..cypher_scope import as_doc_id_list
 
 # Above this share of the winner's score, the runner-up is not meaningfully
 # behind and the choice should be offered rather than made.
 AMBIGUOUS_LEAD_RATIO = 0.80
+
+# Shortest squashed document name that may be trusted as a reference. Below
+# this, a match is coincidence -- "sp" or "irs" appears in many ids.
+MIN_NAME_MATCH = 8
+
+# Below this many content words, a question with no document signal is not a
+# question about a document -- it is a fragment. "What is the deadline?"
+# names nothing, carries no topic, and was answered from an arbitrary IRS
+# publication with total fluency. A close runner-up is a different problem
+# with a different gate; this one is the absence of any signal at all.
+MIN_KEYWORDS_UNSCOPED = 2
+
+
+def _squash(text: str) -> str:
+    """Letters and digits only, lowercased.
+
+    Document names survive contact with prose in many shapes: "NIST SP
+    800-161r1", "SP800-161", "nist_sp800_161". Comparing them needs the
+    punctuation and spacing gone, because that is the only thing that
+    differs -- the resolver's word-boundary matching failed on exactly this
+    and answered a NIST question from an IRS publication.
+    """
+    return "".join(c for c in (text or "").lower() if c.isalnum())
 from ..query_plan import Shape, classify
 from ..services.candidate_docs import CandidateDocService
 from ..services.structural import StructuralService
@@ -79,9 +102,71 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         self._scope_lock = threading.Lock()
         # Set on each retrieve() so a caller reading the response can see
         # which path actually decided the scope, rather than inferring it.
-        self.last_scope_source: str = "unset"
-        self.last_scope_ambiguous: bool = False
-        self.last_candidates: list = []
+        self._names = None
+        # Per-request, not per-instance. The registry hands every request the
+        # same strategy object, so a plain attribute is shared across
+        # concurrent queries -- one request's "low confidence" verdict
+        # appeared on another's answer, which is worse than not reporting it.
+        self._local = threading.local()
+
+    def _flag(self, name: str, value: Any = None) -> Any:
+        if value is None:
+            return getattr(self._local, name, None)
+        setattr(self._local, name, value)
+        return value
+
+    @property
+    def last_scope_source(self) -> str:
+        return getattr(self._local, "scope_source", "unset")
+
+    @property
+    def last_scope_ambiguous(self) -> bool:
+        return bool(getattr(self._local, "ambiguous", False))
+
+    @property
+    def last_underspecified(self) -> bool:
+        return bool(getattr(self._local, "underspecified", False))
+
+    @property
+    def last_candidates(self) -> list:
+        return getattr(self._local, "candidates", []) or []
+
+    def _named_document(self, tenant_id: str, query: str) -> Optional[str]:
+        """The document this query names outright, ignoring punctuation."""
+        q = _squash(query)
+        if not q:
+            return None
+        best, best_len = None, 0
+        for doc_id, key in self._name_index(tenant_id):
+            if len(key) >= MIN_NAME_MATCH and key in q and len(key) > best_len:
+                best, best_len = doc_id, len(key)
+        return best
+
+    def _name_index(self, tenant_id: str) -> list:
+        """(logical_id, squashed name) for every document, built once.
+
+        998 rows, and the corpus only changes on ingest, so this is read
+        once per process rather than per query.
+        """
+        if self._names is None:
+            rows = self._neo4j_session_call(
+                lambda sess: list(sess.run(
+                    "MATCH (dl:DocumentLogical) "
+                    "RETURN dl.logical_id AS id, coalesce(dl.title, '') AS title"
+                ))
+            )
+            idx = []
+            for r in rows:
+                lid = r["id"]
+                if not lid:
+                    continue
+                # The "doc_" prefix is ours, not part of the name the user
+                # would type.
+                idx.append((lid, _squash(lid[4:] if lid.startswith("doc_") else lid)))
+                if r["title"]:
+                    idx.append((lid, _squash(r["title"])))
+            self._names = idx
+        return self._names
 
     def _scope_for_query(
         self,
@@ -112,21 +197,30 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                 self._document_resolver._validate_document_id, document_id_hint, tenant_id
             )
             if validated:
-                self.last_scope_source = "hint"
+                self._local.scope_source = "hint"
                 return document_id_hint, None, [document_id_hint]
 
         named = self._neo4j_session_call(
             self._document_resolver.exact_document_reference, query, tenant_id
         )
         if named and named[0]:
-            self.last_scope_source = "exact_reference"
+            self._local.scope_source = "exact_reference"
             return named[0], named[1], [named[0]]
+
+        # Same question, asked without punctuation. Runs before the vector
+        # pass because a document the user named outright is better evidence
+        # than similarity, and losing the name to a hyphen is how a question
+        # about SP 800-161r1 came back answered from a different NIST report.
+        squashed = self._named_document(tenant_id, query)
+        if squashed:
+            self._local.scope_source = "named"
+            return squashed, None, [squashed]
 
         cache_key = (tenant_id or "", (query or "").strip().lower())
         with self._scope_lock:
             cached = self._scope_cache.get(cache_key)
         if cached:
-            self.last_scope_source = "cache"
+            self._local.scope_source = "cache"
             return cached[0], None, list(cached)
 
         embedding = None
@@ -146,6 +240,12 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
 
         if candidates:
             top = candidates[0]
+            # Nothing named the document, nothing hinted it, and the query
+            # carries too little to have meant one. Similarity will always
+            # return something; that is not the same as the user having
+            # asked about it.
+            keywords = self._ranking._content_keywords_from_query(query)
+            self._local.underspecified = len(keywords) < MIN_KEYWORDS_UNSCOPED
             # A thin lead is not a decision. Two documents that match about
             # equally often means the query named neither clearly, and
             # guessing is wrong about as often as it is right -- the failure
@@ -153,8 +253,8 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             # attributed the formula to the wrong standard. Recorded so the
             # caller can offer the choice instead of presenting one.
             runner = candidates[1].relative if len(candidates) > 1 else 0.0
-            self.last_scope_ambiguous = runner >= AMBIGUOUS_LEAD_RATIO
-            self.last_candidates = [
+            self._local.ambiguous = runner >= AMBIGUOUS_LEAD_RATIO
+            self._local.candidates = [
                 {"document_id": c.document_id, "relative": round(c.relative, 3)}
                 for c in candidates[:5]
             ]
@@ -163,7 +263,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                 if len(self._scope_cache) > 256:   # bounded; a cache, not a store
                     self._scope_cache.clear()
                 self._scope_cache[cache_key] = doc_ids
-            self.last_scope_source = (
+            self._local.scope_source = (
                 f"vector(n={len(doc_ids)},rel={top.relative:.2f},"
                 f"hits={top.hits},rank={top.best_rank})"
             )
@@ -178,7 +278,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             tenant_id=tenant_id,
             document_id_hint=document_id_hint,
         )
-        self.last_scope_source = "resolver_fallback"
+        self._local.scope_source = "resolver_fallback"
         return document_id, document_title, as_doc_id_list(document_id) or []
 
     def retrieve(self, session, query, *, tenant_id, limit, ctx, document_id_hint=""):
