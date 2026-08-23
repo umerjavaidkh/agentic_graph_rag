@@ -368,14 +368,14 @@ table-aware variant). See [Pluggable by design](#pluggable-by-design).
 <tr>
 <td width="50%">
 
-**Every action is audit-logged.** Who ingested what, who ran which query, who was denied access and why — filterable by user/tenant/event type, not a log file you have to grep.
+**Every action is audit-logged.** Who ingested what, who ran which query, who was denied access and why — filterable by user, tenant and event type, not a log file you have to grep. Shown: the real query log from a 28-question category run.
 
 ![Audit log — every ingestion and query recorded with user, tenant, role, and result](docs/images/audit_log.png)
 
 </td>
 <td width="50%">
 
-**Ingestion quality is measured, not assumed.** A cheap, LLM-free per-document report — text/entity/embedding coverage, page continuity, orphan-node count — computed straight from the ingested graph for every document, so quality is a number you can check, not a hope.
+**Ingestion quality is measured, not assumed.** A cheap, LLM-free per-document report — text / entity / embedding coverage, page continuity, orphan-node count — computed straight from the ingested graph, so quality is a number you can check. The picker searches server-side across the whole corpus: type `irs 225` and get the document, not a scroll through a thousand hex-prefixed filenames.
 
 ![Ingestion quality report — coverage, edge counts, and orphan-node check for a specific document revision](docs/images/ingestion_quality.png)
 
