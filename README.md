@@ -37,7 +37,7 @@ tables, figures, appendices and near-identical siblings.
 
 | | |
 | --- | --- |
-| **34s → 5s** | hard-question latency, 16,051,859 → **210 db hits** on the worst query |
+| **34s → 2s** | hard-question latency, 16,051,859 → **210 db hits** on the worst query |
 | **100%** | vector coverage — was 49%; every table and figure had been invisible |
 
 **Measured repeatedly on randomly sampled documents**, not on a hand-picked demo —
@@ -160,17 +160,26 @@ estimate.
 | --- | --- | --- |
 | Phrase query, one scoped question | 16,051,859 db hits / 2,658 ms | **210 db hits / 34 ms** |
 | Lexical phrase retrieval | 2,450 ms | **9 ms** |
-| Vector seed hydration | 4,613 ms | **1,176 ms** |
+| Vector seed, id lookup | 15,431,859 db hits / 1,221 ms | **96 db hits / 46 ms** |
 | Chapter-summary fetch (overview questions) | still running at 120 s | **234 ms** |
 | Document resolution | 15.61 s on every query | bypassed unless nothing cheaper decides |
-| End to end, hard question | 33.98 s (or timeout) | **5–22 s** |
+| Candidate-list scan | 17.97 s on every first-turn query | skipped when retrieval placed the question |
+| End to end, hard question | 33.98 s (or timeout) | **2.0 s** |
+| Corpus harness, median across 62 questions | 16 s | **2 s** |
 
-Four causes, all the same shape: **a query that could not use an index**. Unlabelled
+Six causes. Five are the same shape — **a query that could not use an index**: unlabelled
 `MATCH (n)` (constraints in Neo4j are per label, so there is nothing to seek against),
-a six-hop `EXISTS` membership test re-walked per candidate node, three composite indexes
+a six-hop `EXISTS` membership test re-walked per candidate node, a multi-label union in
+which two *empty* labels were unindexed and so degraded the whole disjunction to a scan,
+three composite indexes
 that a *restore* had never created because they are built at ingest, and — self-inflicted
 — a `$doc_ids IS NULL OR ...` null-guard that made the predicate unseekable and cost more
 than the traversal it replaced.
+
+The sixth was not an index problem at all: the corpus scan that scoping was built to
+avoid was still running from a second call site, building a clarification candidate list
+on every first-turn question — including the ones that had already resolved a document
+and had nothing to disambiguate. It cost **eight times what answering the question cost**.
 
 ### Vector coverage was the other half
 
