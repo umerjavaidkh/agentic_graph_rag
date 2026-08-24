@@ -106,8 +106,18 @@ def retrieve_node(state: ESGState):
     # was answered from an IRS medical-expenses publication, and answered
     # "not covered" -- which reads as the corpus lacking the answer rather
     # than as the wrong document having been searched.
-    candidates: list = []
-    if not document_id_hint:
+    # Only when retrieval could NOT place the question. Building this list
+    # walks every document's subtree applying a regex per content node --
+    # 17.97s of a 20.09s query, measured on 998 documents -- and it was run
+    # on every first-turn question, including the ones that had already
+    # resolved a document and had nothing to disambiguate. Retrieval now
+    # answers the same question far more cheaply, so ask it first and pay
+    # for the scan only when it comes back empty.
+    # The vector-scoped strategies already rank candidate documents as a
+    # side effect of scoping, so take theirs when they have them -- it is
+    # free, and it is the same question asked a cheaper way.
+    candidates: list = list(context.get("document_candidates") or [])
+    if not candidates and not document_id_hint and not context.get("document_id"):
         try:
             candidates = retriever.document_candidates(question, user_context=user_context)
         except Exception:  # never fail a working answer over a suggestion

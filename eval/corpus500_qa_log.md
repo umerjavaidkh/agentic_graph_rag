@@ -150,3 +150,31 @@ percentage hides which one you are actually looking at.
 | arxiv_2608_12929 | 1/1 | 36 | 13 | 1/1 |
 | arxiv_2608_16618 | 1/1 | 21 | 20 | 1/1 |
 | arxiv_2608_13632 | 0/1 | 61 | 9 | 1/1 |
+
+
+## Run 2026-08-24 13:37 — strategy `graph_rag_vector_first`
+
+18 documents sampled (seed 20260823) from the most recently ingested 500, 5 questions each.
+
+**Answer accuracy 61/62 (98%) · right document 62/62 (100%) · median 10s**
+
+| Document | Score | Nodes | Avg s | Right doc |
+|---|---|---|---|---|
+| arxiv_2608_10517 | 5/5 | 89 | 10 | 5/5 |
+| arxiv_2608_12440 | 5/5 | 48 | 5 | 5/5 |
+| arxiv_2608_13612 | 5/5 | 41 | 6 | 5/5 |
+| arxiv_2608_17214 | 5/5 | 58 | 6 | 5/5 |
+| arxiv_2608_17613 | 5/5 | 72 | 19 | 5/5 |
+| arxiv_2608_18329 | 5/5 | 42 | 10 | 5/5 |
+| arxiv_2608_18779 | 5/5 | 77 | 4 | 5/5 |
+| arxiv_2608_19269 | 5/5 | 48 | 5 | 5/5 |
+| arxiv_2608_11034 | 4/4 | 52 | 16 | 4/4 |
+| arxiv_2608_16742 | 4/4 | 61 | 20 | 4/4 |
+| arxiv_2608_19680 | 4/4 | 70 | 21 | 4/4 |
+| arxiv_2608_11840 | 3/3 | 64 | 10 | 3/3 |
+| arxiv_2608_13681 | 2/2 | 60 | 25 | 2/2 |
+| arxiv_2608_07947 | 1/1 | 57 | 25 | 1/1 |
+| arxiv_2608_10555 | 1/1 | 28 | 27 | 1/1 |
+| arxiv_2608_12929 | 1/1 | 36 | 14 | 1/1 |
+| arxiv_2608_16618 | 1/1 | 21 | 26 | 1/1 |
+| arxiv_2608_13632 | 0/1 | 61 | 11 | 1/1 |
