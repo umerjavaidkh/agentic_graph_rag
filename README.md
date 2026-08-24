@@ -7,11 +7,13 @@
 analytics *and* multi-hop reasoning over PDFs, with an explicit retrieval-mode switch
 instead of an LLM guessing which you meant.
 
+**998 real documents · 611,814 nodes · 2-second answers · 100% right-document resolution.**
+
 ---
 
-## Two benchmarks, both committed, both re-runnable
+## Three numbers, all committed, all re-runnable
 
-Most RAG projects report a vibe. These are the two numbers this project is built on.
+Most RAG projects report a vibe. These are the numbers this project is built on.
 
 ### 🎯 100-question structured benchmark — **95/100**
 
@@ -37,7 +39,6 @@ tables, figures, appendices and near-identical siblings.
 
 | | |
 | --- | --- |
-| **34s → 2s** | hard-question latency, 16,051,859 → **210 db hits** on the worst query |
 | **100%** | vector coverage — was 49%; every table and figure had been invisible |
 
 **Measured repeatedly on randomly sampled documents**, not on a hand-picked demo —
@@ -64,6 +65,36 @@ one of dozens of near-identical siblings).
 > The question filters were tightened between the last two random runs, so their
 > accuracy figures are comparable *within* a filter version, not across. Latency and
 > right-document resolution are comparable throughout.
+
+### ⚡ 2-second answers at 998 documents — **10× faster, same accuracy**
+
+Retrieval that does not get slower as the corpus grows. Every figure below is from
+`PROFILE` against the live 998-document graph, not an estimate.
+
+| | before | after |
+| --- | --- | --- |
+| **End to end, hard question** | 33.98 s (or timeout) | **2.0 s** |
+| Corpus harness, median over 62 questions | 16 s | **2 s** |
+| Retrieval, median across 9 query shapes | 2,230 ms | **516 ms** |
+| Worst scoped query | 16,051,859 db hits | **210 db hits** |
+| All Neo4j work in one query | — | **237 ms** |
+
+**Accuracy did not move: 61/62 correct, 62/62 right document, before and after.** The
+speed came out of the database, not out of the answers.
+
+Six causes, five of them the same mistake in different places — *a query that could not
+use an index*. The two worth knowing:
+
+- **Two empty labels made an indexed lookup 1,000× more expensive.** A multi-label union
+  only plans as index seeks when *every* label is indexed. Two labels holding **zero
+  nodes** had no `id` index, and degraded the whole disjunction to a full scan:
+  **15,431,952 db hits → 96**. The fix was two `CREATE INDEX` statements.
+- **A corpus scan ran to build a list nobody asked for.** Every first-turn question
+  walked all 998 documents to populate a clarification list — including questions that
+  had already resolved a document and had nothing to disambiguate. It cost **eight times
+  what answering the question cost**.
+
+Generation is now the ceiling at ~1.5 s of a 2 s query. Neo4j is 237 ms of it.
 
 ### 🧠 Depth, not just lookup
 
@@ -262,6 +293,7 @@ in what happens to specific questions — including the ones a system should ref
 | **"What will NIST publish in 2027?"** | Assembles a fluent answer from related text | **Refuses** — nothing in the corpus supports it |
 | **Which document answered?** | Whatever the index returned | **100% correct** across two 998-document runs |
 | **Where did that claim come from?** | A chunk id, maybe | Per-claim page citation that opens the PDF on that page |
+| **At 998 documents?** | Slows down as the index grows | **2 s** — scoping is an indexed seek, so cost tracks the answer |
 
 ### Production-grade, not a notebook
 
@@ -743,6 +775,7 @@ chapter, no extra graph-algorithm dependency.
 | **Business-question eval — 100 real questions**, ground truth computed from the graph by hand-written Cypher (`eval/olist_business_suite.json`) | ✅ **95/100** — deterministic, no judge, free to run. Every failure named in `eval/baseline_olist_business.json` |
 | LLM-judge eval suites — 4 suites, 101 cases | ⚠️ **unscored.** Two still target the retired Northwind schema. The deterministic 100-question benchmark replaced them for structured retrieval; no judge score claimed until they are re-pointed |
 | Storage split — lean Neo4j, text in a blob store, embeddings in a vector store, `Hydrator` on the read path | ✅ write-side strip and dual-write tested.<br>🚧 backends default to `local`/`memory`, so MinIO + Qdrant are opt-in |
+| **Query latency at 998 documents** — 34 s → **2.0 s** end to end, all Neo4j work 237 ms, accuracy unchanged | ✅ done |
 | **1000-document corpus validation** — 998 docs / 611,814 nodes ingested, retrieval profiled end to end, two category suites committed ([details](#documents-a-998-document-corpus-profiled-end-to-end)) | ✅ done |
 | Shape-stratified testing across document types, then a tagged release | 🚧 in progress |
 | CI (tests on push/PR) | 🚧 in progress |
