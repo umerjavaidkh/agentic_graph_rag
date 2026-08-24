@@ -514,6 +514,24 @@ class Neo4jExporter:
     def _ensure_indexes(self, session) -> None:
         """Idempotently create full-text indexes on every ingestion."""
         statements = [
+            # The token lookup index. Neo4j creates this by default, but a
+            # bulk import commonly drops it for load speed and it is easy to
+            # never restore -- and without it EVERY `MATCH (n:Label)` in the
+            # database degrades to AllNodesScan, structured and unstructured
+            # alike. Found missing on this deployment; restoring it turned
+            # four representative business queries from AllNodesScan into
+            # NodeByLabelScan:
+            #
+            #   cancelled orders      1,323,070 -> 198,883 db hits
+            #   revenue by category   1,288,507 ->  64,952
+            #   avg payment by type   1,639,173 -> 519,431
+            #   orders per customer   1,518,607 -> 391,075
+            #
+            # Cheap to assert on every ingest, and invisible until the graph
+            # outgrows the page cache -- at which point every query is a
+            # full scan.
+            "CREATE LOOKUP INDEX node_label_lookup IF NOT EXISTS "
+            "FOR (n) ON EACH labels(n)",
             # Every label named in INDEXED_NODE_CYPHER needs an `id` index,
             # including the ones this corpus never populates. A multi-label
             # union can only be planned as a union of index seeks when EVERY
