@@ -900,12 +900,12 @@
           <select id="role">
             <option value="public">public</option>
             <option value="regular_office">regular_office</option>
-            <option value="compliance_officer">compliance_officer</option>
+            <option value="compliance_officer" selected>compliance_officer</option>
             <option value="admin">admin</option>
           </select>
 
           <label>User ID</label>
-          <input id="user_id" type="text" value="public_001" />
+          <input id="user_id" type="text" value="compliance_001" />
 
           <label>Department</label>
           <input id="department" type="text" placeholder="Optional" />
@@ -940,9 +940,12 @@
         </div>
 
         <div class="hint">
-          Pick role and user for RBAC. Seeded users:
-          <code>public_001</code>, <code>compliance_001</code>, <code>admin_001</code>.
-          For Google OIDC sign-in, use the <code>release/v1.0</code> branch.
+          RBAC is enforced in the graph, so the identity here decides what you can see.
+          The default <code>compliance_001</code> can read <b>both</b> documents and
+          structured data — start here. <code>public_001</code> sees documents only and
+          <code>regular_001</code> structured only, which is what those roles are for.
+          <code>admin_001</code> adds ingestion. For Google OIDC sign-in, use the
+          <code>release/v1.0</code> branch.
         </div>
       </div>
     </div>
@@ -1010,7 +1013,7 @@
 
     function getThreadOwnerId() {
       if (cachedAuthUserId) return cachedAuthUserId;
-      return (document.getElementById('user_id').value || 'public_001').trim();
+      return (document.getElementById('user_id').value || 'compliance_001').trim();
     }
 
     function resetThreadSuffix() {
