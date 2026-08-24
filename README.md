@@ -117,8 +117,7 @@ lean-Neo4j storage split (text in MinIO, vectors in Qdrant) · pluggable parsers
 providers, stores and retrieval strategies · streaming answers with charts.
 
 🚧 **Next:** shape-stratified testing across document types, then the first tagged
-release. Two LLM-judge suites are unscored pending a re-point off Northwind. See
-[Current status](#current-status).
+release — see [Current status](#current-status).
 
 ---
 
@@ -678,10 +677,6 @@ Named specifically, because a number without its failures is not a measurement.
   is currently used only to regenerate after a failure
   (`STRUCTURED_FALLBACK_MODEL`), which cannot help a query that succeeds with the
   wrong answer.
-- **Two LLM-judge suites (20 cases) still target Northwind.** No judge score is
-  reported for them: a number measured against a schema this project no longer
-  ships describes nothing, and the deterministic 100-question benchmark covers
-  structured retrieval without a judge at all.
 - **Category names are Portuguese.** Asking for an English category (`bed_bath_table`)
   filters `Category.name`, which holds `cama_mesa_banho`.
 - **Olist products are anonymised** — no name column exists, so product answers can
@@ -773,7 +768,6 @@ chapter, no extra graph-algorithm dependency.
 | Streaming answers with charts, retrieval feedback loop | ✅ |
 | Fast deterministic eval — 12 cases (`scripts/eval_structured.py`) | ✅ 11/12 — the quick tier, run during iteration |
 | **Business-question eval — 100 real questions**, ground truth computed from the graph by hand-written Cypher (`eval/olist_business_suite.json`) | ✅ **95/100** — deterministic, no judge, free to run. Every failure named in `eval/baseline_olist_business.json` |
-| LLM-judge eval suites — 4 suites, 101 cases | ⚠️ **unscored.** Two still target the retired Northwind schema. The deterministic 100-question benchmark replaced them for structured retrieval; no judge score claimed until they are re-pointed |
 | Storage split — lean Neo4j, text in a blob store, embeddings in a vector store, `Hydrator` on the read path | ✅ write-side strip and dual-write tested.<br>🚧 backends default to `local`/`memory`, so MinIO + Qdrant are opt-in |
 | **Query latency at 998 documents** — 34 s → **2.0 s** end to end, all Neo4j work 237 ms, accuracy unchanged | ✅ done |
 | **1000-document corpus validation** — 998 docs / 611,814 nodes ingested, retrieval profiled end to end, two category suites committed ([details](#documents-a-998-document-corpus-profiled-end-to-end)) | ✅ done |
