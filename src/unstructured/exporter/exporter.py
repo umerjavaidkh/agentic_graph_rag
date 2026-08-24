@@ -26,7 +26,7 @@ from ...shared.neo4j.driver import get_neo4j_driver
 
 from ...shared.config.settings import NEO4J_WRITE_BATCH
 from ..document.versioning import DocumentRevisionPlan
-from ..graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
+from ..graph.constants import INDEXED_NODE_CYPHER, DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
 from ..models import DKGNode, DKGEdge, EdgeConfidenceTier, NodeType, RelType
 from ...shared.storage.blob.base import BlobStore
 from ...shared.storage.blob.factory import get_blob_store
@@ -514,6 +514,22 @@ class Neo4jExporter:
     def _ensure_indexes(self, session) -> None:
         """Idempotently create full-text indexes on every ingestion."""
         statements = [
+            # Every label named in INDEXED_NODE_CYPHER needs an `id` index,
+            # including the ones this corpus never populates. A multi-label
+            # union can only be planned as a union of index seeks when EVERY
+            # label in it is indexed -- one missing index degrades the whole
+            # disjunction to AllNodesScan plus a filter.
+            #
+            # Measured on the vector seed's `UNWIND $ids MATCH (n:<union>)
+            # WHERE n.id = nid`, with Book and Concept unindexed and holding
+            # zero nodes: 15,431,952 db hits and 1,221ms for twelve ids,
+            # against 96 db hits and 46ms once they were indexed. Two empty
+            # labels made the lookup a thousand times more expensive.
+            *(
+                f"CREATE INDEX {label.lower()}_id IF NOT EXISTS "
+                f"FOR (n:{label}) ON (n.id)"
+                for label in INDEXED_NODE_CYPHER.split("|")
+            ),
             "CREATE FULLTEXT INDEX node_text_index IF NOT EXISTS "
             "FOR (n:Book|Chapter|Section|Page|Region|Concept) "
             "ON EACH [n.title, n.search_text, n.visual_content]",
