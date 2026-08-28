@@ -39,6 +39,7 @@ from ..document.patterns import (
     parse_numbered_title,
     slug,
 )
+from .region_description import captions_on_page, describe, region_title
 from ..models import DKGEdge, DKGNode, NodeType, RelType
 from .chunker import Chunk
 
@@ -1032,8 +1033,18 @@ class Axis1StructuralBuilder:
 
         region_nodes: list[DKGNode] = []
         index_by_page: dict[int, int] = {}
+        # Per-kind running index, so the second table on a page is matched
+        # with the second table caption rather than with the second caption
+        # of any kind.
+        kind_index: dict[tuple[int, str], int] = {}
 
         for page in pages:
+            # Captions live in the page's prose, not inside the region the
+            # parser cut out, so they are read from around it and matched by
+            # order of appearance.
+            captions_by_kind = {
+                k: captions_on_page(page.text, k) for k in ("table", "figure")
+            }
             for region in page.regions:
                 page_no = region.page
                 index_by_page[page_no] = index_by_page.get(page_no, 0) + 1
@@ -1041,10 +1052,23 @@ class Axis1StructuralBuilder:
                 kind = "table" if region.kind == "table" else "figure"
                 text = region.text
 
+                kkey = (page_no, kind)
+                kind_index[kkey] = kind_index.get(kkey, 0) + 1
+                kidx = kind_index[kkey]
+                found = captions_by_kind.get(kind) or []
+                caption = found[kidx - 1] if kidx <= len(found) else ""
+
                 page_node = page_by_pdf.get(page_no)
                 doc_page = page_node.document_page if page_node else None
                 tags = _build_region_tags(kind, text, page_no, idx, doc_page)
-                title = _region_title(kind, text, page_no, idx)
+                title = region_title(kind, caption, kidx, page_no)
+                # What gets embedded. The raw grid is punctuation, <br>
+                # markers and column padding -- it matches no question
+                # anyone asks -- so the description leads and the literal
+                # cells follow, keeping exact-value lookups working.
+                description = describe(
+                    kind, text, caption, index=kidx, page=page_no
+                )
                 node_id = f"{document_id}_region_{page_no}_{idx}"
 
                 node = DKGNode(
@@ -1052,7 +1076,8 @@ class Axis1StructuralBuilder:
                     type=NodeType.REGION,
                     title=title,
                     text=text or title,
-                    search_text=text or title,
+                    search_text=(f"{description}\n\n{text}" if text else description),
+                    nl_description=description,
                     order=idx,
                     page_start=page_no,
                     page_end=page_no,
