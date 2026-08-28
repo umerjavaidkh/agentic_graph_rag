@@ -132,14 +132,26 @@ def main():
     # sample rather than the batch already reported on.
     ap.add_argument("--skip", type=int, default=0)
     ap.add_argument("--out", default="")
+    # Explicit document ids, comma separated. Lets a run target a chosen
+    # slice -- cleanly-parsed documents, say -- so the score reflects
+    # retrieval rather than how badly the headings came out.
+    ap.add_argument("--ids", default="")
     args = ap.parse_args()
     drv = GraphDatabase.driver(NEO4J_URI, auth=("neo4j", "password123"))
     with drv.session() as s:
-        docs = [dict(r) for r in s.run(
-            "MATCH (r:DocRevision) WHERE r.ingested_at IS NOT NULL "
-            "RETURN r.logical_doc_id AS doc, coalesce(r.title,r.logical_doc_id) AS title "
-            "ORDER BY r.ingested_at DESC SKIP $k LIMIT $n",
-            k=args.skip, n=args.docs)]
+        if args.ids:
+            wanted = [x.strip() for x in args.ids.split(",") if x.strip()]
+            docs = [dict(r) for r in s.run(
+                "MATCH (r:DocRevision) WHERE r.logical_doc_id IN $ids "
+                "AND r.lifecycle_status = 'ACTIVE' "
+                "RETURN DISTINCT r.logical_doc_id AS doc, "
+                "coalesce(r.title,r.logical_doc_id) AS title", ids=wanted)]
+        else:
+            docs = [dict(r) for r in s.run(
+                "MATCH (r:DocRevision) WHERE r.ingested_at IS NOT NULL "
+                "RETURN r.logical_doc_id AS doc, coalesce(r.title,r.logical_doc_id) AS title "
+                "ORDER BY r.ingested_at DESC SKIP $k LIMIT $n",
+                k=args.skip, n=args.docs)]
         plans = [(d, build(s, d["doc"], d["title"])) for d in docs]
 
     rows = []
@@ -149,7 +161,14 @@ def main():
             ans = r.get("answer") or ""
             low = ans.lower()
             ids = [x.get("id", "") for x in (r.get("sources") or []) if isinstance(x, dict)]
-            same = [i for i in ids if i.startswith(q["doc"])]
+            # Graph-derived chunks are scoped to the resolved document by
+            # construction, but their ids are markers ("graph_outline",
+            # "graph_count") rather than "<doc>::<node>". Matching on the id
+            # prefix alone scored them as retrieved from the wrong document
+            # and dropped precision 0.95 -> 0.89 the moment an answer started
+            # coming from the hierarchy instead of from prose.
+            GRAPH_MARKERS = ("graph_outline", "graph_count", "underspecified")
+            same = [i for i in ids if i.startswith(q["doc"]) or i in GRAPH_MARKERS]
             # The structured verdict first, the wording only as a fallback.
             # Retrieval now declines an unplaceable question with "does not
             # say which document to look in", which matches none of the
