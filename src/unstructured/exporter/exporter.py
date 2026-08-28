@@ -483,6 +483,7 @@ class Neo4jExporter:
             "document_page": node.document_page,
             "page_tags": node.page_tags or [],
             "region_kind": node.region_kind,
+            "nl_description": node.nl_description,
             "region_tags": node.region_tags or [],
             "logical_doc_id": node.logical_doc_id,
             "revision_id": node.revision_id,
@@ -554,7 +555,8 @@ class Neo4jExporter:
             "CREATE FULLTEXT INDEX page_visual_index IF NOT EXISTS "
             "FOR (n:Page) ON EACH [n.visual_content, n.title, n.search_text, n.document_page]",
             "CREATE FULLTEXT INDEX region_tag_index IF NOT EXISTS "
-            "FOR (n:Region) ON EACH [n.title, n.search_text, n.region_tags, n.region_kind]",
+            "FOR (n:Region) ON EACH [n.title, n.search_text, n.nl_description, "
+            "n.region_tags, n.region_kind]",
             "CREATE FULLTEXT INDEX page_number_index IF NOT EXISTS "
             "FOR (n:Page) ON EACH [n.document_page, n.page_tags, n.title]",
             "CREATE INDEX section_order IF NOT EXISTS FOR (n:Section) ON (n.order)",

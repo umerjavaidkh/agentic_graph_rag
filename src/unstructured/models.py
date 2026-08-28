@@ -100,6 +100,10 @@ class DKGNode:
     document_page: Optional[str] = None  # label printed on page: "43", "iii", "A"
     page_tags: list = field(default_factory=list)  # searchable: pdf:51, doc:43, …
     region_kind: Optional[str] = None  # table | figure
+    # Plain-language account of a table/figure, built at ingest from the
+    # page's own caption and the grid's column names. What gets embedded
+    # for a Region: the raw pipe grid matches no question anyone asks.
+    nl_description: Optional[str] = None
     region_tags: list = field(default_factory=list)  # table:a6, figure:3, pdf:12, …
     bbox: Optional[list] = None  # [l, t, r, b] top-left origin in parser page units
     bbox_page_size: Optional[list] = None  # [width, height] of parser page
