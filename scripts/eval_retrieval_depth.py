@@ -111,6 +111,15 @@ def make_questions(session, doc: str, title: str, k: int, cold: bool) -> list[di
             span = m.group(0).strip()
             if len(span) < 2 or span in seen:
                 continue
+            # A match that starts mid-number. "$19,000" matched "000" because
+            # \b fires after the comma, producing "$19, ______" with an
+            # expected answer of "000" -- unanswerable, and it would have
+            # scored as a retrieval failure.
+            before = sent[: m.start()]
+            if before.rstrip().endswith(",") and before.rstrip()[:-1].rstrip()[-1:].isdigit():
+                continue
+            if sent[m.end(): m.end() + 1] == "," and sent[m.end() + 1: m.end() + 2].isdigit():
+                continue
             if re.fullmatch(r"(?:19|20)\d{2}", span):        # bare year
                 continue
             if m.start() == 0 or re.fullmatch(r"\d+\.\d+", span):  # section number
