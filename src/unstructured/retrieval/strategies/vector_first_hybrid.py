@@ -270,10 +270,6 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                 self._local.scope_source = "hint"
                 return document_id_hint, None, [document_id_hint]
 
-        if document_id:
-            self._local.scope_source = "resolver"
-            return document_id, document_title, [document_id]
-
         cache_key = (tenant_id or "", (query or "").strip().lower())
         with self._scope_lock:
             cached = self._scope_cache.get(cache_key)
