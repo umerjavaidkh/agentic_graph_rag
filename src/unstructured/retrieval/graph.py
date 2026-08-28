@@ -376,6 +376,17 @@ def _generate_document_answer(
             "underspecified": True,
         }
 
+    # A count taken from the graph is already the answer. Passed through
+    # verbatim for the same reason as the two markers below: sending an
+    # exact figure to the model to be reworded invites it back into the
+    # prose-reading that produced 23 tables against an actual 88.
+    counted = next((c for c in chunks if c.get("id") == "graph_count"), None)
+    if counted is not None:
+        return {
+            "answer": (counted.get("text") or "").strip(),
+            "low_confidence": False,
+        }
+
     denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
     if not chunks or denied:
         # Misroute guard: structured-graph question sent to document agent →

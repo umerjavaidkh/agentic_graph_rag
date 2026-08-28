@@ -462,6 +462,17 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             )
             doc = (response or {}).get("document_id")
             if response and doc:
+                # A count of units the graph holds is answered by counting
+                # them. Reading it out of prose produced 23 tables against an
+                # actual 88 and "3 main chapters" against 15 -- the document
+                # never states either figure, so there was nothing to read.
+                counted = self._neo4j_session_call(
+                    self._structural.count_units, query, [doc], tenant_id
+                )
+                if counted:
+                    response["chunks"] = counted
+                    response["query_shape"] = plan.shape.value
+                    return response
                 outline = self._neo4j_session_call(
                     self._structural.outline, [doc], tenant_id
                 )
