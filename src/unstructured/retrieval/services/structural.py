@@ -46,6 +46,30 @@ _KIND_TO_LABEL = {
 _KIND_TO_REGION = {"figure": "figure", "fig": "figure", "fig.": "figure",
                    "table": "table", "box": "table"}
 
+# "how many chapters", "number of tables", "how many figures are there"
+_COUNT_ASK_UNIT = re.compile(
+    r"\b(?:how\s+many|number\s+of|count\s+of|total\s+(?:number\s+of\s+)?)\s+"
+    r"(chapters?|sections?|figures?|tables?|boxes|box|pages?|appendi(?:x|ces)|annexes?)\b",
+    re.I,
+)
+_UNIT_TO_LABEL = {
+    "chapter": "Chapter", "section": "Section", "appendix": "Section",
+    "appendices": "Section", "annex": "Section",
+    "figure": "Region", "table": "Region", "box": "Region", "boxes": "Region",
+    "page": "Page",
+}
+_UNIT_TO_REGION = {"figure": "figure", "table": "table", "box": "table",
+                   "boxes": "table"}
+
+
+def _singular(unit: str) -> str:
+    u = unit.lower()
+    if u == "appendices":
+        return "appendix"
+    if u == "boxes":
+        return "box"
+    return u[:-1] if u.endswith("s") and not u.endswith("ss") else u
+
 
 class StructuralService:
     """Reads of the document hierarchy, by address."""
@@ -97,6 +121,71 @@ class StructuralService:
             "score": 1.0,
             "related": [],
             "entry_count": len(lines),
+        }]
+
+    def count_units(
+        self, session: Any, query: str, doc_ids: list[str], tenant_id: str = ""
+    ) -> list[dict]:
+        """How many chapters/tables/figures/pages a document has, by counting them.
+
+        The count is a fact about the graph, and the graph is the only place
+        it exists: no sentence in NIST SP 800-161 says how many tables it
+        contains. Asked to count from prose, the model read a "List of
+        Tables" fragment and answered 23 against an actual 88, and answered
+        "3 main chapters" against 15 -- confidently both times, because a
+        plausible-looking list was in front of it.
+
+        Counting the nodes cannot be confidently wrong in that way. Titled
+        units are counted by distinct title, matching `outline()` above, so a
+        heading split across two nodes is one chapter in both answers rather
+        than one here and two there.
+        """
+        m = _COUNT_ASK_UNIT.search(query or "")
+        if not m or not doc_ids:
+            return []
+        unit = _singular(m.group(1))
+        label = _UNIT_TO_LABEL.get(unit)
+        if not label:
+            return []
+        region_kind = _UNIT_TO_REGION.get(unit)
+
+        titled = label in ("Chapter", "Section")
+        counted = (
+            "count(DISTINCT toLower(trim(n.title)))" if titled else "count(n)"
+        )
+        title_clause = (
+            " AND trim(coalesce(n.title, '')) <> ''" if titled else ""
+        )
+        region_clause = " AND n.region_kind = $region_kind" if region_kind else ""
+        row = session.run(
+            f"""
+            MATCH (n:{label})
+            WHERE {content_scope_where_multi("n", scoped=True)}
+              AND {tenant_filter("n")}{title_clause}{region_clause}
+            RETURN {counted} AS total
+            """,
+            doc_ids=doc_ids,
+            tenant_id=tenant_id,
+            region_kind=region_kind,
+        ).single()
+        total = int((row or {}).get("total") or 0)
+        if not total:
+            return []
+
+        plural = unit + ("es" if unit in ("box",) else "s")
+        text = f"This document contains {total} {plural if total != 1 else unit}."
+        if titled:
+            names = self.outline(session, doc_ids, tenant_id)
+            if names:
+                text += "\n\n" + names[0]["text"]
+        return [{
+            "id": "graph_count",
+            "title": f"Number of {plural}",
+            "text": text,
+            "score": 1.0,
+            "related": [],
+            "count": total,
+            "unit": plural,
         }]
 
     def by_address(
