@@ -363,6 +363,19 @@ def _generate_document_answer(
     user_context=None,
     skip_structured_guard: bool = False,
 ) -> dict:
+    # A question that named no document and carried too few content words to
+    # have implied one. Returned verbatim, like `access_denied` below and for
+    # the same reason: the marker chunk IS the answer, so paraphrasing it
+    # through the LLM would only put hedging language around a question we
+    # are deliberately declining to guess at.
+    unspec = next((c for c in chunks if c.get("id") == "underspecified"), None)
+    if unspec is not None:
+        return {
+            "answer": (unspec.get("text") or "").strip(),
+            "low_confidence": True,
+            "underspecified": True,
+        }
+
     denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
     if not chunks or denied:
         # Misroute guard: structured-graph question sent to document agent →

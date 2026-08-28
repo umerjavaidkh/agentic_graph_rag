@@ -335,6 +335,39 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         self._local.scope_source = "resolver_fallback"
         return document_id, document_title, as_doc_id_list(document_id) or []
 
+    def _underspecified_response(self, query, ctx, candidates):
+        """Ask which document, instead of answering from whichever one ranked first.
+
+        "What is the value?" names no document, carries no topic, and matches
+        something in every one of 998 documents. Similarity always returns a
+        nearest neighbour, so the system answered from an arbitrary paper with
+        no indication that the question had not actually been placed --
+        measured 0/5 on the ambiguous shape, every one a confident answer.
+
+        The candidates come from the vector pass that already ran, so offering
+        the choice costs nothing beyond what answering would have cost.
+        """
+        names = [c["document_id"] for c in (candidates or [])][:5]
+        listed = "\n".join(f"- {n}" for n in names)
+        text = (
+            "That question does not say which document to look in, and it "
+            "matches several. Ask again naming one of these, or add enough "
+            "detail to identify it:\n\n" + listed
+            if names else
+            "That question does not say which document to look in. Ask again "
+            "naming the document, or add enough detail to identify it."
+        )
+        response = self._formatter.format(query, [{
+            "id": "underspecified", "title": "Which document?",
+            "text": text, "score": 0.0, "related": [],
+        }], ctx=ctx)
+        response["strategy"] = self.name
+        response["low_confidence"] = True
+        response["underspecified"] = True
+        response["document_candidates"] = candidates or []
+        response["document_id"] = None
+        return response
+
     def retrieve(self, session, query, *, tenant_id, limit, ctx, document_id_hint=""):
         """Structural questions are answered from the hierarchy; everything
         else falls through to the inherited hybrid path.
@@ -345,6 +378,27 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         or it does not.
         """
         plan = classify(query, default_limit=limit)
+
+        # Before anything else: if the question names no document, the thread
+        # has none, and it carries too few content words to have meant one,
+        # asking is the correct answer. Guessing here is not a ranking
+        # problem -- there is nothing to rank against.
+        if (
+            not document_id_hint
+            and plan.shape is not Shape.STRUCTURAL
+            and len(self._ranking._content_keywords_from_query(query))
+            < MIN_KEYWORDS_UNSCOPED
+            and not self._named_document(tenant_id, query)
+        ):
+            try:
+                cands = self._candidate_docs.candidates(query, tenant_id)
+            except Exception:
+                cands = []
+            return self._underspecified_response(
+                query, ctx,
+                [{"document_id": c.document_id, "relative": round(c.relative, 3)}
+                 for c in cands[:5]],
+            )
 
         if plan.shape is Shape.AGGREGATION:
             # Answer from passages as usual, but put the document's own

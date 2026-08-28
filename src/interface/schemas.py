@@ -172,6 +172,7 @@ class QueryResponse(BaseModel):
     request_id:   Optional[str] = None   # correlates with feedback / logs
     low_confidence:  bool = False        # structured-path answer verification signal
     confidence_note: Optional[str] = None  # reason when low_confidence is True
+    underspecified: bool = False  # question named no document and implied none
     document_id:    Optional[str] = None  # logical doc id the answer was grounded in (document paths only)
     # Plausible documents when the question named none clearly. Present only
     # when the resolver declined to pick: on a 50-document corpus an unscoped
