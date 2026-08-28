@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "charliermarsh.ruff",
+    "ms-azuretools.vscode-docker",
+    "neo4j-extensions.neo4j-for-vscode",
+    "editorconfig.editorconfig",
+    "redhat.vscode-yaml"
+  ]
+}

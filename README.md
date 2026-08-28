@@ -786,6 +786,7 @@ chapter, no extra graph-algorithm dependency.
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)                                     | Auth branches, RBAC, seeded demo users, identity flow                                                                                                                                                             |
 | [docs/API.md](docs/API.md)                                                           | curl reference for every endpoint                                                                                                                                                                                 |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                                   | Common setup issues, local dev without Docker                                                                                                                                                                     |
+| [docs/reference/](docs/reference)                                                     | Reference assets: `ontology.ttl` (RDF ontology) and `queries.cypher` (hand-written Cypher examples)                                                                                                                |
 
 Medium article: [Agentic Graph RAG — architecture and walkthrough](https://medium.com/p/0ee1f6baae26)
 
@@ -800,7 +801,22 @@ Full checklist: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md).
 
 ## Contributing
 
-Issues and PRs welcome. Run `pytest tests/` before submitting — CI to enforce this automatically is on the way.
+Issues and PRs welcome. Run `pytest` before submitting — CI to enforce this automatically is
+on the way.
+
+Tool settings live in [`pyproject.toml`](pyproject.toml) — pytest (testpaths, markers), plus
+ruff/black/isort at a 100-column line length. Runtime dependencies stay in the
+`requirements*.txt` files, because that is what the Docker images install.
+
+```bash
+pip install -r requirements.txt
+pytest                 # rootdir config puts the repo root on sys.path
+ruff check . && black --check .
+```
+
+`.vscode/` is committed on purpose: opening the repo in VS Code picks up the `.venv`
+interpreter, pytest discovery, and debug targets for the API and the current test file.
+Personal overrides belong in `*.local.json`, which is gitignored.
 
 ## License
 

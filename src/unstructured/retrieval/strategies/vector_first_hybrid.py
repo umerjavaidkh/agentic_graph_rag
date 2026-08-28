@@ -238,6 +238,30 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
           4. the full resolver -- correct but expensive, so it is what we
              fall back TO rather than start from
         """
+        # A document named in THIS question outranks the one the thread was
+        # discussing. DocumentResolver already orders it that way -- "an
+        # outright reference to a document's id or title outranks the thread"
+        # -- and checking the hint first inverted it: in a UI session, every
+        # question after the first inherited the first question's document
+        # and answered "this document does not cover it" about a document
+        # that was never asked for.
+        named = self._neo4j_session_call(
+            self._document_resolver.exact_document_reference, query, tenant_id
+        )
+        if named and named[0]:
+            self._local.scope_source = "exact_reference"
+            return named[0], named[1], [named[0]]
+
+        # The same question asked without punctuation, so a name is not lost
+        # to a hyphen -- that is how a question about SP 800-161r1 came back
+        # answered from a different NIST report.
+        squashed = self._named_document(tenant_id, query)
+        if squashed:
+            self._local.scope_source = "named"
+            return squashed, None, [squashed]
+
+        # Only now the thread. A follow-up that names nothing ("what about
+        # page 7?") should stay on the document under discussion.
         if document_id_hint:
             validated = self._neo4j_session_call(
                 self._document_resolver._validate_document_id, document_id_hint, tenant_id
@@ -246,21 +270,9 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                 self._local.scope_source = "hint"
                 return document_id_hint, None, [document_id_hint]
 
-        named = self._neo4j_session_call(
-            self._document_resolver.exact_document_reference, query, tenant_id
-        )
-        if named and named[0]:
-            self._local.scope_source = "exact_reference"
-            return named[0], named[1], [named[0]]
-
-        # Same question, asked without punctuation. Runs before the vector
-        # pass because a document the user named outright is better evidence
-        # than similarity, and losing the name to a hyphen is how a question
-        # about SP 800-161r1 came back answered from a different NIST report.
-        squashed = self._named_document(tenant_id, query)
-        if squashed:
-            self._local.scope_source = "named"
-            return squashed, None, [squashed]
+        if document_id:
+            self._local.scope_source = "resolver"
+            return document_id, document_title, [document_id]
 
         cache_key = (tenant_id or "", (query or "").strip().lower())
         with self._scope_lock:

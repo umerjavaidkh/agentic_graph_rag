@@ -1,0 +1,46 @@
+# Tooling configuration for agentic_graph_rag.
+#
+# Runtime dependencies deliberately stay in the requirements*.txt files: the
+# Docker images install from them (see Dockerfile / requirements-docker.txt),
+# and the app is run from a checkout rather than pip-installed. This file
+# configures the test runner, linter and formatter only, so there is one place
+# to look for tool settings instead of per-tool dotfiles.
+#
+#   requirements.txt         full local/dev install
+#   requirements-slim.txt    runtime without the heavy parser extras
+#   requirements-docker.txt  what the container installs
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+# Put the repo root on sys.path so `from src...` imports resolve no matter
+# which directory pytest is invoked from.
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: needs a live Neo4j/Qdrant/MinIO (skipped by default in unit runs)",
+    "slow: takes more than a few seconds",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["src", "tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "graphify-out", "output", "tmp_ingest", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+# E501 is left to the formatter; B008 fires on FastAPI's Depends() idiom.
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
