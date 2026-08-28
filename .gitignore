@@ -2,6 +2,10 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Virtual environments
 venv/
@@ -28,7 +32,9 @@ output_v3/
 .DS_Store
 
 # Editor directories
-.vscode/
+# .vscode/ is committed on purpose: shared interpreter, pytest and debug config
+# so the repo works on a fresh clone. Personal overrides go in *.local.json.
+.vscode/*.local.json
 .idea/
 
 # Eval UI runner recordings (large videos)
