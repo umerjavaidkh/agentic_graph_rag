@@ -380,6 +380,17 @@ def _generate_document_answer(
     # verbatim for the same reason as the two markers below: sending an
     # exact figure to the model to be reworded invites it back into the
     # prose-reading that produced 23 tables against an actual 88.
+    # The document's own heading hierarchy, already exhaustive and in
+    # reading order. Handed to the model it gets rewritten and shortened --
+    # 12 of 14 headings came back as 9 -- and a list of headings missing a
+    # third of them is not a partial answer, it is a wrong one.
+    outline = next((c for c in chunks if c.get("id") == "graph_outline"), None)
+    if outline is not None:
+        return {
+            "answer": (outline.get("text") or "").strip(),
+            "low_confidence": False,
+        }
+
     counted = next((c for c in chunks if c.get("id") == "graph_count"), None)
     if counted is not None:
         return {

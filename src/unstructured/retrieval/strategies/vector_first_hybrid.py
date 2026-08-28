@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import re
 import threading
+from dataclasses import replace
 from typing import Any, Optional
 
 from ..cypher_scope import as_doc_id_list
@@ -62,6 +63,15 @@ MIN_NAME_MATCH = 8
 # names nothing, carries no topic, and was answered from an arbitrary IRS
 # publication with total fluency. A close runner-up is a different problem
 # with a different gate; this one is the absence of any signal at all.
+# Asking for the document's own structural units -- "list every chapter
+# heading", "what are the sections", "give me the appendices". The unit
+# word is what makes it a hierarchy read; the listing verb alone is not,
+# because "list the datasets used" is a content question.
+_ASKS_FOR_STRUCTURE = re.compile(
+    r"\b(chapters?|sections?|headings?|subsections?|appendi(?:x|ces)|annexes?)\b",
+    re.I,
+)
+
 MIN_KEYWORDS_UNSCOPED = 2
 
 # A question whose rarest content word still appears in this share of the
@@ -481,6 +491,19 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                     response["query_shape"] = plan.shape.value
             return response
 
+        # "List every chapter heading in X" classifies as ENUMERATIVE, and
+        # the enumerative shape never read the hierarchy -- it fell through
+        # to prose search and answered "this document does not cover chapter
+        # headings" while outline() returned all 31 of them. One document in
+        # five passed, and only because the hybrid search happened to land on
+        # a chunk that listed the sections; that is luck, not retrieval.
+        #
+        # A request to list the document's own structural units is a
+        # hierarchy read whichever shape it classifies as, so it joins the
+        # structural path below rather than getting a branch of its own.
+        if plan.shape is Shape.ENUMERATIVE and _ASKS_FOR_STRUCTURE.search(query or ""):
+            plan = replace(plan, shape=Shape.STRUCTURAL)
+
         if plan.shape is not Shape.STRUCTURAL:
             return super().retrieve(
                 session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
@@ -515,6 +538,17 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                 session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
                 document_id_hint=document_id_hint,
             )
+
+        # An outline is returned verbatim, not handed to the model to
+        # re-render. Routing "list every chapter heading" here first made
+        # two documents right and two others worse: given a 20-chapter
+        # outline the model rewrote it and dropped most of it, so 12 of 14
+        # headings became 9. outline() is already exhaustive and ordered --
+        # there is nothing for generation to add, and one thing it reliably
+        # takes away. Same reason the count in _generate_document_answer is
+        # passed through untouched.
+        if plan.exhaustive and items and _ASKS_FOR_STRUCTURE.search(query or ""):
+            items = [{**items[0], "id": "graph_outline"}] + items[1:]
 
         response = self._formatter.format(query, items, ctx=ctx)
         response["mode"] = "structural"
