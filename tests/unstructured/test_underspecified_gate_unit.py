@@ -52,3 +52,32 @@ def test_marker_chunk_is_returned_verbatim_not_paraphrased():
     assert out["answer"] == "Name a document."
     assert out["low_confidence"] is True
     assert out["underspecified"] is True
+
+
+def test_gate_works_when_the_caller_passes_no_session():
+    """The universal path calls retrieve() with session=None.
+
+    The corpus table therefore cannot be read off the session argument.
+    Doing so raised on None and was swallowed by the gate's fail-open
+    except, turning every generic question back into a confident answer --
+    silently, which is how it survived a full round of end-to-end checks.
+    """
+    from src.unstructured.retrieval.strategies.vector_first_hybrid import (
+        VectorFirstHybridStrategy,
+    )
+
+    calls: list = []
+
+    class _Stats:
+        def min_term_frequency(self, session, keywords):
+            calls.append(session)
+            return 0.9  # corpus-wide vocabulary
+
+    strat = VectorFirstHybridStrategy.__new__(VectorFirstHybridStrategy)
+    strat._ranking = _ranking
+    strat._term_stats = _Stats()
+    # Stands in for the real helper, which opens its own session.
+    strat._neo4j_session_call = lambda fn, *a, **k: fn("session", *a, **k)
+
+    assert strat._cannot_be_placed("What are the key findings?") is True
+    assert calls == ["session"]  # never handed the None it was called with

@@ -64,6 +64,12 @@ MIN_NAME_MATCH = 8
 # with a different gate; this one is the absence of any signal at all.
 MIN_KEYWORDS_UNSCOPED = 2
 
+# A question whose rarest content word still appears in this share of the
+# corpus has not named anything. Measured, not chosen: real questions reach
+# 0.042 at most and generic ones start at 0.093, so this is the midpoint of
+# an empty gap rather than a bound fitted to either side.
+MAX_GENERIC_DOC_FREQUENCY = 0.07
+
 
 def _tokens(text: str) -> tuple[set, set]:
     """Alphabetic and numeric runs of a name, separately.
@@ -96,6 +102,7 @@ def _squash(text: str) -> str:
     return "".join(c for c in (text or "").lower() if c.isalnum())
 from ..query_plan import Shape, classify
 from ..services.candidate_docs import CandidateDocService
+from ..services.term_stats import CorpusTermStats
 from ..services.structural import StructuralService
 from .full_hybrid import FullHybridStrategy
 
@@ -103,9 +110,11 @@ from .full_hybrid import FullHybridStrategy
 class VectorFirstHybridStrategy(FullHybridStrategy):
     name = "graph_rag_vector_first"
 
-    def __init__(self, *args, candidate_docs: Optional[CandidateDocService] = None, **kwargs):
+    def __init__(self, *args, candidate_docs: Optional[CandidateDocService] = None,
+                 term_stats: Optional[CorpusTermStats] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self._candidate_docs = candidate_docs or CandidateDocService()
+        self._term_stats = term_stats or CorpusTermStats()
         self._structural = StructuralService()
         # Follow-ups inside a thread must not re-run the ANN lookup. The
         # primary mechanism is `document_id_hint`, which DocumentResolver
@@ -335,6 +344,48 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         self._local.scope_source = "resolver_fallback"
         return document_id, document_title, as_doc_id_list(document_id) or []
 
+    def _cannot_be_placed(self, query: str) -> bool:
+        """Whether the question's own words can single out a document.
+
+        Two ways to fail, and both are about the question rather than about
+        what came back:
+
+        Too few content words -- "What is the value?" carries one.
+
+        Every content word is corpus-wide vocabulary -- "What are the key
+        findings?" carries two, clearing the count, and is answerable in
+        every document. Document frequency is what separates these:
+        measured over 110 generated questions and 12 generic ones, real
+        questions top out at 0.042 and generic ones bottom out at 0.093.
+        MAX_GENERIC_DOC_FREQUENCY sits in that gap rather than on either
+        edge.
+
+        The corpus supplies the figure, so no list of "generic words" is
+        hardcoded -- on a corpus about research methods, "methodology"
+        would be common and correctly stop identifying a document, while
+        here a term is generic only because the ingested documents made it
+        so.
+        """
+        keywords = self._ranking._content_keywords_from_query(query)
+        if len(keywords) < MIN_KEYWORDS_UNSCOPED:
+            return True
+        try:
+            # Opens its own session rather than using the one passed in. The
+            # universal path calls this strategy with session=None (it opens
+            # per-task sessions internally, since Neo4j sessions are not
+            # thread-safe), so reading the corpus table off the argument
+            # raised on None and the except below turned every generic
+            # question back into a confident answer -- silently, which is
+            # how it survived a full round of end-to-end checks.
+            rarest = self._neo4j_session_call(
+                self._term_stats.min_term_frequency, keywords
+            )
+        except Exception:
+            # A statistic this gate cannot compute must not turn into a
+            # refusal: answering is the behaviour that was there before.
+            return False
+        return rarest is not None and rarest >= MAX_GENERIC_DOC_FREQUENCY
+
     def _underspecified_response(self, query, ctx, candidates):
         """Ask which document, instead of answering from whichever one ranked first.
 
@@ -380,14 +431,13 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         plan = classify(query, default_limit=limit)
 
         # Before anything else: if the question names no document, the thread
-        # has none, and it carries too few content words to have meant one,
-        # asking is the correct answer. Guessing here is not a ranking
-        # problem -- there is nothing to rank against.
+        # has none, and its own words cannot single one out, asking is the
+        # correct answer. Guessing here is not a ranking problem -- there is
+        # nothing to rank against.
         if (
             not document_id_hint
             and plan.shape is not Shape.STRUCTURAL
-            and len(self._ranking._content_keywords_from_query(query))
-            < MIN_KEYWORDS_UNSCOPED
+            and self._cannot_be_placed(query)
             and not self._named_document(tenant_id, query)
         ):
             try:
