@@ -186,6 +186,14 @@ async def query(
             request_id   = request_id,
             low_confidence  = bool(result.get("low_confidence")),
             confidence_note = result.get("confidence_note"),
+            # Set when retrieval declined to guess because the question named
+            # no document and implied none. Passed explicitly like every field
+            # here: the envelope is built field-by-field, so a key the answer
+            # carries but this call does not name is silently dropped.
+            underspecified  = bool(
+                result.get("underspecified")
+                or retrieved_context.get("underspecified")
+            ),
             document_id     = result.get("document_id") or retrieved_context.get("document_id"),
             # Offered only when the resolver declined because two documents
             # matched the query about equally. Guessing there lands on the

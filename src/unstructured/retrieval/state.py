@@ -15,6 +15,11 @@ class ESGState(TypedDict, total=False):
     prior_context: Optional[Dict]
     low_confidence: bool
     confidence_note: Optional[str]
+    # Set when the question named no document and carried too few content
+    # words to have implied one, so retrieval declined to guess. Declared
+    # here for the same reason as `claims` below -- an undeclared key is
+    # dropped, and the answer would arrive looking like any other answer.
+    underspecified: bool
     # Which claim each source supports. Declared here because LangGraph drops
     # any key a node returns that the state schema does not name -- the value
     # was being computed and silently discarded.
