@@ -127,13 +127,19 @@ def build(session, doc, title):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--docs", type=int, default=5)
+    # How many of the most-recent documents to step over first. --skip 5
+    # with --docs 5 measures the second-last five, so a rerun is a fresh
+    # sample rather than the batch already reported on.
+    ap.add_argument("--skip", type=int, default=0)
+    ap.add_argument("--out", default="")
     args = ap.parse_args()
     drv = GraphDatabase.driver(NEO4J_URI, auth=("neo4j", "password123"))
     with drv.session() as s:
         docs = [dict(r) for r in s.run(
             "MATCH (r:DocRevision) WHERE r.ingested_at IS NOT NULL "
             "RETURN r.logical_doc_id AS doc, coalesce(r.title,r.logical_doc_id) AS title "
-            "ORDER BY r.ingested_at DESC LIMIT $n", n=args.docs)]
+            "ORDER BY r.ingested_at DESC SKIP $k LIMIT $n",
+            k=args.skip, n=args.docs)]
         plans = [(d, build(s, d["doc"], d["title"])) for d in docs]
 
     rows = []
@@ -144,7 +150,13 @@ def main():
             low = ans.lower()
             ids = [x.get("id", "") for x in (r.get("sources") or []) if isinstance(x, dict)]
             same = [i for i in ids if i.startswith(q["doc"])]
-            declined = any(p in low for p in REFUSAL)
+            # The structured verdict first, the wording only as a fallback.
+            # Retrieval now declines an unplaceable question with "does not
+            # say which document to look in", which matches none of the
+            # REFUSAL phrases -- so a working decline scored 0/5 and read as
+            # a regression. Grading prose for a signal the response carries
+            # explicitly is how that happens.
+            declined = bool(r.get("underspecified")) or any(p in low for p in REFUSAL)
             if q["mode"] == "EXACT":
                 ok = bool(q["expect"]) and q["expect"] in ans
             elif q["mode"] == "COUNT":
@@ -160,13 +172,20 @@ def main():
                 "doc": q["doc"], "shape": q["shape"], "mode": q["mode"],
                 "right_doc": r.get("document_id") == q["doc"] if q["mode"] != "REFUSE" else None,
                 "recall": (q["node"] in ids) if q["node"] else None,
-                "precision": (len(same) / len(ids)) if ids else 0.0,
+                # None for REFUSE: precision here means "share retrieved from
+                # the EXPECTED document", and a question meant to be declined
+                # has no expected document. Scoring those 0.00 dragged the
+                # mean down and, worse, read as "no context retrieved" when
+                # the sources were 6 and 4 -- which sent a previous round of
+                # this work chasing a defect that did not exist.
+                "precision": None if q["mode"] == "REFUSE"
+                else ((len(same) / len(ids)) if ids else 0.0),
                 "ok": ok, "s": round(r.get("_elapsed", 0), 1),
             })
             x = rows[-1]
             print(f"  {d['title'][:18]:<20}{q['shape']:<16}{q['mode']:<10}{x['s']:>5}s "
                   f"doc={'-' if x['right_doc'] is None else ('Y' if x['right_doc'] else 'n')} "
-                  f"P={x['precision']:.2f} ok={'-' if x['ok'] is None else ('Y' if x['ok'] else 'n')}", flush=True)
+                  f"P={'-   ' if x['precision'] is None else format(x['precision'],'.2f')} ok={'-' if x['ok'] is None else ('Y' if x['ok'] else 'n')}", flush=True)
 
     json.dump(rows, open("/tmp/shapes.json", "w"), indent=1)
     scored = [r for r in rows if r["ok"] is not None]
@@ -176,7 +195,8 @@ def main():
     print(f"  questions                {len(rows)}")
     print(f"  right document           {sum(r['right_doc'] for r in rdrows)}/{len(rdrows)}"
           f" ({sum(r['right_doc'] for r in rdrows)/max(len(rdrows),1)*100:.0f}%)")
-    print(f"  precision@k (mean)       {st.mean(r['precision'] for r in rows):.2f}")
+    prec = [r["precision"] for r in rows if r["precision"] is not None]
+    print(f"  precision@k (mean)       {st.mean(prec):.2f}  (over {len(prec)} scoped questions)")
     if rec:
         print(f"  recall@k (source node)   {sum(r['recall'] for r in rec)}/{len(rec)}")
     print(f"  deterministically scored {sum(r['ok'] for r in scored)}/{len(scored)}"
