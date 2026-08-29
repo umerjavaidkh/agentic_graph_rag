@@ -132,9 +132,68 @@ class LanguageProfile:
     # patterns to fire on another's text. That is the design's rule --
     # language is data, never a branch -- holding without a parameter.
     intent_patterns: dict = field(default_factory=dict)
+    # Text the system says in its OWN voice rather than through the model.
+    # The document picker is why this exists: it is a hardcoded string, so
+    # the answer-language prompt directive cannot reach it, and an Arabic
+    # user asking an ambiguous question got an English refusal listing
+    # Arabic document titles.
+    messages: dict = field(default_factory=dict)
+    # Phrases that mean "I will not answer this". Read by the eval
+    # harnesses, which have to tell a refusal from a wrong answer -- and
+    # could not, because the list was English and the system now refuses
+    # in the language it was asked in. That scored a CORRECT refusal as a
+    # failure, which is a graded exam marked against the wrong key.
+    refusal_markers: tuple = ()
 
 
-ENGLISH = LanguageProfile(code="en", name="English")
+# English's strings are the ones already shipped, character for character,
+# so routing them through `message()` rewrites nothing.
+_ENGLISH_MESSAGES = {
+    "underspecified_listed": (
+        "That question does not say which document to look in, and it "
+        "matches several. Ask again naming one of these, or add enough "
+        "detail to identify it:"
+    ),
+    "underspecified_bare": (
+        "That question does not say which document to look in. Ask again "
+        "naming the document, or add enough detail to identify it."
+    ),
+    "which_document": "Which document?",
+}
+
+_ARABIC_MESSAGES = {
+    "underspecified_listed": (
+        "لم يحدد السؤال أي مستند يجب البحث فيه، وهو يطابق عدة مستندات. "
+        "أعد طرح السؤال مع تسمية أحد هذه المستندات، أو أضف تفاصيل كافية لتحديده:"
+    ),
+    "underspecified_bare": (
+        "لم يحدد السؤال أي مستند يجب البحث فيه. أعد طرح السؤال مع تسمية "
+        "المستند، أو أضف تفاصيل كافية لتحديده."
+    ),
+    "which_document": "أي مستند؟",
+}
+
+
+# Copied from scripts/eval_shapes.py's own REFUSAL tuple, so moving it
+# here changes no English verdict.
+_ENGLISH_REFUSALS = (
+    "does not cover", "not cover", "no specific", "does not provide",
+    "cannot", "not available", "does not mention", "not specified",
+    "unable to", "no information",
+)
+
+_ARABIC_REFUSALS = (
+    "لا يغطي", "لا يوجد", "لا توجد", "غير متوفر", "غير محدد",
+    "لم يذكر", "لا يذكر", "لا تتوفر", "ليس هناك", "لا يمكن",
+)
+
+
+ENGLISH = LanguageProfile(
+    code="en",
+    name="English",
+    messages=_ENGLISH_MESSAGES,
+    refusal_markers=_ENGLISH_REFUSALS,
+)
 
 # Question shapes in Arabic, in NORMALIZED form (teh marbuta folded to
 # heh, hamza carriers to bare alef) because the matcher normalizes the
@@ -163,6 +222,8 @@ ARABIC = LanguageProfile(
     name="Arabic",
     normalize=normalize_arabic,
     intent_patterns=_ARABIC_INTENT,
+    messages=_ARABIC_MESSAGES,
+    refusal_markers=_ARABIC_REFUSALS,
     scripts=(
         (0x0600, 0x06FF),  # Arabic
         (0x0750, 0x077F),  # Arabic Supplement
@@ -249,6 +310,32 @@ def intent_alternations(shape: str) -> list[str]:
         if pattern:
             out.append(pattern)
     return out
+def refusal_markers(language: Optional[str] = None) -> tuple:
+    """Phrases that mean the system declined, in one language.
+
+    Used by the eval harnesses. The default language's markers are
+    included as well, because a refusal can arrive in either -- the
+    document picker speaks the reader's language but a fallback path may
+    not, and a harness that misses one grades a correct refusal wrong.
+    """
+    profile = get_profile(language)
+    default = _PROFILES[DEFAULT_LANGUAGE].refusal_markers
+    return tuple(dict.fromkeys(profile.refusal_markers + default))
+
+
+def message(key: str, language: Optional[str] = None) -> str:
+    """A system-voice string in the requested language.
+
+    Falls back to English rather than to an empty string: a language that
+    has not translated a message should say something a reader can act on
+    in the wrong language, rather than nothing at all. A blank refusal is
+    indistinguishable from a crash.
+    """
+    profile = get_profile(language)
+    text = (profile.messages or {}).get(key)
+    if text:
+        return text
+    return (_PROFILES[DEFAULT_LANGUAGE].messages or {}).get(key, "")
 
 
 def script_shares(text: str) -> dict[str, float]:

@@ -50,7 +50,7 @@ import threading
 from dataclasses import replace
 from typing import Any, Optional
 
-from ....shared.language import configured_languages
+from ....shared.language import configured_languages, message
 from ....shared.unicode_text import letters as letter_tokens
 from ..cypher_scope import as_doc_id_list
 
@@ -490,7 +490,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             out[doc] = label or stem
         return out
 
-    def _underspecified_response(self, query, ctx, candidates):
+    def _underspecified_response(self, query, ctx, candidates, language=DEFAULT_LANGUAGE):
         """Ask which document, instead of answering from whichever one ranked first.
 
         "What is the value?" names no document, carries no topic, and matches
@@ -505,16 +505,22 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         candidates = self._with_titles(candidates)
         names = [c.get("title") or c["document_id"] for c in (candidates or [])][:5]
         listed = "\n".join(f"- {n}" for n in names)
+        # In the reader's language. This text is the system speaking for
+        # itself rather than through the model, so the answer-language
+        # prompt directive cannot reach it -- an Arabic user asking an
+        # ambiguous question was handed an English refusal that then
+        # listed Arabic document titles.
+        #
+        # The listed titles are NOT translated. They are the documents'
+        # own names, and a translated name cannot be typed back into the
+        # next question, which is the entire point of offering them.
         text = (
-            "That question does not say which document to look in, and it "
-            "matches several. Ask again naming one of these, or add enough "
-            "detail to identify it:\n\n" + listed
+            message("underspecified_listed", language) + "\n\n" + listed
             if names else
-            "That question does not say which document to look in. Ask again "
-            "naming the document, or add enough detail to identify it."
+            message("underspecified_bare", language)
         )
         response = self._formatter.format(query, [{
-            "id": "underspecified", "title": "Which document?",
+            "id": "underspecified", "title": message("which_document", language),
             "text": text, "score": 0.0, "related": [],
         }], ctx=ctx)
         response["strategy"] = self.name
@@ -553,6 +559,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                 query, ctx,
                 [{"document_id": c.document_id, "relative": round(c.relative, 3)}
                  for c in cands[:5]],
+                language,
             )
 
         if plan.shape is Shape.AGGREGATION:
