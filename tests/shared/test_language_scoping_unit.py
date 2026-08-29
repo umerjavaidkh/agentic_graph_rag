@@ -132,25 +132,41 @@ def test_a_new_language_is_registered_not_coded(two_languages, monkeypatch):
 # ── configuration and the scope predicate ────────────────────────────────
 
 
-def test_only_one_language_is_live_by_default():
-    """Registering Arabic adds it to the catalogue; enabling it is separate.
+def test_the_shipped_default_serves_both_languages():
+    """This deployment is an English AND Arabic system, so it ships that way.
 
-    If these were the same thing, merging Arabic support would switch
-    scoping on everywhere at once -- against a corpus where no document
-    has a `language` property yet, so every query would scope to nothing.
+    Asserted rather than left to the environment: if the default silently
+    fell back to English-only, every Arabic query would return nothing and
+    the symptom would look like a retrieval bug rather than a config one.
     """
+    assert configured_languages() == ["en", "ar"]
     assert ARABIC.code in language_mod._PROFILES
-    assert configured_languages() == ["en"]
 
 
-def test_the_predicate_compiles_away_with_one_language():
-    """This is what "English is byte-identical by construction" means.
+def test_the_predicate_compiles_away_with_one_language(monkeypatch):
+    """The escape hatch still works, and is still a compile-away.
 
-    With one language live there is no filter to get wrong -- Neo4j folds
-    the literal away, and all 20 scope call sites can splice it today.
+    Setting ENABLED_LANGUAGES=en must restore byte-identical English
+    behaviour -- there is then no filter to get wrong, because Neo4j folds
+    the literal away. That property is what made it safe to splice this
+    into 38 call sites at once, and it has to keep holding.
     """
+    monkeypatch.setattr(language_mod, "ENABLED_LANGUAGES", ("en",))
+    assert configured_languages() == ["en"]
     assert language_filter() == "true"
     assert language_filter("s", "$lang") == "true"
+
+
+def test_a_document_with_no_language_is_invisible_once_two_are_live():
+    """The cost of shipping with two languages on, stated as a test.
+
+    A node written before language scoping existed has no `language`, and
+    `n.language = $language` does not match NULL. That is why
+    scripts/backfill_language.py is not optional after restoring an older
+    dump -- and why the design refused a null-guard, which would have cost
+    a 611,815-node scan on every query instead.
+    """
+    assert language_filter() == "n.language = $language"
 
 
 def test_the_predicate_scopes_once_a_second_language_is_enabled(two_languages):
