@@ -15,7 +15,12 @@ a document is when no other profile claims it, so every pre-existing
 document IS English by definition -- there is nothing to detect and no
 document text has to be re-read. A document that should have been Arabic
 would have to have been ingested before Arabic was enabled, which cannot
-have happened.
+have happened. This is why enabling a second language does not mean
+re-ingesting the first one's corpus.
+
+Touches the DOCUMENT TREE only. The structured business graph shares this
+database and is the larger part of it; it has no language dimension and
+must not be given one.
 
 Idempotent: only touches nodes matching `n.language IS NULL`, so a
 partial run resumes and re-running is free.
@@ -36,11 +41,33 @@ if str(ROOT) not in sys.path:
 
 from src.shared.config.settings import DEFAULT_LANGUAGE  # noqa: E402
 from src.shared.neo4j.driver import get_neo4j_driver  # noqa: E402
+from src.unstructured.graph.constants import (  # noqa: E402
+    DOC_REVISION_LABEL,
+    DOCUMENT_LOGICAL_LABEL,
+    INDEXED_NODE_CYPHER,
+)
+
+# The document tree, and nothing else. Derived from the constants the
+# ingestion path already uses rather than listed again here, so a new
+# document label is backfilled without anyone remembering this file.
+#
+# Scoping this matters more than it looks. This database holds 611,814
+# nodes and 547,416 of them are the structured business graph -- Orders,
+# Payments, Customers. An unscoped `MATCH (n) WHERE n.language IS NULL`
+# stamps a language on every one of them: 8.5x the writes, and every one
+# of them a lie. The business graph has no language dimension; its labels
+# and properties are schema, not prose. Leaving it unstamped also makes
+# the boundary physical -- splice language_filter() into a structured
+# query by mistake and it matches nothing loudly, instead of quietly
+# working in English and failing in Arabic.
+DOCUMENT_LABELS = ":" + "|".join(
+    sorted(set(INDEXED_NODE_CYPHER.split("|")) | {DOCUMENT_LOGICAL_LABEL, DOC_REVISION_LABEL})
+)
 
 
 def _count_unstamped(session) -> int:
     row = session.run(
-        "MATCH (n) WHERE n.language IS NULL RETURN count(n) AS n"
+        f"MATCH (n{DOCUMENT_LABELS}) WHERE n.language IS NULL RETURN count(n) AS n"
     ).single()
     return (row or {}).get("n", 0)
 
@@ -54,8 +81,8 @@ def _stamp_batch(session, language: str, batch_size: int) -> int:
     what it has already done.
     """
     row = session.run(
-        """
-        MATCH (n) WHERE n.language IS NULL
+        f"""
+        MATCH (n{DOCUMENT_LABELS}) WHERE n.language IS NULL
         WITH n LIMIT $batch_size
         SET n.language = $language
         RETURN count(n) AS stamped
