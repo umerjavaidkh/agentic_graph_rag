@@ -31,12 +31,11 @@ that gap.
 """
 from __future__ import annotations
 
-import re
 import threading
 import time
 from typing import Any, Optional
 
-_WORD = re.compile(r"[a-z][a-z0-9-]{2,}")
+from ....shared.unicode_text import words as word_tokens
 
 # Terms rarer than this are dropped from the table and answer 0.0 on
 # lookup. Only terms near the decision threshold need an accurate figure,
@@ -86,7 +85,9 @@ class CorpusTermStats:
             doc = r.get("d")
             if not doc:
                 continue
-            docsets.setdefault(doc, set()).update(_WORD.findall((r.get("t") or "").lower()))
+            docsets.setdefault(doc, set()).update(
+                word_tokens(r.get("t") or "", min_length=3, hyphens=True)
+            )
 
         total = len(docsets)
         if not total:

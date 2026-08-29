@@ -17,6 +17,7 @@ from ..query_intent import (
     PHRASE_STOP as _PHRASE_STOP,
     is_enumeration_question,
 )
+from ....shared.unicode_text import letters as letter_tokens
 from ..text_utils import _query_anchor_terms
 
 
@@ -746,7 +747,7 @@ class RankingService:
 
         # Hyphenated terms in the query: add joined / spaced variants generically
         # (e.g. "case-control" → "case control", "casecontrol") to survive PDF wording.
-        for hyph in re.findall(r"[a-z]+(?:-[a-z]+)+", q):
+        for hyph in (h for h in letter_tokens(q, hyphens=True) if "-" in h):
             keywords.append(hyph)
             keywords.append(hyph.replace("-", " "))
             keywords.append(hyph.replace("-", ""))

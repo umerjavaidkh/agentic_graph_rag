@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import re
 
+from ...shared.unicode_text import opens_sentence
+
 # "Table 3.2. Tiers", "Figure 1: CSF Core", "Fig. 4 -- Overview", "Box 9 ..."
 _CAPTION = re.compile(
     r"^\s*(table|figure|fig\.?|box|exhibit)\s*"
@@ -77,7 +79,7 @@ def _looks_like_caption(rest: str) -> bool:
         return False  # hyphenated line break: mid-sentence, not a title
     if re.match(r"^\d+[.)]", rest):
         return False  # list numbering picked up after the table's number
-    return bool(re.match(r"^[\"\u201c(A-Z]", rest))
+    return rest[:1] in '"\u201c(' or opens_sentence(rest)
 
 
 def parse_grid(text: str) -> tuple[list[str], list[list[str]]]:
