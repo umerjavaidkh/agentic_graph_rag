@@ -36,50 +36,52 @@ Choosing cleanly-parsed documents was worth 14 points on its own (73% ->
 
 Detail: `shapes_second_last5_qa_log.md`. Harness: `scripts/eval_shapes.py`.
 
-### Arabic, same harness, same shape count
+### Arabic
 
 37-document Arabic corpus (BilArabi teacher's guide + 36 Arabic Wikipedia
-articles). Run as `eval_shapes.py --docs 5 --language ar`.
+articles).
 
-| Scope | Docs | Qs | Right document | Precision@k | Deterministic | Median |
-|---|---|---|---|---|---|---|
-| English baseline, 5 cleanly-parsed | 5 | 102 | 92/92 (100%) | 0.95 | 30/30 (100%) | 2.5s |
-| **Arabic, 5 documents** | 5 | 94 | **84/84 (100%)** | **0.29** | **17/24 (71%)** | 0.4s |
+| Run | Qs | Right document | Precision@k |
+|---|---|---|---|
+| English baseline, 5 arXiv papers | 102 | 92/92 (100%) | 0.95 |
+| Arabic, `eval_shapes.py --docs 5 --language ar` | 94 | 84/84 (100%) | **0.29** |
+| Arabic, same shapes asked as Arabic questions | 15 | 15/15 (100%) | **0.89** |
 
-Per shape (Arabic): fact 4/4, numeric 3/4, ambiguous 5/5,
-unanswerable 5/5, enumerative 0/3, aggregation 0/3.
+**The 0.29 measures the harness, not the system.** `eval_shapes.py`
+builds every question from a hardcoded English template:
 
-**Right-document is the number the language work was for, and it is
-100%.** Every question resolved to the document it was generated from,
-across a shared database holding 998 English documents alongside the 37
-Arabic ones. Scoping, detection and normalization all hold at corpus
-scale.
+    f'In "{title}", define the central technical term the paper introduces.'
+    f'In "{title}", how does the proposed approach differ from prior work?'
+    f'What does "{title}" say is required to reproduce its results?'
 
-**The unanswerable score was 0/5 until the harness was fixed, and the
-system was never wrong.** `REFUSAL` here was a tuple of English phrases.
-Once the system began refusing in the language it was asked in, a correct
-Arabic refusal matched none of them and scored zero -- an exam graded
-against the wrong key, and indistinguishable in the summary from a system
-that had started fabricating. Checked directly: 5/5 refusals, every one
-of the form "هذا المستند لا يغطي ..." ("this document does not cover
-..."). Refusal phrases now live in the language profiles.
+Two things are wrong with running those against this corpus. They are in
+English, so an Arabic question was never actually asked -- the title is
+the only Arabic in them. And they assume the document is a research
+paper: the Arabic corpus is encyclopedia articles and a school teacher's
+guide, which have no authors section, no prior work, no dataset and no
+reproducibility statement. The English 0.95 was measured on arXiv
+papers, where the templates fit exactly.
 
-**Precision 0.29 against English's 0.95 is real, and it is not
-retrieval.** A precision of 0.00 here means no chunks came back at all,
-and those rows return in 0.4s -- too fast for a model call. The document
-picker is firing: with 37 topically-spread Arabic documents, a question
-generated from one document's prose and not naming it is genuinely
-ambiguous more often in Arabic than in English, because Arabic keyword
-extraction is weaker. Two-letter function words are dropped by a token
-floor written for English, there is no stemmer (correctly -- Arabic
-morphology is templatic), and `_KEYWORD_STOP` is an English list, so an
-Arabic question offers fewer usable anchors and looks underspecified.
+Asked as questions a reader would actually put to an encyclopedia
+article -- the same five shapes, in Arabic -- the same corpus scores
+**0.89 precision and 15/15 right document**. An earlier version of this
+section attributed the 0.29 to weak Arabic keyword extraction and called
+it the measured cost of leaving half of Phase 3 undone. That was wrong.
+The keyword-extraction gap is real, but it is not what this number was
+showing.
 
-That is the half of Phase 3 deliberately not done: document frequency is
-wired to the underspecified GATE, not yet to keyword extraction. The
-number above is what quantifies the cost of leaving it, and enumerative
-0/3 and aggregation 0/3 are the same shortage seen from another angle --
-both shapes need several anchors to hit a set.
+**The unanswerable shape scored 0/5 for the same kind of reason, and the
+system was never wrong.** `REFUSAL` was a tuple of English phrases, so a
+correct Arabic refusal matched none of them -- an exam graded against the
+wrong key, and indistinguishable in the summary from a system that had
+started fabricating. Checked directly: 5/5 refusals, every one of the
+form "هذا المستند لا يغطي ...". Refusal phrases now live in the language
+profiles, and `eval_shapes.py` takes `--language`.
+
+**Still to fix in the harness:** the question templates themselves. Until
+they are generated in the corpus's own language and shaped to the
+document type, `--language ar` measures a translation mismatch rather
+than retrieval.
 
 Detail: `shapes_arabic_qa_log.md`.
 
