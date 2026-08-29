@@ -130,6 +130,10 @@ class DKGNode:
     vector_id: Optional[str] = None
     # Multi-tenancy: stamped by apply_revision_to_graph, not the parser itself.
     tenant_id: Optional[str] = None
+    # Language scoping: one code per document, stamped onto every node of it
+    # by apply_revision_to_graph. Not per node -- see "How a document gets
+    # its language" in docs/DESIGN_language_independence.md.
+    language: Optional[str] = None
 
 
 # ─────────────────────────────────────────
@@ -158,3 +162,5 @@ class DKGEdge:
     confidence_tier:  str | EdgeConfidenceTier = EdgeConfidenceTier.EXTRACTED
     # Multi-tenancy: stamped by apply_revision_to_graph, not the parser itself.
     tenant_id:        Optional[str] = None
+    # Language scoping: stamped alongside tenant_id, same reason.
+    language:         Optional[str] = None

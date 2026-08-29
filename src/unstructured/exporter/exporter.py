@@ -260,14 +260,35 @@ class Neo4jExporter:
         tx.run(
             f"""
             MERGE (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
-            ON CREATE SET dl.title = $title, dl.created_at = timestamp(), dl.tenant_id = $tenant_id
+            ON CREATE SET dl.title = $title, dl.created_at = timestamp(),
+                          dl.tenant_id = $tenant_id, dl.language = $language
             ON MATCH SET dl.title = coalesce(dl.title, $title),
                          dl.updated_at = timestamp(),
-                         dl.tenant_id = coalesce(dl.tenant_id, $tenant_id)
+                         dl.tenant_id = coalesce(dl.tenant_id, $tenant_id),
+                         dl.language = $language
             """,
             logical_id=plan.logical_id,
             title=plan.title,
             tenant_id=plan.tenant_id,
+            language=plan.language,
+        )
+        # The :Language parent from docs/DESIGN_language_independence.md.
+        # MERGE, not a precondition: a missing config node must never be able
+        # to block an ingest. Re-detection on a new revision can move a
+        # document between languages, so the stale edge goes first --
+        # otherwise a document that switched would sit under both.
+        tx.run(
+            f"""
+            MATCH (dl:{DOCUMENT_LOGICAL_LABEL} {{logical_id: $logical_id}})
+            MERGE (lang:Language {{code: $language}})
+            WITH dl, lang
+            OPTIONAL MATCH (other:Language)-[old:HAS_DOCUMENT]->(dl)
+            WHERE other.code <> $language
+            DELETE old
+            MERGE (lang)-[:HAS_DOCUMENT]->(dl)
+            """,
+            logical_id=plan.logical_id,
+            language=plan.language,
         )
         row = tx.run(
             f"""
@@ -314,6 +335,7 @@ class Neo4jExporter:
                 text: $source_filename,
                 source_filename: $source_filename,
                 tenant_id: $tenant_id,
+                language: $language,
                 ingested_at: timestamp(),
                 uploaded_at: timestamp()
             }})
@@ -327,6 +349,7 @@ class Neo4jExporter:
             title=plan.title,
             source_filename=plan.source_filename,
             tenant_id=plan.tenant_id,
+            language=plan.language,
         )
 
         # ── Batched node writes grouped by label (UNWIND) ─────────────────
@@ -495,6 +518,7 @@ class Neo4jExporter:
             "blob_key_text": node.blob_key_text,
             "blob_key_visual": node.blob_key_visual,
             "tenant_id": node.tenant_id,
+            "language": node.language,
         }
 
     @staticmethod

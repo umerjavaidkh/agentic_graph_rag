@@ -470,6 +470,36 @@ MULTI_TENANCY_ENABLED = os.environ.get("MULTI_TENANCY_ENABLED", "false").lower()
 )
 DEFAULT_TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "default")
 
+# ── Language scoping ──────────────────────────────────────────────────────
+# The language a document is in when no other profile claims it, and the
+# language a request means when it does not say. Every document ingested
+# before language scoping existed is backfilled to this.
+DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "en")
+
+# Share of a document's LETTERS that must belong to a non-default language
+# before the document is filed under it. A presence test would move a
+# 300-page English filing into the Arabic corpus on one stray glyph, and
+# scanned pages produce stray glyphs routinely.
+#
+# 0.05 is a starting point, not a measured value -- there is nothing to
+# measure it against until real bilingual documents are ingested, and
+# `scripts/audit_language.py` exists to do that. The failure to watch for
+# is a scanned English document whose OCR noise crosses the line, not a
+# bilingual document that fails to.
+LANGUAGE_SHARE_THRESHOLD = float(os.environ.get("LANGUAGE_SHARE_THRESHOLD", "0.05"))
+
+# Languages live in THIS deployment, comma-separated. Registering a profile
+# in src/shared/language.py adds it to the catalogue; naming it here turns
+# it on. The two are separate so that shipping Arabic support and enabling
+# it are separate events: while this holds one language there is nothing to
+# separate, `language_filter()` compiles to "true", and English retrieval is
+# byte-identical by construction rather than by testing.
+ENABLED_LANGUAGES = tuple(
+    code.strip().lower()
+    for code in os.environ.get("ENABLED_LANGUAGES", DEFAULT_LANGUAGE).split(",")
+    if code.strip()
+) or (DEFAULT_LANGUAGE,)
+
 # KnowledgeArea id that gates document-RAG access in the seeded RBAC schema
 # (src/auth/rbac_schema.cypher). Defaults to "esg" to match this repo's demo
 # seed data — deployments with their own KnowledgeArea taxonomy should set
