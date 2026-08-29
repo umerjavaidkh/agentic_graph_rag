@@ -23,7 +23,12 @@ import math
 from dataclasses import dataclass
 from typing import Optional
 
-from ....shared.config.settings import EMBEDDING_MODEL, MULTI_TENANCY_ENABLED
+from ....shared.config.settings import (
+    DEFAULT_LANGUAGE,
+    EMBEDDING_MODEL,
+    MULTI_TENANCY_ENABLED,
+)
+from ....shared.language import configured_languages
 from ....shared.model_providers.factory import get_embedding_provider
 from ....shared.storage.vector.factory import get_vector_store
 
@@ -129,6 +134,7 @@ class CandidateDocService:
         probe_k: int = PROBE_K,
         limit: int = MAX_CANDIDATE_DOCS,
         embedding: Optional[list[float]] = None,
+        language: str = DEFAULT_LANGUAGE,
     ) -> list[DocCandidate]:
         """Documents this query is plausibly about, best first.
 
@@ -145,9 +151,17 @@ class CandidateDocService:
         if not (query or "").strip():
             return []
 
-        filters = {"tenant_id": tenant_id} if (MULTI_TENANCY_ENABLED and tenant_id) else None
+        # Both scopes go to the ANN query, not to its results. Filtering
+        # afterwards would let the probe return chunks the caller may not
+        # see and then throw them away, so the caller ends up with fewer
+        # candidates than probe_k was chosen to guarantee.
+        filters: dict[str, str] = {}
+        if MULTI_TENANCY_ENABLED and tenant_id:
+            filters["tenant_id"] = tenant_id
+        if len(configured_languages()) > 1:
+            filters["language"] = language
         vector = embedding if embedding else self._embedding(query)
-        hits = self._store().query_with_docs(vector, top_k=probe_k, filters=filters)
+        hits = self._store().query_with_docs(vector, top_k=probe_k, filters=filters or None)
         if not hits:
             return []
 
@@ -189,7 +203,15 @@ class CandidateDocService:
         return [c for c in out if c.relative >= MIN_RELATIVE_SCORE][:limit]
 
     def candidate_ids(
-        self, query: str, tenant_id: str = "", *, limit: int = MAX_CANDIDATE_DOCS
+        self,
+        query: str,
+        tenant_id: str = "",
+        *,
+        limit: int = MAX_CANDIDATE_DOCS,
+        language: str = DEFAULT_LANGUAGE,
     ) -> list[str]:
         """Just the ids, shaped for `node_scope_cypher_multi`'s `$doc_ids`."""
-        return [c.document_id for c in self.candidates(query, tenant_id, limit=limit)]
+        return [
+            c.document_id
+            for c in self.candidates(query, tenant_id, limit=limit, language=language)
+        ]

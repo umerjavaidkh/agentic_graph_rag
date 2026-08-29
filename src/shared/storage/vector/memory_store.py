@@ -97,3 +97,21 @@ class InMemoryVectorStore(VectorStore):
         ]
         for id in to_delete:
             self.delete(id)
+
+    def set_payload_by_filter(self, filters: dict, payload: dict) -> int:
+        def matches(meta: dict) -> bool:
+            for k, v in filters.items():
+                got = meta.get(k)
+                if isinstance(v, (list, tuple, set)):
+                    if got not in v:
+                        return False
+                elif got != v:
+                    return False
+            return True
+
+        updated = 0
+        for meta in self._metadata.values():
+            if matches(meta):
+                meta.update(payload)
+                updated += 1
+        return updated
