@@ -11,7 +11,8 @@ import re
 from typing import Optional
 
 from ...graph.constants import DOCUMENT_ROOT_CYPHER, INDEXED_NODE_CYPHER
-from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.config.settings import DEFAULT_LANGUAGE
+from ....shared.neo4j.tenancy import language_filter, tenant_filter
 from ....shared.storage.hydrator import get_hydrator
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import (
@@ -55,7 +56,12 @@ class LexicalService:
         self._document_resolver = document_resolver
 
     def structural_keyword_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None,
+        self,
+        session,
+        query: str,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        document_id: Optional[str] = None,
         row_limit: int = 6,
     ) -> list[dict]:
         """
@@ -114,7 +120,7 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
             UNWIND $keywords AS k
             WITH k, n WHERE toLower(n.search_text) CONTAINS k
             RETURN k AS keyword, count(DISTINCT n) AS df
@@ -123,6 +129,7 @@ class LexicalService:
             keywords=keywords,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
         )
         doc_freq = {r["keyword"]: int(r["df"]) for r in freq_rows}
         if not doc_freq:
@@ -141,7 +148,7 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
             WITH n,
               [k IN $keywords WHERE toLower(n.search_text) CONTAINS k] AS matched
             WHERE size(matched) >= $min_hits
@@ -164,6 +171,7 @@ class LexicalService:
             min_hits=min_hits,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
             weight=weight,
             row_limit=int(row_limit),
         )
@@ -197,7 +205,12 @@ class LexicalService:
         return f"{body}\n\n[Extracted URLs]\n{url_block}".strip()
 
     def structural_phrase_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None,
+        self,
+        session,
+        query: str,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        document_id: Optional[str] = None,
         row_limit: int = 6,
     ) -> list[dict]:
         """
@@ -222,7 +235,7 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
               AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
             OPTIONAL MATCH (d:Document)
               WHERE d.logical_doc_id = n.logical_doc_id
@@ -246,6 +259,7 @@ class LexicalService:
             row_limit=int(row_limit),
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
         )
 
         hydrator = get_hydrator()
@@ -274,7 +288,7 @@ class LexicalService:
         return items
 
     def expand_unit_siblings(
-        self, session, item_ids: list[str], tenant_id: str = ""
+        self, session, item_ids: list[str], tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> list[dict]:
         """The other parts of any multi-chunk unit the hits belong to.
 
@@ -311,7 +325,7 @@ class LexicalService:
             WHERE part.unit_id = hit.unit_id
               AND part.revision_id = hit.revision_id
               AND part.id <> hit.id
-              AND {tenant_filter("part")}
+              AND {tenant_filter("part")} AND {language_filter("part")}
             RETURN DISTINCT
               coalesce(part.id, '') AS id,
               coalesce(part.title, '') AS title,
@@ -325,6 +339,7 @@ class LexicalService:
             """,
             ids=ids,
             tenant_id=tenant_id,
+            language=language,
         )
         hydrator = get_hydrator()
         return [
@@ -344,7 +359,12 @@ class LexicalService:
         ]
 
     def quantity_evidence_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
+        self,
+        session,
+        query: str,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        document_id: Optional[str] = None,
     ) -> list[dict]:
         """
         For a counting question ("how many X"), retrieve chunks that actually
@@ -391,7 +411,7 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
               AND any(p IN $patterns WHERE toLower(n.search_text) =~ p)
             OPTIONAL MATCH (d:Document)
               WHERE d.logical_doc_id = n.logical_doc_id
@@ -414,6 +434,7 @@ class LexicalService:
             patterns=patterns,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
             limit=_QUANTITY_LIMIT,
         )
 
@@ -440,7 +461,12 @@ class LexicalService:
         return items
 
     def scope_phrase_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
+        self,
+        session,
+        query: str,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        document_id: Optional[str] = None,
     ) -> list[dict]:
         """
         Retrieve chunks by a SHORT, discriminating scope phrase from the query
@@ -490,7 +516,7 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
             WITH collect(toLower(n.search_text)) AS texts
             UNWIND $phrases AS phrase
             RETURN phrase,
@@ -501,6 +527,7 @@ class LexicalService:
             phrases=lowered,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
         )
         # Weight each surviving phrase by RARITY, don't treat them as equal.
         # A frequency CUTOFF alone is not enough: verified live, a question
@@ -528,7 +555,7 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
               AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
             OPTIONAL MATCH (d:Document)
               WHERE d.logical_doc_id = n.logical_doc_id
@@ -554,6 +581,7 @@ class LexicalService:
             weights=weights,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
             limit=_SCOPE_PHRASE_LIMIT,
         )
 

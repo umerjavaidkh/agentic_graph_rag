@@ -26,6 +26,7 @@ from ...shared.config.settings import (
     RETRIEVAL_FINAL_LIMIT,
 )
 from ...shared.model_providers.factory import get_chat_provider
+from ...shared.config.settings import DEFAULT_LANGUAGE
 from ...shared.telemetry import pipeline_step
 from ...shared.unicode_text import sentence_split, words as word_tokens
 from .state import ESGState
@@ -90,6 +91,7 @@ def retrieve_node(state: ESGState):
     question = state["question"]
     user_context = state.get("user_context")
     document_id_hint = state.get("document_id") or ""
+    language = state.get("language") or DEFAULT_LANGUAGE
 
     limit = max(RETRIEVAL_FINAL_LIMIT, 12) if is_synthesis_question(question) else RETRIEVAL_FINAL_LIMIT
     with pipeline_step("document.graph.retrieve", limit=limit):
@@ -98,6 +100,7 @@ def retrieve_node(state: ESGState):
             limit=limit,
             user_context=user_context,
             document_id_hint=document_id_hint,
+            language=language,
         )
     strategy = context.get("strategy", "graph_rag")
 
