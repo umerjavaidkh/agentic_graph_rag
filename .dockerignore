@@ -13,7 +13,15 @@ tmp_ingest
 output
 output_v2
 output_v3
+# `*` does not cross a `/` in .dockerignore, so `*.pdf` only ever excluded
+# PDFs at the repo root -- the 3.7GB corpus under sample_data_to_test/
+# was copied into every image, twice (app and worker), and re-copied on
+# every rebuild. Nothing under src/ reads these paths at runtime; they
+# are fixtures for tests and eval, which run from the host.
 *.pdf
+**/*.pdf
+sample_data_to_test
+graphify-out
 terminals
 .cursor
 agent-transcripts
