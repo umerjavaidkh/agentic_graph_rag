@@ -498,13 +498,23 @@ LANGUAGE_SHARE_THRESHOLD = float(os.environ.get("LANGUAGE_SHARE_THRESHOLD", "0.0
 
 # Languages live in THIS deployment, comma-separated. Registering a profile
 # in src/shared/language.py adds it to the catalogue; naming it here turns
-# it on. The two are separate so that shipping Arabic support and enabling
-# it are separate events: while this holds one language there is nothing to
-# separate, `language_filter()` compiles to "true", and English retrieval is
-# byte-identical by construction rather than by testing.
+# it on. The two stay separate because they answer different questions --
+# what the code supports, and what this deployment serves.
+#
+# Defaults to "en,ar" because that is what this system IS. The separation
+# was built so that shipping Arabic support and enabling it could be
+# different events; that mattered while the scoping was unproven, and the
+# proving is done.
+#
+# One consequence, stated because it is the kind of thing that is found the
+# hard way: with two languages live, `language_filter()` no longer compiles
+# to "true", so a document node with NO `language` property is invisible to
+# every query. Restoring an older Neo4j dump therefore means running
+# scripts/backfill_language.py before the corpus answers anything. Set this
+# to "en" to get the old compile-away behaviour back.
 ENABLED_LANGUAGES = tuple(
     code.strip().lower()
-    for code in os.environ.get("ENABLED_LANGUAGES", DEFAULT_LANGUAGE).split(",")
+    for code in os.environ.get("ENABLED_LANGUAGES", "en,ar").split(",")
     if code.strip()
 ) or (DEFAULT_LANGUAGE,)
 
