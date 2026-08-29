@@ -32,10 +32,15 @@ BUCKETS = 8          # slices of the document to sample evenly
 PER_BUCKET = 3       # questions drawn from each slice
 
 
-def ask(question: str, timeout: int = 240) -> dict:
+def ask(question: str, timeout: int = 240, thread: str = "") -> dict:
+    # A fresh thread per question isolates them, which is right for
+    # measuring cold placement and wrong for measuring the product: the
+    # design is that naming a document once pins it for the conversation.
+    # `thread` opts into that, and must stay alphanumeric -- a dot collapses
+    # a thread id to `default` and silently merges unrelated conversations.
     body = json.dumps({
         "question": question, "user_id": "admin_001", "role": "admin",
-        "tenant_id": "", "thread_id": uuid.uuid4().hex,   # alphanumeric only
+        "tenant_id": "", "thread_id": thread or uuid.uuid4().hex,
     }).encode()
     t0 = time.perf_counter()
     try:
@@ -121,6 +126,9 @@ def main() -> None:
     # ambiguous: retrieval may have failed to place the question rather
     # than failed to reach the page, and those are different faults.
     named = "--named" in sys.argv
+    # One conversation: the FIRST question names the document, the rest name
+    # nothing and must ride the thread's memory of it.
+    threaded = "--thread" in sys.argv
     doc = sys.argv[-1]
     with get_neo4j_driver().session() as s:
         rows = [dict(r) for r in s.run(
@@ -191,14 +199,37 @@ def main() -> None:
     print(f"# Coverage — {doc}\n")
     print(f"{pages} pages, nodes spanning page {lo}-{hi}, "
           f"{len(questions)} questions drawn evenly across {BUCKETS} slices.")
-    print(f"Condition: **{'document named' if named else 'document NOT named'}**.\n")
+    cond = ("one thread, only the first question names the document"
+            if threaded else
+            "document named in every question" if named else
+            "document never named, fresh thread each question")
+    print(f"Condition: **{cond}**.\n")
+    if "--dump" in sys.argv:
+        short = doc[4:] if doc.startswith("doc_") else doc
+        print("Ask these in ONE conversation, in order. Only the first names "
+              "the document; the rest rely on the thread holding it.\n")
+        print("| # | Page | Expected | Question |")
+        print("|---|---|---|---|")
+        for i, q in enumerate(questions, 1):
+            text = q["q"]
+            if i == 1:
+                text = f'In the document "{short}", {text[0].lower()}{text[1:]}'
+            print(f"| {i} | {q['page']} | `{q['expected']}` | "
+                  f"{text.replace('|', chr(92) + '|')} |")
+        return
+
     print("| Slice | Pages | Q | Correct | Right doc | Source node retrieved |")
     print("|---|---|---|---|---|---|")
 
     per = defaultdict(lambda: {"n": 0, "ok": 0, "doc": 0, "rec": 0, "s": []})
     detail = []
-    for q in questions:
-        r = ask(q["q"])
+    thread = "cov" + uuid.uuid4().hex if threaded else ""
+    for i, q in enumerate(questions):
+        text = q["q"]
+        if threaded and i == 0:
+            short = doc[4:] if doc.startswith("doc_") else doc
+            text = f'In the document "{short}", {text[0].lower()}{text[1:]}'
+        r = ask(text, thread=thread)
         ans = r.get("answer") or ""
         ids = [x.get("id", "") for x in (r.get("sources") or []) if isinstance(x, dict)]
         ok = bool(q["expected"]) and q["expected"] in ans
