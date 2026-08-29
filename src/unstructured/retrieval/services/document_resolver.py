@@ -18,7 +18,8 @@ from ...graph.constants import (
     DOCUMENT_ROOT_CYPHER,
 )
 from ....shared.unicode_text import LETTER, squash_punctuation
-from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.config.settings import DEFAULT_LANGUAGE
+from ....shared.neo4j.tenancy import language_filter, tenant_filter
 from ....shared.neo4j.versioning import lifecycle_active
 from ..cypher_scope import _clean_doc_title
 from ..query_intent import KEYWORD_STOP as _KEYWORD_STOP
@@ -87,7 +88,7 @@ class DocumentResolver:
         self._graph_seeds = graph_seeds
 
     def score_documents_for_query(
-        self, session, query: str, tenant_id: str = ""
+        self, session, query: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> list[tuple[float, str, str]]:
         """Every candidate document for `query`, ranked, as (score, id, title).
 
@@ -100,7 +101,7 @@ class DocumentResolver:
         return self._scored_documents(session, query, tenant_id)
 
     def _scored_documents(
-        self, session, query: str, tenant_id: str = ""
+        self, session, query: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> list[tuple[float, str, str]]:
         """
         Resolve the document a user named, scoring each logical document by how
@@ -131,13 +132,13 @@ class DocumentResolver:
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]
                   ->(:{DOC_REVISION_LABEL})-[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})
             WHERE {lc}
-              AND {tenant_filter("dl")}
-              AND {tenant_filter("d")}
+              AND {tenant_filter("dl")} AND {language_filter("dl")}
+              AND {tenant_filter("d")} AND {language_filter("d")}
             WITH dl, d
             UNWIND $terms AS term
             OPTIONAL MATCH (d)-[:CONTAINS*1..6]->(n)
             WHERE {lc_n}
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
               AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
                    OR toLower(coalesce(n.search_text, '')) =~ {_WORD_BOUNDARY_PATTERN}
                    OR (term =~ '\\d+' AND (
@@ -165,6 +166,7 @@ class DocumentResolver:
             """,
             terms=terms,
             tenant_id=tenant_id,
+            language=language,
         )
 
         docs: list[dict] = [dict(r) for r in rows]
@@ -224,7 +226,7 @@ class DocumentResolver:
     AMBIGUITY_LEAD = 1.5
 
     def resolve_document_for_query_strict(
-        self, session, query: str, tenant_id: str = ""
+        self, session, query: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> tuple[Optional[str], Optional[str]]:
         """The single document this query names, or (None, None).
 
@@ -244,7 +246,7 @@ class DocumentResolver:
         return scored[0][1], scored[0][2]
 
     def names_an_unresolvable_document(
-        self, session, query: str, tenant_id: str = ""
+        self, session, query: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> bool:
         """Did this query name a document that cannot be pinned down?
 
@@ -264,7 +266,12 @@ class DocumentResolver:
         return len(scored) > 1 and scored[0][0] < scored[1][0] * self.AMBIGUITY_LEAD
 
     def candidates_for_query(
-        self, session, query: str, tenant_id: str = "", limit: int = 10
+        self,
+        session,
+        query: str,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        limit: int = 10,
     ) -> list[dict]:
         """Plausible documents for a query that named none clearly.
 
@@ -294,7 +301,7 @@ class DocumentResolver:
         return node_id.split(":", 1)[0] or None
 
     def resolve_document_by_vector(
-        self, session, query: str, tenant_id: str = ""
+        self, session, query: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> tuple[Optional[str], Optional[str]]:
         """
         Resolve the target document via semantic similarity (corpus-agnostic):
@@ -333,7 +340,7 @@ class DocumentResolver:
         return top_id, title
 
     def document_title_for_logical_id(
-        self, session, logical_id: str, tenant_id: str = ""
+        self, session, logical_id: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> Optional[str]:
         if not logical_id:
             return None
@@ -341,12 +348,13 @@ class DocumentResolver:
             f"""
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
             WHERE dl.logical_id = $lid
-              AND {tenant_filter("dl")}
+              AND {tenant_filter("dl")} AND {language_filter("dl")}
             RETURN coalesce(dl.title, dl.logical_id) AS title
             LIMIT 1
             """,
             lid=logical_id,
             tenant_id=tenant_id,
+            language=language,
         ).single()
         if row and row.get("title"):
             return _clean_doc_title(str(row["title"]))
@@ -416,7 +424,7 @@ class DocumentResolver:
         return top[1], top[2]
 
     def _validate_document_id(
-        self, session, logical_id: str, tenant_id: str = ""
+        self, session, logical_id: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> Optional[str]:
         """Unlike document_title_for_logical_id (which always returns
         *something*, falling back to the id itself), this returns None when
@@ -430,12 +438,13 @@ class DocumentResolver:
             f"""
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
             WHERE dl.logical_id = $lid
-              AND {tenant_filter("dl")}
+              AND {tenant_filter("dl")} AND {language_filter("dl")}
             RETURN coalesce(dl.title, dl.logical_id) AS title
             LIMIT 1
             """,
             lid=logical_id,
             tenant_id=tenant_id,
+            language=language,
         ).single()
         if row and row.get("title"):
             return _clean_doc_title(str(row["title"]))
@@ -454,7 +463,7 @@ class DocumentResolver:
         return squash_punctuation(text)
 
     def exact_document_reference(
-        self, session, query: str, tenant_id: str = ""
+        self, session, query: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> Optional[tuple[str, str]]:
         """The document whose id or title the question states outright.
 
@@ -484,10 +493,11 @@ class DocumentResolver:
         rows = session.run(
             f"""
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]->(:{DOC_REVISION_LABEL})
-            WHERE {tenant_filter("dl")}
+            WHERE {tenant_filter("dl")} AND {language_filter("dl")}
             RETURN dl.logical_id AS logical_id, dl.title AS title
             """,
             tenant_id=tenant_id,
+            language=language,
         )
         matches: dict[str, str] = {}
         for row in rows:
@@ -515,7 +525,12 @@ class DocumentResolver:
         return logical_id, title
 
     def resolve_document_for_query(
-        self, session, query: str, tenant_id: str = "", document_id_hint: str = ""
+        self,
+        session,
+        query: str,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        document_id_hint: str = "",
     ) -> tuple[Optional[str], Optional[str]]:
         """Return logical document id (preferred) and display title for doc-scoped retrieval.
 
@@ -592,13 +607,13 @@ class DocumentResolver:
                     MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]
                           ->(:{DOC_REVISION_LABEL})-[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})
                     WHERE {lc}
-                      AND {tenant_filter("dl")}
-                      AND {tenant_filter("d")}
+                      AND {tenant_filter("dl")} AND {language_filter("dl")}
+                      AND {tenant_filter("d")} AND {language_filter("d")}
                     WITH dl, d
                     UNWIND $terms AS term
                     OPTIONAL MATCH (d)-[:CONTAINS*1..5]->(n)
                     WHERE {lc_n}
-                      AND {tenant_filter("n")}
+                      AND {tenant_filter("n")} AND {language_filter("n")}
                       AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
                            OR toLower(coalesce(n.search_text, '')) =~ {_WORD_BOUNDARY_PATTERN})
                     WITH dl, term, count(DISTINCT n) AS cnt,
@@ -610,6 +625,7 @@ class DocumentResolver:
                     """,
                     terms=terms,
                     tenant_id=tenant_id,
+                    language=language,
                 )
             ]
             # A literal, distinctive keyword match ("amazon") is a more
@@ -642,7 +658,7 @@ class DocumentResolver:
                 UNWIND $terms AS term
                 MATCH (d:{DOCUMENT_ROOT_CYPHER})
                 WHERE {lc}
-                  AND {tenant_filter("d")}
+                  AND {tenant_filter("d")} AND {language_filter("d")}
                   AND (toLower(coalesce(d.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
                    OR EXISTS {{
                      MATCH (d)-[:CONTAINS*1..5]->(n)
@@ -658,6 +674,7 @@ class DocumentResolver:
                 """,
                 terms=terms,
                 tenant_id=tenant_id,
+                language=language,
             ).single()
             if row and row.get("id"):
                 return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
@@ -667,13 +684,14 @@ class DocumentResolver:
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})-[:ACTIVE_REVISION]->(:{DOC_REVISION_LABEL})
                   -[:ROOT]->(d:{DOCUMENT_ROOT_CYPHER})-[:CONTAINS*1..4]->(s:Section)
             WHERE {lc} AND {lifecycle_active("s")}
-              AND {tenant_filter("dl")} AND {tenant_filter("s")}
+              AND {tenant_filter("dl")} AND {language_filter("dl")} AND {tenant_filter("s")} AND {language_filter("s")}
             WITH dl, count(s) AS n
             ORDER BY n DESC
             LIMIT 1
             RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title
             """,
             tenant_id=tenant_id,
+            language=language,
         ).single()
         if row and row.get("id"):
             return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
@@ -682,13 +700,14 @@ class DocumentResolver:
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})-[:CONTAINS*1..4]->(s:Section)
             WHERE {lc} AND {lifecycle_active("s")}
-              AND {tenant_filter("d")} AND {tenant_filter("s")}
+              AND {tenant_filter("d")} AND {language_filter("d")} AND {tenant_filter("s")} AND {language_filter("s")}
             WITH d, count(s) AS n
             ORDER BY n DESC
             LIMIT 1
             RETURN coalesce(d.logical_doc_id, d.id) AS id, coalesce(d.title, d.id) AS title
             """,
             tenant_id=tenant_id,
+            language=language,
         ).single()
         if row and row.get("id"):
             return str(row["id"]), _clean_doc_title(str(row.get("title") or row["id"]))
@@ -770,13 +789,13 @@ class DocumentResolver:
         # similarity) after this strict resolver declines to guess.
         return terms[:6]
 
-    def resolve_document_id(self, session, name: str, tenant_id: str = "") -> Optional[str]:
+    def resolve_document_id(self, session, name: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE) -> Optional[str]:
         if not name:
             return None
         row = session.run(
             f"""
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
-            WHERE {tenant_filter("dl")}
+            WHERE {tenant_filter("dl")} AND {language_filter("dl")}
               AND (toLower(coalesce(dl.title, '')) CONTAINS toLower($name)
                OR toLower(dl.logical_id) CONTAINS toLower($name))
             RETURN dl.logical_id AS id
@@ -784,6 +803,7 @@ class DocumentResolver:
             """,
             name=name.strip(),
             tenant_id=tenant_id,
+            language=language,
         ).single()
         if row and row.get("id"):
             return str(row["id"])
@@ -791,7 +811,7 @@ class DocumentResolver:
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {lifecycle_active("d")}
-              AND {tenant_filter("d")}
+              AND {tenant_filter("d")} AND {language_filter("d")}
               AND d.title IS NOT NULL
               AND toLower(d.title) CONTAINS toLower($name)
             RETURN coalesce(d.logical_doc_id, d.id) AS id
@@ -799,20 +819,22 @@ class DocumentResolver:
             """,
             name=name.strip(),
             tenant_id=tenant_id,
+            language=language,
         ).single()
         return str(row["id"]) if row and row.get("id") else None
 
-    def list_documents(self, session, limit: int = 5, tenant_id: str = "") -> list[dict[str, str]]:
+    def list_documents(self, session, limit: int = 5, tenant_id: str = "", language: str = DEFAULT_LANGUAGE) -> list[dict[str, str]]:
         rows = session.run(
             f"""
             MATCH (dl:{DOCUMENT_LOGICAL_LABEL})
-            WHERE {tenant_filter("dl")}
+            WHERE {tenant_filter("dl")} AND {language_filter("dl")}
             RETURN dl.logical_id AS id, coalesce(dl.title, dl.logical_id) AS title
             ORDER BY title
             LIMIT $limit
             """,
             limit=max(1, int(limit)),
             tenant_id=tenant_id,
+            language=language,
         )
         out: list[dict[str, str]] = []
         for r in rows:
@@ -824,13 +846,14 @@ class DocumentResolver:
             f"""
             MATCH (d:{DOCUMENT_ROOT_CYPHER})
             WHERE {lifecycle_active("d")}
-              AND {tenant_filter("d")}
+              AND {tenant_filter("d")} AND {language_filter("d")}
             RETURN coalesce(d.logical_doc_id, d.id) AS id, coalesce(d.title, d.id) AS title
             ORDER BY title
             LIMIT $limit
             """,
             limit=max(1, int(limit)),
             tenant_id=tenant_id,
+            language=language,
         )
         out: list[dict[str, str]] = []
         for r in rows:

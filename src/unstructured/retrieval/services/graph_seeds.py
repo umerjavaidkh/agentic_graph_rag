@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 
 from ....shared.config.settings import EMBEDDING_MODEL, VECTOR_STORE_BACKEND
-from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.config.settings import DEFAULT_LANGUAGE
+from ....shared.neo4j.tenancy import language_filter, tenant_filter
 from ....shared.neo4j.versioning import lifecycle_active
 from ....shared.storage.hydrator import get_hydrator
 from ....shared.storage.vector.factory import get_vector_store
@@ -45,6 +46,7 @@ class GraphSeedService:
         embedding: list[float],
         limit: int,
         tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
         document_id: str = "",
     ) -> list[dict]:
         # The in-process "memory" VectorStore doesn't survive across worker/API
@@ -71,7 +73,7 @@ class GraphSeedService:
                 YIELD node AS n, score
                 WHERE coalesce(n.search_text, '') <> ''
                   AND {lifecycle_active("n")}
-                  AND {tenant_filter("n")}
+                  AND {tenant_filter("n")} AND {language_filter("n")}
                   AND {_document_filter("n", document_id)}
                 RETURN
                   coalesce(n.id, '') AS id,
@@ -88,6 +90,7 @@ class GraphSeedService:
                 limit=max(1, limit),
                 embedding=embedding,
                 tenant_id=tenant_id,
+                language=language,
                 document_id=document_id,
             )
             return [
@@ -113,6 +116,7 @@ class GraphSeedService:
         embedding: list[float],
         limit: int,
         tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
         document_id: str = "",
     ) -> list[dict]:
         """Similarity search against the external VectorStore, hydrated via
@@ -143,7 +147,7 @@ class GraphSeedService:
                 MATCH (n:{INDEXED_NODE_CYPHER}) WHERE n.id = nid
                   AND coalesce(n.search_text, '') <> ''
                   AND {lifecycle_active("n")}
-                  AND {tenant_filter("n")}
+                  AND {tenant_filter("n")} AND {language_filter("n")}
                 RETURN
                   coalesce(n.id, '') AS id,
                   coalesce(n.title, '') AS title,
@@ -154,6 +158,7 @@ class GraphSeedService:
                 """,
                 ids=list(scores.keys()),
                 tenant_id=tenant_id,
+                language=language,
             )
             by_id = {r["id"]: r for r in rows if r["id"]}
             hydrator = get_hydrator()
@@ -180,7 +185,13 @@ class GraphSeedService:
             return []
 
     def fulltext_seed(
-        self, session, query: str, limit: int, tenant_id: str = "", document_id: str = ""
+        self,
+        session,
+        query: str,
+        limit: int,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        document_id: str = "",
     ) -> list[dict]:
         lucene_q = self.fulltext_query(query)
         if not lucene_q:
@@ -196,7 +207,7 @@ class GraphSeedService:
                 YIELD node AS n, score
                 WHERE coalesce(n.search_text, '') <> ''
                   AND {lifecycle_active("n")}
-                  AND {tenant_filter("n")}
+                  AND {tenant_filter("n")} AND {language_filter("n")}
                   AND {_document_filter("n", document_id)}
                   AND any(l IN labels(n) WHERE l IN $labels)
                 RETURN
@@ -215,6 +226,7 @@ class GraphSeedService:
                 limit=max(1, limit),
                 labels=list(_TEXT_NODE_LABELS),
                 tenant_id=tenant_id,
+                language=language,
                 document_id=document_id,
             )
             return [
@@ -242,6 +254,7 @@ class GraphSeedService:
         hops: int,
         limit: int,
         tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
         document_id: str = "",
     ) -> list[dict]:
         if hops == 1:
@@ -249,13 +262,13 @@ class GraphSeedService:
                 UNWIND $seed_ids AS sid
                 MATCH (seed:Section {{id: sid}})
                 WHERE {lifecycle_active("seed")}
-                  AND {tenant_filter("seed")}
+                  AND {tenant_filter("seed")} AND {language_filter("seed")}
                 MATCH (seed)-[r]-(related)
                 WHERE type(r) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
                   AND coalesce(related.search_text, '') <> ''
                   AND {lifecycle_active("related")}
-                  AND {tenant_filter("related")}
+                  AND {tenant_filter("related")} AND {language_filter("related")}
                   AND {_document_filter("related", document_id)}
                 RETURN DISTINCT
                   coalesce(related.id, '') AS id,
@@ -275,14 +288,14 @@ class GraphSeedService:
                 UNWIND $seed_ids AS sid
                 MATCH (seed:Section {{id: sid}})
                 WHERE {lifecycle_active("seed")}
-                  AND {tenant_filter("seed")}
+                  AND {tenant_filter("seed")} AND {language_filter("seed")}
                 MATCH (seed)-[r1]-(mid)-[r2]-(related)
                 WHERE type(r1) IN $rel_types
                   AND type(r2) IN $rel_types
                   AND any(l IN labels(related) WHERE l IN $node_labels)
                   AND coalesce(related.search_text, '') <> ''
                   AND {lifecycle_active("related")}
-                  AND {tenant_filter("related")}
+                  AND {tenant_filter("related")} AND {language_filter("related")}
                   AND {_document_filter("related", document_id)}
                   AND related.id <> sid
                 RETURN DISTINCT
@@ -306,6 +319,7 @@ class GraphSeedService:
                 node_labels=list(_TEXT_NODE_LABELS),
                 limit=max(1, limit),
                 tenant_id=tenant_id,
+                language=language,
                 document_id=document_id,
             )
             return [

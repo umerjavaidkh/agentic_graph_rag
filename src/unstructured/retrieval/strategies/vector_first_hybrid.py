@@ -43,6 +43,8 @@ re-phrasings that arrive without a hint.
 """
 from __future__ import annotations
 
+from ....shared.config.settings import DEFAULT_LANGUAGE
+
 import re
 import threading
 from dataclasses import replace
@@ -238,6 +240,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         self,
         query: str,
         tenant_id: str,
+        language: str,
         document_id_hint: str,
         embed_future,
     ) -> tuple[Optional[str], Optional[str], list[str]]:
@@ -350,6 +353,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             self._document_resolver.resolve_document_for_query,
             query,
             tenant_id=tenant_id,
+            language=language,
             document_id_hint=document_id_hint,
         )
         self._local.scope_source = "resolver_fallback"
@@ -495,7 +499,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         response["document_id"] = None
         return response
 
-    def retrieve(self, session, query, *, tenant_id, limit, ctx, document_id_hint=""):
+    def retrieve(self, session, query, *, tenant_id, language=DEFAULT_LANGUAGE, limit, ctx, document_id_hint=""):
         """Structural questions are answered from the hierarchy; everything
         else falls through to the inherited hybrid path.
 
@@ -533,7 +537,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             # the document says so -- the structure is the evidence, and
             # without it the honest answer is "no count is given".
             response = super().retrieve(
-                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                session, query, tenant_id=tenant_id, language=language, limit=limit, ctx=ctx,
                 document_id_hint=document_id_hint,
             )
             doc = (response or {}).get("document_id")
@@ -572,19 +576,17 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
 
         if plan.shape is not Shape.STRUCTURAL:
             return super().retrieve(
-                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                session, query, tenant_id=tenant_id, language=language, limit=limit, ctx=ctx,
                 document_id_hint=document_id_hint,
             )
 
         embed_future = self._pool.submit(self._graph_seeds.get_embedding, query)
-        document_id, document_title, doc_ids = self._scope_for_query(
-            query, tenant_id, document_id_hint, embed_future
-        )
+        document_id, document_title, doc_ids = self._scope_for_query(query, tenant_id, language, document_id_hint, embed_future)
         if not doc_ids:
             # No document to read a hierarchy from; the hybrid path at
             # least searches, which beats answering nothing.
             return super().retrieve(
-                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                session, query, tenant_id=tenant_id, language=language, limit=limit, ctx=ctx,
                 document_id_hint=document_id_hint,
             )
 
@@ -601,7 +603,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         )
         if not items:
             return super().retrieve(
-                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                session, query, tenant_id=tenant_id, language=language, limit=limit, ctx=ctx,
                 document_id_hint=document_id_hint,
             )
 
