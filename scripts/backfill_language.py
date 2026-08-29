@@ -94,9 +94,23 @@ def _stamp_batch(session, language: str, batch_size: int) -> int:
     return (row or {}).get("stamped", 0)
 
 
-def _languages_present(session) -> set:
-    """Languages already stamped on documents, so a second run migrates
-    the vectors of documents ingested since the first one."""
+def _language_codes_on_documents(session) -> set:
+    """Read-only: the language codes documents ALREADY carry.
+
+    Creates nothing, and is not a source of truth for which languages
+    exist. `:Language` root nodes are MERGEd in exactly two places --
+    once at ingest (Neo4jExporter._install_revision_tx) and once in
+    _attach_language_parent below -- each with a single code. Neither
+    reads this.
+
+    It exists because the vector-payload migration has to tag each
+    document's points with THAT document's own language, while
+    `--language` is a single value. The Arabic document was ingested
+    after the first backfill ran, so without this a re-run would tag
+    only the English payloads and the Arabic document's vectors would
+    keep no `language` at all -- invisible to a language-scoped ANN
+    probe, which is the failure this migration exists to prevent.
+    """
     rows = session.run(
         "MATCH (dl:DocumentLogical) WHERE dl.language IS NOT NULL "
         "RETURN DISTINCT dl.language AS code"
@@ -188,7 +202,7 @@ def main() -> int:
         print(f"attached {attached} documents to (:Language {{code:'{args.language}'}})")
 
         if not args.skip_vectors:
-            for code in sorted({args.language} | _languages_present(session)):
+            for code in sorted({args.language} | _language_codes_on_documents(session)):
                 docs = _backfill_vector_payloads(session, code)
                 print(f"vector payloads: tagged points of {docs} documents '{code}'")
     return 0
