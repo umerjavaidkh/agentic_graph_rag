@@ -9,23 +9,60 @@ below are the ones actually taken.
 | | |
 |---|---|
 | Languages | English and Arabic only |
-| Corpora | Two, fully separate |
-| Deployment | Two instances, routed by language |
-| Code | **One codebase.** Two deployments, never two forks |
+| Corpora | Two, separated logically |
+| Deployment | **One** — shared Neo4j, Qdrant, MinIO, workers |
+| Separation | A `:Language` parent node, plus a `language` property on every node |
+| Code | **One codebase**, one retrieval path |
 | Cross-lingual (Arabic query → English document) | Out of scope for now |
 | Corpus translation | Never |
 | Longer term | This becomes a compliance / decision-support engine |
 
-Separate instances were chosen because they make English regression
-structurally impossible: no shared index, no shared statistics, no shared
-analyzer. After an arc spent proving that changes did not regress, that
-guarantee is worth its operational cost.
+Separate instances were considered and rejected on cost: two full stacks
+on a machine whose Docker VM has already had to be rebuilt once after
+filling up, immediately after reclaiming 22GB. Logical separation gives
+almost the same guarantee for less.
 
-The cost is real and should be planned for: two Neo4j + Qdrant + MinIO +
-worker sets. The Docker VM on this machine has already had to be rebuilt
-once after filling up. If it becomes a problem, the fallback with almost
-the same isolation is a single deployment with `language` as a filter
-beside `tenant_id` -- additive, so English behaviour still cannot change.
+The guarantee still holds where it matters. The language predicate
+compiles to `true` while only English is configured, so English
+behaviour is byte-identical by construction rather than by testing.
+
+### Shape
+
+    (:Language {code:'en'}) -[:HAS_DOCUMENT]-> (:DocumentLogical)   998 edges
+    (:Language {code:'ar'}) -[:HAS_DOCUMENT]-> (:DocumentLogical)
+
+`DocumentLogical` is today's root of the document graph -- 998 nodes with
+no incoming relationship. The Language node sits above it, which also
+gives the document graph a single entry point it currently lacks.
+
+Cost: +2 nodes on 611,814 (0.0003%) and +998 relationships on 978,354
+(0.1%). Attaching Language to *every* node instead would put 611,814
+relationships on one node -- 62% of the graph on a single supernode --
+which is why the edge stops at `DocumentLogical`.
+
+Checked before committing to it: nothing traverses upward from
+`DocumentLogical`; the only orphan detection is scoped to content labels
+and the `:CONTAINS` type specifically, so a `:HAS_DOCUMENT` edge is
+invisible to it; and purge already uses `DETACH DELETE`, so the new edge
+is cleaned up with the document.
+
+### Structure and speed are different jobs
+
+| Purpose | Mechanism |
+|---|---|
+| Retrieval filtering | `n.language = $language` -- property, index-backed, no hop |
+| Config lookup | traverse from `:Language`, once per request |
+| Cascade, ops, reporting | traverse from `:Language` |
+
+The edge is the authority; the property is derived from it at ingest and
+stamped onto every node -- the same denormalisation `logical_doc_id` and
+`lifecycle_status` already use, and for the same reason: scoped queries
+must not have to traverse to find their scope.
+
+Existing documents get `language='en'` **backfilled**, not null-guarded.
+A null-guard in a scope predicate has already cost this project a
+611,815-node scan on a single query; there is no reason to reintroduce
+it.
 
 ## The one rule everything else depends on
 
@@ -90,17 +127,24 @@ characters this changes, so any English movement is a bug in the sweep.
 
 Work:
 
+- `language_filter(alias, param)` beside `tenant_filter` in
+  `shared/neo4j/tenancy.py`, using the same idiom: it returns the string
+  `"true"` while fewer than two languages are configured, so all 20
+  existing scope call sites can splice it unconditionally with no
+  behaviour change.
 - `language` on the request, validated rather than trusted: use the
   parameter as primary and detected query language as a sanity check. A
   user whose locale is `ar` typing an English question should widen, not
-  fail.
+  fail. Absent parameter defaults to `en`, so every existing caller keeps
+  working untouched.
+- `MERGE` the `:Language` node at ingest -- create-if-missing, never a
+  precondition. A missing config node must not block an ingest.
 - `language` stored **per node**, not per document. An Arabic document
   quoting English regulation has English sections, and mislabelling them
   makes their `search_text` matching wrong.
 - `LanguageProfile` registered by code, with English as the default
   profile built from today's behaviour, so the English path is unchanged
   by construction.
-- Routing to the right instance in front of the API.
 
 Verification: English numbers unchanged; a request with `language=ar`
 reaches the Arabic instance and returns empty rather than wrong, since
