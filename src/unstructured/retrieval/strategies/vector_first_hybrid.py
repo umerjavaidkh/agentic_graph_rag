@@ -396,6 +396,70 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             return False
         return rarest is not None and rarest >= MAX_GENERIC_DOC_FREQUENCY
 
+    def _with_titles(self, candidates: list) -> list:
+        """Attach each candidate's title, because the id is not a choice.
+
+        The picker labels its buttons `title || document_id`, so without
+        this the reader is offered five near-identical strings --
+        doc_arxiv_2608_16596, doc_arxiv_2608_16318 -- and has no basis to
+        pick between them. Offering a choice nobody can make is the same
+        dead end as guessing, one step slower.
+        """
+        ids = [c.get("document_id") for c in (candidates or []) if c.get("document_id")]
+        if not ids:
+            return candidates or []
+        try:
+            rows = self._neo4j_session_call(self._fetch_titles, ids)
+        except Exception:
+            return candidates or []
+        for c in candidates:
+            t = rows.get(c.get("document_id"))
+            if t:
+                c["title"] = t
+        return candidates
+
+    @staticmethod
+    def _fetch_titles(session, ids: list) -> dict:
+        """A label a reader can choose by.
+
+        DocRevision.title is the logical id for most of this corpus
+        ("arxiv_2608_16596"), which offers five near-identical strings and
+        no way to pick. The document's real title is the first block of
+        page 1 -- "Gallileo-4D: Frozen Backbone Ensemble for Dynamic 4D
+        Reconstruction" -- so that is used whenever the stored title is
+        just the id again. The first HEADING is not a substitute: it is as
+        often "Introduction" as the title.
+        """
+        rows = session.run(
+            """
+            MATCH (r:DocRevision)
+            WHERE r.logical_doc_id IN $ids AND r.lifecycle_status = 'ACTIVE'
+            OPTIONAL MATCH (p:Page)
+              WHERE p.logical_doc_id = r.logical_doc_id
+                AND p.lifecycle_status = 'ACTIVE'
+                AND coalesce(p.page_start, 1) = 1
+            RETURN r.logical_doc_id AS d, coalesce(r.title, '') AS t,
+                   substring(coalesce(p.search_text, ''), 0, 300) AS head
+            """,
+            ids=ids,
+        )
+        out: dict = {}
+        for r in rows:
+            doc = r["d"]
+            if not doc:
+                continue
+            stored = (r["t"] or "").strip()
+            stem = doc[4:] if doc.startswith("doc_") else doc
+            if stored and stored not in (doc, stem):
+                out[doc] = stored
+                continue
+            # Up to the first blank line: a wrapped title spans lines, and
+            # the blank line is what separates it from the author list.
+            block = (r["head"] or "").split("\n\n")[0]
+            label = " ".join(block.split())[:90].strip()
+            out[doc] = label or stem
+        return out
+
     def _underspecified_response(self, query, ctx, candidates):
         """Ask which document, instead of answering from whichever one ranked first.
 
@@ -408,7 +472,8 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         The candidates come from the vector pass that already ran, so offering
         the choice costs nothing beyond what answering would have cost.
         """
-        names = [c["document_id"] for c in (candidates or [])][:5]
+        candidates = self._with_titles(candidates)
+        names = [c.get("title") or c["document_id"] for c in (candidates or [])][:5]
         listed = "\n".join(f"- {n}" for n in names)
         text = (
             "That question does not say which document to look in, and it "

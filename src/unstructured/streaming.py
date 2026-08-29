@@ -162,6 +162,36 @@ def iter_document_stream(
         )
         return
 
+    # Graph-derived answers: a decline that must offer the document choice,
+    # a count, and an outline. Each IS the answer, and the non-streaming path
+    # returns all three verbatim (see _generate_document_answer). This path
+    # did not, so a streamed decline was rewritten by the model into "specify
+    # which document you are referring to from the list provided" -- while no
+    # list was ever sent, because the done event omitted
+    # `document_candidates`, which is what the picker renders from.
+    marker = next(
+        (c for c in chunks
+         if c.get("id") in ("underspecified", "graph_count", "graph_outline")),
+        None,
+    )
+    if marker is not None:
+        unplaced = marker.get("id") == "underspecified"
+        yield stream_event(
+            type="done",
+            agent="unstructured",
+            answer=(marker.get("text") or "").strip(),
+            sources=chunks,
+            strategy=query_type,
+            low_confidence=unplaced,
+            underspecified=unplaced,
+            # The picker is the point of declining: a list the reader cannot
+            # click is the same dead end as guessing, one step slower.
+            document_candidates=retrieved.get("document_candidates") or [],
+            document_id=retrieved.get("document_id"),
+            document_title=retrieved.get("document_title"),
+        )
+        return
+
     denied = next((c for c in chunks if c.get("id") == "access_denied"), None)
     if denied:
         answer = (denied.get("text") or "Access denied for document data.").strip()
