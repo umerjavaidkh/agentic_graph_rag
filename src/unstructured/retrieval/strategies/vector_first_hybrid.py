@@ -48,6 +48,7 @@ import threading
 from dataclasses import replace
 from typing import Any, Optional
 
+from ....shared.unicode_text import letters as letter_tokens
 from ..cypher_scope import as_doc_id_list
 
 # Above this share of the winner's score, the runner-up is not meaningfully
@@ -95,7 +96,7 @@ def _tokens(text: str) -> tuple[set, set]:
     publication, because the corpus holds dozens of near-identical ones.
     """
     low = (text or "").lower()
-    alpha = {w for w in re.findall(r"[a-z]+", low) if len(w) > 1}
+    alpha = set(letter_tokens(low, min_length=2))
     nums = {w for w in re.findall(r"\d+", low) if len(w) > 1}
     return alpha, nums
 

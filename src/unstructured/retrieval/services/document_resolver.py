@@ -17,12 +17,18 @@ from ...graph.constants import (
     DOCUMENT_LOGICAL_LABEL,
     DOCUMENT_ROOT_CYPHER,
 )
+from ....shared.unicode_text import LETTER, squash_punctuation
 from ....shared.neo4j.tenancy import tenant_filter
 from ....shared.neo4j.versioning import lifecycle_active
 from ..cypher_scope import _clean_doc_title
 from ..query_intent import KEYWORD_STOP as _KEYWORD_STOP
 from ..text_utils import _query_anchor_terms
 from .graph_seeds import GraphSeedService
+
+# A word that could carry a capital, in any script. Only the leading
+# class was ASCII here; `\w` was already Unicode-aware, and the
+# `w[0].isupper()` test downstream means the right thing everywhere.
+_WORD_RE = re.compile(rf"{LETTER}[\w'-]*")
 
 # A structural reference inside a question ("Note 3 (Commitments and
 # Contingencies)", "Box 9", "Item 7") names a location WITHIN whichever
@@ -445,7 +451,7 @@ class DocumentResolver:
         use spaces, filing ids use hyphens -- and none of that changes which
         document is meant.
         """
-        return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+        return squash_punctuation(text)
 
     def exact_document_reference(
         self, session, query: str, tenant_id: str = ""
@@ -733,7 +739,7 @@ class DocumentResolver:
                 terms.append(token)
 
         # Tokens that are capitalised mid-sentence are likely proper nouns / doc names
-        words = re.findall(r"[A-Za-z][\w'-]*", cleaned)
+        words = _WORD_RE.findall(cleaned)
         for i, w in enumerate(words):
             if i == 0:
                 continue  # skip sentence-start capitalisation

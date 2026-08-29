@@ -27,6 +27,7 @@ from ...shared.config.settings import (
 )
 from ...shared.model_providers.factory import get_chat_provider
 from ...shared.telemetry import pipeline_step
+from ...shared.unicode_text import sentence_split, words as word_tokens
 from .state import ESGState
 from .verification import compute_confidence
 
@@ -139,12 +140,6 @@ _CITATION_STOPWORDS = frozenset(
 )
 
 
-# A digit before the period is a section number, not a sentence end:
-# splitting on "2.4. Interoperability" produced a fragment ending at
-# '"2.4.' and attributed the rest to a different page.
-_SENTENCE_SPLIT = re.compile(r"(?<![0-9].)(?<=[.!?])\s+(?=[A-Z])")
-
-
 def _claim_citations(answer: str, chunks: list[dict]) -> list[dict]:
     """Attribute each sentence of the answer to the chunk that supports it.
 
@@ -165,7 +160,7 @@ def _claim_citations(answer: str, chunks: list[dict]) -> list[dict]:
 
     scored_chunks = [(c, _content_words(c.get("text") or c.get("title") or "")) for c in chunks]
     claims: list[dict] = []
-    for sentence in _SENTENCE_SPLIT.split(answer.strip()):
+    for sentence in sentence_split(answer.strip()):
         sentence = sentence.strip()
         if len(sentence) < 15:  # headings, "Yes.", list bullets
             continue
@@ -207,8 +202,8 @@ def _claim_citations(answer: str, chunks: list[dict]) -> list[dict]:
 
 def _content_words(text: str) -> set[str]:
     return {
-        w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
-        if len(w) > 3 and w not in _CITATION_STOPWORDS
+        w for w in word_tokens(text, min_length=4, numeric=True)
+        if w not in _CITATION_STOPWORDS
     }
 
 

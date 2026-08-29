@@ -16,6 +16,7 @@ from ..document.page_numbers import (
 )
 from ..document.page_vision import compact_visual_content
 from ..document.patterns import TABLE_REF_PATTERN
+from ...shared.unicode_text import words as word_tokens
 
 # Boilerplate stripped from queries before phrase extraction
 _QUERY_TAIL = re.compile(
@@ -207,8 +208,8 @@ def extract_search_phrases(query: str) -> tuple[list[str], list[str]]:
 
     words = [
         w
-        for w in re.findall(r"[a-z0-9]{3,}", core.lower())
-        if w not in _GENERIC_TERMS and len(w) > 2
+        for w in word_tokens(core, min_length=3, numeric=True)
+        if w not in _GENERIC_TERMS
     ]
     # Multi-word phrases (longest first)
     for n in (5, 4, 3):
