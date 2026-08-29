@@ -384,7 +384,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         self._local.scope_source = "resolver_fallback"
         return document_id, document_title, as_doc_id_list(document_id) or []
 
-    def _cannot_be_placed(self, query: str) -> bool:
+    def _cannot_be_placed(self, query: str, language: str = DEFAULT_LANGUAGE) -> bool:
         """Whether the question's own words can single out a document.
 
         Two ways to fail, and both are about the question rather than about
@@ -418,7 +418,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             # question back into a confident answer -- silently, which is
             # how it survived a full round of end-to-end checks.
             rarest = self._neo4j_session_call(
-                self._term_stats.min_term_frequency, keywords
+                self._term_stats.min_term_frequency, keywords, language
             )
         except Exception:
             # A statistic this gate cannot compute must not turn into a
@@ -542,7 +542,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         if (
             not document_id_hint
             and plan.shape is not Shape.STRUCTURAL
-            and self._cannot_be_placed(query)
+            and self._cannot_be_placed(query, language)
             and not self._named_document(tenant_id, query, language)
         ):
             try:
