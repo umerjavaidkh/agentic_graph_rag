@@ -56,6 +56,11 @@ graphify-out/
 # cannot run on a fresh clone without it. It is small (868K) and
 # redistributable; the larger corpora below are not.
 sample_data_to_test/unstructured/*.pdf
+# ...and in any subdirectory of it. The single-level rule above matched
+# nothing under sample_data_to_test/unstructured/arabic/, so a 54.6 MB
+# Arabic corpus was committed by a change that believed it was ignored.
+# Test corpora are downloaded, not redistributed -- see the note above.
+sample_data_to_test/unstructured/**/*.pdf
 !sample_data_to_test/unstructured/rag_document.pdf
 sample_data_to_test/unstructured/sec_edgar/
 sample_data_to_test/unstructured/textbooks/

@@ -69,7 +69,12 @@ def test_gate_works_when_the_caller_passes_no_session():
     calls: list = []
 
     class _Stats:
-        def min_term_frequency(self, session, keywords):
+        # Takes `language` because the real one does. A double that cannot
+        # accept the real signature raises TypeError, the gate's fail-open
+        # `except` swallows it, and every generic question becomes a
+        # confident answer again -- the exact regression this test exists
+        # to catch, arriving through the double instead of the code.
+        def min_term_frequency(self, session, keywords, language="en"):
             calls.append(session)
             return 0.9  # corpus-wide vocabulary
 

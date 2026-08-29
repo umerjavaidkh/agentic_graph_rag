@@ -122,14 +122,47 @@ class LanguageProfile:
     # means "use the existing English constants", which is what every
     # call site does today.
     structural_terms: frozenset[str] = field(default_factory=frozenset)
+    # Extra alternations for the question-SHAPE regexes, keyed by shape.
+    # Written in this profile's normalized form, because the matcher
+    # normalizes the query first.
+    #
+    # Unioned into the English patterns rather than selected between: a
+    # pattern written in one script cannot match text in another, so
+    # there is no language to branch on and no way for one language's
+    # patterns to fire on another's text. That is the design's rule --
+    # language is data, never a branch -- holding without a parameter.
+    intent_patterns: dict = field(default_factory=dict)
 
 
 ENGLISH = LanguageProfile(code="en", name="English")
+
+# Question shapes in Arabic, in NORMALIZED form (teh marbuta folded to
+# heh, hamza carriers to bare alef) because the matcher normalizes the
+# query before testing. Written out rather than transliterated from the
+# English list: "list all the sections" and "اذكر جميع الاقسام" are the
+# same shape but not the same words, and a translated regex would match
+# neither idiom well.
+_ARABIC_INTENT = {
+    # The definite article is optional throughout: Arabic drops it freely
+    # in questions ("ما هي فصول هذا المستند" alongside "ما هي الفصول"),
+    # and a pattern that requires it matches only half the idiom.
+    "toc": (
+        r"فهرس|جدول\s+المحتويات|المحتويات|"
+        r"(?:قايمه|اذكر|اسرد|ما)\s+(?:\S+\s+){0,2}?(?:ال)?(?:فصول|اقسام|عناوين)|"
+        r"ما\s+هي\s+(?:ال)?(?:فصول|اقسام|عناوين)"
+    ),
+    "page": r"صفحه\s*\d+|الصفحه\s*(?:رقم\s*)?\d+|محتوى\s+الصفحه",
+    "enumeration": r"اذكر\s+(?:كل|جميع)|عدد\s+(?:كل|جميع)|اسرد|ما\s+هي\s+(?:كل|جميع)|قايمه\s+ب",
+    "synthesis": r"قارن|قارن\s+بين|العلاقه\s+بين|كيف\s+يرتبط|الفرق\s+بين",
+    "overview": r"نظره\s+عامه|ملخص|لخص|عن\s+ماذا\s+يتحدث|عم\s+يتحدث|ما\s+موضوع",
+}
+
 
 ARABIC = LanguageProfile(
     code="ar",
     name="Arabic",
     normalize=normalize_arabic,
+    intent_patterns=_ARABIC_INTENT,
     scripts=(
         (0x0600, 0x06FF),  # Arabic
         (0x0750, 0x077F),  # Arabic Supplement
@@ -197,6 +230,25 @@ def derive_match_text(search_text: Optional[str], language: Optional[str]) -> Op
         return None
     normalized = get_profile(language).normalize(search_text)
     return normalized if normalized != search_text else None
+
+
+def intent_alternations(shape: str) -> list[str]:
+    """Every registered profile's extra patterns for one question shape.
+
+    Every profile, not the request's language. A shape regex is asking
+    "what kind of question is this", and the scripts do not overlap: an
+    Arabic alternation cannot match ASCII and an English one cannot match
+    Arabic. Unioning them is therefore free of cross-language false
+    positives AND removes the need to thread a language into all 77
+    shape checks -- which would have been the branch the design forbids,
+    spelled as a parameter.
+    """
+    out = []
+    for profile in _PROFILES.values():
+        pattern = (profile.intent_patterns or {}).get(shape)
+        if pattern:
+            out.append(pattern)
+    return out
 
 
 def script_shares(text: str) -> dict[str, float]:

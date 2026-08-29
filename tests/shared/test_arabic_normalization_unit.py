@@ -97,3 +97,25 @@ def test_the_matching_key_reads_match_text_then_falls_back():
     assert expr.index("match_text") < expr.index("search_text"), (
         "search_text must be the FALLBACK, not the preferred key"
     )
+
+
+def test_the_english_stemmer_never_fires_on_arabic():
+    """Measured, then pinned: it is already correct and must stay absent.
+
+    The design doc lists "retire _STEM_SUFFIXES for Arabic" as work to
+    do, implying the English stemmer damages Arabic. It does not: all
+    nine suffixes are Latin strings, so an Arabic word can never end with
+    one and `_morphological_stem` returns None every time. Removing it
+    would be a no-op.
+
+    What this pins is the opposite risk -- that someone reads the design
+    doc and ADDS an Arabic stemmer. Arabic morphology is templatic: the
+    root sits in the consonant skeleton, not in a strippable suffix, and
+    suffix-stripping an Arabic word destroys it. Embeddings already carry
+    the morphological relation; lexical matching is for exact anchors.
+    """
+    from src.unstructured.retrieval.services.ranking import RankingService
+
+    stem = RankingService.__new__(RankingService)._morphological_stem
+    for word in ("الهويات", "المعلم", "النتائج", "المدرسة", "الكلمات", "كتب"):
+        assert stem(word) is None, f"a stemmer fired on Arabic: {word}"
