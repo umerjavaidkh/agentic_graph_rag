@@ -145,6 +145,7 @@ async def query(
                 thread_id=thread_id,
                 request_id=request_id,
                 retrieval_mode=request.retrieval_mode,
+                language=request.language,
             ),
         )
 
@@ -260,6 +261,7 @@ async def query_stream(
                 thread_id=thread_id,
                 request_id=request_id,
                 retrieval_mode=request.retrieval_mode,
+                language=request.language,
             )
         except Exception:
             logger.exception("query stream failed request_id=%s", request_id)

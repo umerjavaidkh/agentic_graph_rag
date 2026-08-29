@@ -28,6 +28,7 @@ from .retrieval.verification import compute_confidence
 from ..interface.routing import document_agent_structured_guard, structured_entity_summary
 from ..structured.streaming import iter_structured_stream
 from ..interface.streaming.events import stream_event
+from ..shared.config.settings import DEFAULT_LANGUAGE
 
 
 def _document_prompt_name(question: str) -> str:
@@ -91,8 +92,9 @@ def iter_document_stream(
     document_id: Optional[str] = None,
     prior_context: Optional[dict] = None,
     skip_structured_guard: bool = False,
+    language: str = DEFAULT_LANGUAGE,
 ) -> Iterator[str]:
-    state: dict[str, Any] = {"question": resolved_question}
+    state: dict[str, Any] = {"question": resolved_question, "language": language}
     if user_context is not None:
         state["user_context"] = user_context
     if focus_section_id:

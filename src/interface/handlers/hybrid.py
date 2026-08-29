@@ -27,14 +27,20 @@ from ..routing import (
 from .rbac import _rbac_check
 from .documents import search_documents
 from .data import query_data
+from ...shared.config.settings import DEFAULT_LANGUAGE
 
 
 _hybrid_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="query_hybrid")
 
 
-def query_hybrid(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
+def query_hybrid(
+    question: str,
+    user_context: Optional[UserContext] = None,
+    thread_id: str = "default",
+    language: str = DEFAULT_LANGUAGE,
+) -> dict:
     start_telemetry()
-    state = {"question": question}
+    state = {"question": question, "language": language}
     if user_context is not None:
         state["user_context"] = user_context
 

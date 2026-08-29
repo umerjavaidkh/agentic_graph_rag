@@ -29,6 +29,7 @@ from .routing import (
 )
 from .context import _MODE_LOCKED
 from .handlers import MCP_HANDLERS, MCP_TOOLS, _rbac_check, query_data, query_hybrid, search_documents
+from ..shared.config.settings import DEFAULT_LANGUAGE
 
 """
 router.py — Query router for structured and unstructured retrieval.
@@ -48,6 +49,7 @@ def ask(
     thread_id: str = "default",
     request_id: Optional[str] = None,
     retrieval_mode: Optional[str] = None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> dict:
     start_telemetry()
     tel = get_telemetry()
@@ -94,7 +96,7 @@ def ask(
             # Observed with the UI's default user, who has no structured
             # access: every question asked on the Structured tab came back as
             # a document non-answer.
-            fallback = None if forced_tool else try_document_fallback(question, ctx)
+            fallback = None if forced_tool else try_document_fallback(question, ctx, language)
             if fallback is not None:
                 presentation = build_presentation(
                     question=question,
@@ -150,6 +152,7 @@ def ask(
             MCP_HANDLERS,
             user_context=user_context,
             thread_id=thread_id,
+            language=language,
         )
         result = enforce_mode(result, forced_tool)
         record_audit_event(

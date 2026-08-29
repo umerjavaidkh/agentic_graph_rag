@@ -26,18 +26,20 @@ from ..routing import (
     try_document_fallback,
 )
 from .rbac import _rbac_check
+from ...shared.config.settings import DEFAULT_LANGUAGE
 
 
 def search_documents(
     question: str,
     user_context: Optional[UserContext] = None,
     thread_id: str = "default",
+    language: str = DEFAULT_LANGUAGE,
 ) -> dict:
     start_telemetry()
     prior = get_turn(thread_id)
     resolved = resolve_follow_up(question, prior)
 
-    state = {"question": resolved["question"]}
+    state = {"question": resolved["question"], "language": language}
     if user_context is not None:
         state["user_context"] = user_context
     if resolved.get("focus_section_id"):
