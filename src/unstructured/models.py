@@ -134,6 +134,17 @@ class DKGNode:
     # by apply_revision_to_graph. Not per node -- see "How a document gets
     # its language" in docs/DESIGN_language_independence.md.
     language: Optional[str] = None
+    # search_text with the language's normalizer applied -- the key lexical
+    # matching compares against, never the text anyone reads. Set ONLY when
+    # normalization actually changed something, so English (whose normalizer
+    # is the identity) writes nothing and matches byte-identically on
+    # search_text exactly as it always did.
+    #
+    # Separate from search_text because search_text is the hydration
+    # fallback when a blob is missing, and citations have to stay
+    # byte-identical to the PDF -- every deterministic eval in eval/
+    # depends on exact spans.
+    match_text: Optional[str] = None
 
 
 # ─────────────────────────────────────────

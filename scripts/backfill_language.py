@@ -40,6 +40,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.shared.config.settings import DEFAULT_LANGUAGE  # noqa: E402
+from src.shared.language import (  # noqa: E402
+    _identity,
+    derive_match_text,
+    get_profile,
+)
 from src.shared.neo4j.driver import get_neo4j_driver  # noqa: E402
 from src.shared.storage.vector.factory import get_vector_store  # noqa: E402
 from src.unstructured.graph.constants import (  # noqa: E402
@@ -168,6 +173,57 @@ def _backfill_vector_payloads(session, language: str) -> int:
     return len(doc_ids)
 
 
+def _backfill_match_text(session, language: str, batch_size: int) -> int:
+    """Derive `match_text` for documents already ingested.
+
+    Only for languages whose normalizer actually changes text. English's
+    is the identity, so there is nothing to write and nothing to read --
+    the whole English corpus is skipped without touching a node.
+
+    Derived from `search_text` rather than from the PDF: normalization is
+    a pure function of the stored text, so this needs no re-parse, no
+    re-embed and no original file. That is the point of keeping matching
+    and reading in separate properties.
+    """
+    if get_profile(language).normalize is _identity:
+        return 0
+
+    updated = 0
+    while True:
+        rows = list(session.run(
+            f"""
+            MATCH (n{DOCUMENT_LABELS})
+            WHERE n.language = $language
+              AND n.search_text IS NOT NULL
+              AND n.match_text IS NULL
+            RETURN n.id AS id, n.search_text AS search_text
+            LIMIT $batch_size
+            """,
+            language=language,
+            batch_size=batch_size,
+        ))
+        if not rows:
+            break
+        pairs = []
+        for r in rows:
+            derived = derive_match_text(r["search_text"], language)
+            # A node whose text is already normalized gets its own text
+            # back, so the property is present and the next pass does not
+            # re-read it. `coalesce` makes the two cases identical to read.
+            pairs.append({"id": r["id"], "match_text": derived or r["search_text"]})
+        session.run(
+            """
+            UNWIND $pairs AS p
+            MATCH (n {id: p.id})
+            SET n.match_text = p.match_text
+            """,
+            pairs=pairs,
+        )
+        updated += len(pairs)
+        print(f"  match_text {updated} ({language})", flush=True)
+    return updated
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true")
@@ -205,6 +261,10 @@ def main() -> int:
             for code in sorted({args.language} | _language_codes_on_documents(session)):
                 docs = _backfill_vector_payloads(session, code)
                 print(f"vector payloads: tagged points of {docs} documents '{code}'")
+
+        for code in sorted({args.language} | _language_codes_on_documents(session)):
+            n = _backfill_match_text(session, code, args.batch_size)
+            print(f"match_text: derived for {n} nodes '{code}'")
     return 0
 
 

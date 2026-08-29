@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ..models import DKGEdge, DKGNode, NodeType, RelType
 from ...shared.config.settings import DEFAULT_LANGUAGE
+from ...shared.language import derive_match_text
 
 
 def file_content_sha256(path: str | Path, chunk_size: int = 1024 * 1024) -> str:
@@ -173,6 +174,7 @@ def apply_revision_to_graph(
         node.content_hash = plan.content_hash
         node.tenant_id = plan.tenant_id
         node.language = plan.language
+        node.match_text = derive_match_text(node.search_text, plan.language)
         out_nodes.append(node)
 
     out_edges: list[DKGEdge] = []

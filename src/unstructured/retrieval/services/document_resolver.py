@@ -21,7 +21,7 @@ from ....shared.unicode_text import LETTER, squash_punctuation
 from ....shared.config.settings import DEFAULT_LANGUAGE
 from ....shared.neo4j.tenancy import language_filter, tenant_filter
 from ....shared.neo4j.versioning import lifecycle_active
-from ..cypher_scope import _clean_doc_title
+from ..cypher_scope import _clean_doc_title, match_key_cypher
 from ..query_intent import KEYWORD_STOP as _KEYWORD_STOP
 from ..text_utils import _query_anchor_terms
 from .graph_seeds import GraphSeedService
@@ -140,10 +140,10 @@ class DocumentResolver:
             WHERE {lc_n}
               AND {tenant_filter("n")} AND {language_filter("n")}
               AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
-                   OR toLower(coalesce(n.search_text, '')) =~ {_WORD_BOUNDARY_PATTERN}
+                   OR {match_key_cypher("n")} =~ {_WORD_BOUNDARY_PATTERN}
                    OR (term =~ '\\d+' AND (
                         toLower(coalesce(n.title, '')) =~ {_DIGIT_BOUNDARY_PATTERN}
-                        OR toLower(coalesce(n.search_text, '')) =~ {_DIGIT_BOUNDARY_PATTERN})))
+                        OR {match_key_cypher("n")} =~ {_DIGIT_BOUNDARY_PATTERN})))
             WITH dl, term, count(DISTINCT n) AS cnt,
                  // Bare 4-digit years never count as a title match: our own
                  // logical_ids are systematically date-suffixed (ticker_form_
@@ -615,7 +615,7 @@ class DocumentResolver:
                     WHERE {lc_n}
                       AND {tenant_filter("n")} AND {language_filter("n")}
                       AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
-                           OR toLower(coalesce(n.search_text, '')) =~ {_WORD_BOUNDARY_PATTERN})
+                           OR {match_key_cypher("n")} =~ {_WORD_BOUNDARY_PATTERN})
                     WITH dl, term, count(DISTINCT n) AS cnt,
                          (NOT term =~ '\\d{{4}}'
                           AND (toLower(coalesce(dl.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
@@ -664,7 +664,7 @@ class DocumentResolver:
                      MATCH (d)-[:CONTAINS*1..5]->(n)
                      WHERE {lc_n}
                        AND (toLower(coalesce(n.title, '')) =~ {_WORD_BOUNDARY_PATTERN}
-                            OR toLower(coalesce(n.search_text, '')) =~ {_WORD_BOUNDARY_PATTERN})
+                            OR {match_key_cypher("n")} =~ {_WORD_BOUNDARY_PATTERN})
                    }})
                 RETURN coalesce(d.logical_doc_id, d.id) AS id,
                        coalesce(d.title, d.id) AS title,
