@@ -12,16 +12,8 @@ from ....shared.config.settings import (
     RETRIEVAL_FINAL_LIMIT,
 )
 from ....shared.neo4j.driver import get_neo4j_driver
-from ....shared.telemetry.context import TelemetryEvent, get_telemetry
-from ....shared.config.settings import HYBRID_STRATEGY, UNIVERSAL_UNSTRUCTURED_RETRIEVAL
+from ....shared.config.settings import HYBRID_STRATEGY
 from ....shared.registries.strategy_registry import get_unstructured, list_unstructured
-from ..executor import DocumentQueryExecutor
-from ..query_intent import (
-    is_filing_date_question,
-    is_page_question,
-    is_toc_question,
-    is_visual_page_question,
-)
 from ..services.formatter import access_denied_response
 from ..strategies import registration as _strategy_registration  # noqa: F401  (side-effect: registers strategies)
 
@@ -83,102 +75,23 @@ class HybridRetrieveMixin:
         if denied:
             return denied
 
-        tel = get_telemetry()
-
         # One universal unstructured strategy: every document question takes
-        # the same path, so document scoping is decided in one place instead
-        # of five. The structural fast-paths below each resolve their own
-        # document, which is why a TOC question bypassed the scoping fix
-        # entirely and still answered from the wrong document.
-        if UNIVERSAL_UNSTRUCTURED_RETRIEVAL:
-            key = HYBRID_STRATEGY or "graph_rag_hybrid"
-            if key not in list_unstructured():
-                key = "graph_rag_hybrid"
-            return get_unstructured(key).retrieve(
-                None, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
-                document_id_hint=document_id_hint,
-            )
-
-        # Box request (heading list or specific box content) — migrated to a
-        # registered strategy; see strategies/box.py.
-        if self._exec.is_box_list_request(query) or self._exec.parse_box_number(query) is not None:
-            with self.driver.session() as session:
-                response = get_unstructured("structural_box_list").retrieve(
-                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
-                    document_id_hint=document_id_hint,
-                )
-            if response:
-                if tel is not None:
-                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
-                return response
-
-        # Subsection request (section listing, section detail, or doc-choice
-        # clarification when multiple documents exist and none was named) —
-        # migrated to a registered strategy; see strategies/subsection.py.
-        if self._exec.is_subsection_request(query) and self._exec.parse_section_number(query):
-            with self.driver.session() as session:
-                response = get_unstructured("subsection_tree").retrieve(
-                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
-                    document_id_hint=document_id_hint,
-                )
-            if response:
-                if tel is not None:
-                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
-                return response
-
-        # TOC request (table of contents, or doc-choice clarification when the
-        # named document can't be resolved) — migrated to a registered
-        # strategy; see strategies/toc.py.
-        if is_toc_question(query):
-            with self.driver.session() as session:
-                response = get_unstructured("structural_toc").retrieve(
-                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
-                    document_id_hint=document_id_hint,
-                )
-            if response:
-                if tel is not None:
-                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
-                return response
-
-        # Filing-date request — answered from ingestion metadata
-        # (DocRevision.source_filename), not document text; see
-        # strategies/filing_date.py for why guessing from prose can't work
-        # here (the real filing date usually isn't in the PDF body at all).
-        if is_filing_date_question(query):
-            with self.driver.session() as session:
-                response = get_unstructured("structural_filing_date").retrieve(
-                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
-                    document_id_hint=document_id_hint,
-                )
-            if response:
-                if tel is not None:
-                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
-                return response
-
-        # Page request (figure/visual page or plain page text) — migrated to
-        # a registered strategy; see strategies/page.py.
-        if is_visual_page_question(query) or is_page_question(query):
-            with self.driver.session() as session:
-                response = get_unstructured("structural_page").retrieve(
-                    session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
-                    document_id_hint=document_id_hint,
-                )
-            if response:
-                if tel is not None:
-                    tel.add(TelemetryEvent(kind="unstructured_retrieve", meta={"mode": response.get("mode")}))
-                return response
-
-        # Terminal fallthrough: concurrent vector+lexical+graph fetch, merge,
-        # and pin — migrated to a registered strategy; see
-        # strategies/full_hybrid.py. No session is opened here: this
-        # strategy opens its own per-task sessions internally (each
-        # concurrently-submitted fetch needs its own, since Neo4j sessions
-        # aren't thread-safe) — `session=None` is passed only for Protocol
-        # conformance with the other strategies, which do use it.
-        # Which hybrid runs is a setting, not a constant, so the
-        # vector-scoped alternative can be exercised end to end without a
-        # code change. An unknown name falls back rather than failing the
-        # query -- a typo in an env var should not take retrieval down.
+        # the same path, so document scoping is decided in one place.
+        #
+        # Five structural fast-paths used to sit here -- TOC, page, box,
+        # subsection, filing date -- each resolving its own document before
+        # dispatching to its own strategy. That is why a TOC question
+        # bypassed the scoping fix entirely and still answered from the wrong
+        # document: the fix lived in one path and there were six. They were
+        # superseded by the universal strategy, kept behind a flag during the
+        # migration, and the flag has been on ever since; what remained was a
+        # second retrieval stack that nothing reached and every reader of
+        # this file still had to account for.
+        #
+        # Which hybrid runs is a setting, not a constant, so the vector-
+        # scoped alternative can be exercised end to end without a code
+        # change. An unknown name falls back rather than failing the query --
+        # a typo in an env var should not take retrieval down.
         key = HYBRID_STRATEGY or "graph_rag_hybrid"
         if key not in list_unstructured():
             key = "graph_rag_hybrid"
@@ -200,5 +113,4 @@ class HybridRetrieveMixin:
         self.driver = get_neo4j_driver(uri, user, password)
         self.user_context = user_context or DEFAULT_PUBLIC_CONTEXT
         self.rbac = GraphRBAC(uri, user, password, driver=self.driver)
-        self._exec = DocumentQueryExecutor()
 
