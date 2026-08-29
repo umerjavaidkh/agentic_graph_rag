@@ -35,6 +35,7 @@ from ...shared.model_providers.errors import ModelRateLimitError
 from ..document.graph_snapshot import X1_STAGE, X2_STAGE, write_snapshot
 from ..document.page_report import write_page_report
 from ..document.page_validation import check_construction_coverage
+from ...shared.language import detect_language
 from ..document.versioning import (
     DocumentRevisionPlan,
     apply_revision_to_graph,
@@ -99,6 +100,30 @@ class IngestionJob:
 
 _TENANT_STAMPING_RE = re.compile(r"\b(?:CREATE|MERGE)\s*\(", re.I)
 _HAS_TENANT_PROP_RE = re.compile(r"tenant_id\s*:", re.I)
+
+
+# Characters of each node sampled when deciding a document's language. A
+# share only needs a representative sample, and concatenating a 300-page
+# document to decide one property costs real time for no accuracy -- the
+# same reasoning and the same shape as CorpusTermStats' per-node prefix.
+_LANGUAGE_SAMPLE_CHARS = 400
+
+
+def _language_sample(nodes: list) -> str:
+    """Text to decide the document's language from.
+
+    Every node, not the first few: a document whose Arabic sits in an
+    appendix is still an Arabic document under the rule, and reading only
+    the front matter would file it as English. Bounded per node rather
+    than in total for the same reason -- a cap on the whole sample would
+    stop reading part-way through the document.
+    """
+    parts = []
+    for node in nodes:
+        text = getattr(node, "search_text", None) or getattr(node, "text", None) or ""
+        if text:
+            parts.append(text[:_LANGUAGE_SAMPLE_CHARS])
+    return "\n".join(parts)
 
 
 def warn_missing_tenant_stamps(statements: list[str]) -> list[str]:
@@ -495,6 +520,7 @@ class IngestionManager:
         plan = build_revision_plan(
             job.input_path,
             tenant_id=job.tenant_id or DEFAULT_TENANT_ID,
+            language=detect_language(_language_sample(nodes)),
             doc_key=job.doc_key,
             job_id=job.id,
             version_number=version_number,
