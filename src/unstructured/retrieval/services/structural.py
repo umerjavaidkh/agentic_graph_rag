@@ -25,7 +25,7 @@ from typing import Any, Optional
 from ....shared.config.settings import DEFAULT_LANGUAGE
 from ....shared.neo4j.tenancy import language_filter, tenant_filter
 from ....shared.storage.hydrator import get_hydrator
-from ..cypher_scope import content_scope_where_multi
+from ..cypher_scope import content_scope_where_multi, match_key_cypher
 
 # "Box 9" / "Figure 1" / "Table 3.2" / "page 12" / "section 4.2" -> (kind, number)
 _ADDRESS_PARTS = re.compile(
@@ -234,7 +234,7 @@ class StructuralService:
             # that form is kept alongside.
             where = ("(toLower(coalesce(n.title, '')) =~ $numpat "
                      "OR toLower(coalesce(n.title, '')) =~ $pat "
-                     "OR toLower(coalesce(n.search_text, '')) =~ $pat)")
+                     f"OR {match_key_cypher('n')} =~ $pat)")
 
         region_clause = " AND n.region_kind = $region_kind" if region_kind else ""
         rows = session.run(

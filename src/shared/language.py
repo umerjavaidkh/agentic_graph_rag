@@ -42,6 +42,59 @@ from .config.settings import (
 from .unicode_text import letters
 
 
+def _identity(text: str) -> str:
+    """The default normalizer: text is already in the space it matches in.
+
+    Returning the same object matters -- callers write a `match_text`
+    property only when normalization actually changed something, so an
+    identity normalizer costs no storage and leaves matching provably
+    byte-identical.
+    """
+    return text
+
+
+# Arabic writes the same word several ways, and a reader does not
+# distinguish them. Hamza carriers vary by orthographic convention
+# (أحمد / احمد), teh marbuta and heh are interchanged in much informal
+# and OCR'd text, tashkeel is optional and usually absent from what
+# someone types, and tatweel is a typographic stretch with no meaning
+# at all.
+#
+# Measured on the ingested corpus before this existed: the query
+# "الهويات" matched 0 nodes and the stored form "الهويّات" matched 38 --
+# the same word, one shadda apart.
+_ARABIC_FOLD = str.maketrans({
+    "أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا",   # alef with hamza / madda
+    "ى": "ي", "ئ": "ي",                        # alef maqsura, yeh with hamza
+    "ة": "ه",                                  # teh marbuta
+    "ؤ": "و",                                  # waw with hamza
+    "ـ": "",                                   # tatweel: pure typography
+})
+
+# Tashkeel and the Quranic annotation marks: combining characters that
+# carry pronunciation, not identity. Removed rather than folded, and
+# removed LAST so the table above still sees the letters it expects.
+_ARABIC_MARKS = dict.fromkeys(
+    list(range(0x064B, 0x0653))   # fathatan..sukun
+    + list(range(0x0653, 0x0660))  # maddah, hamza above/below, superscript alef
+    + list(range(0x0670, 0x0671))  # superscript alef
+    + list(range(0x06D6, 0x06ED))  # Quranic annotation
+)
+
+
+def normalize_arabic(text: str) -> str:
+    """Collapse the spellings of a word that a reader treats as one.
+
+    Applied to the MATCHING key on both sides -- the query and a derived
+    `match_text` -- and never to stored text. Citations have to stay
+    byte-identical to the PDF, and every deterministic eval in eval/
+    depends on exact spans.
+    """
+    if not text:
+        return text
+    return text.translate(_ARABIC_FOLD).translate(_ARABIC_MARKS)
+
+
 @dataclass(frozen=True)
 class LanguageProfile:
     """Everything that differs between languages, in one registrable object.
@@ -64,7 +117,7 @@ class LanguageProfile:
     # collapses alef variants, teh marbuta, tashkeel and tatweel here in
     # Phase 2 -- in the profile rather than in the shared tokenizer, so
     # no other language pays for it.
-    normalize: Callable[[str], str] = lambda text: text
+    normalize: Callable[[str], str] = _identity
     # Words that mark structure ("chapter", "section", "table"). Empty
     # means "use the existing English constants", which is what every
     # call site does today.
@@ -76,6 +129,7 @@ ENGLISH = LanguageProfile(code="en", name="English")
 ARABIC = LanguageProfile(
     code="ar",
     name="Arabic",
+    normalize=normalize_arabic,
     scripts=(
         (0x0600, 0x06FF),  # Arabic
         (0x0750, 0x077F),  # Arabic Supplement
@@ -124,6 +178,25 @@ def configured_languages() -> list[str]:
     live = [c for c in ENABLED_LANGUAGES if c in _PROFILES]
     rest = sorted(c for c in live if c != DEFAULT_LANGUAGE)
     return [DEFAULT_LANGUAGE, *rest]
+
+
+def derive_match_text(search_text: Optional[str], language: Optional[str]) -> Optional[str]:
+    """The normalized key for `search_text`, or None when there is no work.
+
+    None on purpose rather than a copy. English's normalizer is the
+    identity, so a copy would double the stored text of the entire English
+    corpus to say nothing -- and callers match on
+    `coalesce(n.match_text, n.search_text)`, which falls through to exactly
+    the behaviour English had before this existed. Byte-identical by
+    construction, and free.
+
+    A language whose normalizer does change the text (Arabic) gets the
+    property, and matching happens in that normalized space on both sides.
+    """
+    if not search_text:
+        return None
+    normalized = get_profile(language).normalize(search_text)
+    return normalized if normalized != search_text else None
 
 
 def script_shares(text: str) -> dict[str, float]:

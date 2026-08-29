@@ -528,6 +528,7 @@ class Neo4jExporter:
             "blob_key_visual": node.blob_key_visual,
             "tenant_id": node.tenant_id,
             "language": node.language,
+            "match_text": node.match_text,
         }
 
     @staticmethod
