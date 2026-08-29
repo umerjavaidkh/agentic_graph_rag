@@ -14,6 +14,9 @@ below are the ones actually taken.
 | Separation | A `:Language` parent node, plus a `language` property on every node |
 | Code | **One codebase**, one retrieval path |
 | Cross-lingual (Arabic query → English document) | Out of scope for now |
+| Scope | **Unstructured (document) retrieval only** |
+| A document's language | One per document, English by default |
+| A document containing both | Goes to Arabic — the non-default language wins |
 | Corpus translation | Never |
 | Longer term | This becomes a compliance / decision-support engine |
 
@@ -34,6 +37,50 @@ behaviour is byte-identical by construction rather than by testing.
 `DocumentLogical` is today's root of the document graph -- 998 nodes with
 no incoming relationship. The Language node sits above it, which also
 gives the document graph a single entry point it currently lacks.
+
+### The structured path is out of scope
+
+Language scoping applies to document retrieval and nothing else. The
+structured business graph has no language dimension: its labels and
+properties are schema, not prose, and an Arabic question about orders is
+still answered by `MATCH (o:Order)`. `language_filter()` therefore goes
+on document scope call sites only -- splicing it into a structured query
+would scope a graph that has nothing to scope.
+
+This is why the `:Language` node attaches to `DocumentLogical` and to
+nothing else, and why `language` is stamped by the document ingestion
+path rather than by anything shared with tabular ingest.
+
+### How a document gets its language
+
+English is the default: it is what a document is when no other profile
+claims it, which is why every existing document backfills to `en` without
+being examined. Any other language present in enough quantity wins over
+the default -- an Arabic document quoting English regulation is Arabic,
+and so is a document laid out in both.
+
+"In enough quantity" is a *share* of the document's letters, not a
+presence test. A presence test would move a 300-page English filing into
+the Arabic corpus on one stray glyph, and OCR on scanned pages produces
+stray glyphs routinely. The threshold is a setting rather than a
+constant because the right value has to be measured against real
+bilingual documents; it is not knowable in advance.
+
+The rule is a precedence over registered profiles, not a test for
+Arabic. Adding a third language is registering a profile with its
+scripts -- the same plug-and-play shape as the retrieval strategies, and
+the reason this is not written as `if lang == "ar"`.
+
+**One language per document, stamped onto every node in it.** An earlier
+draft of this file labelled each node by the language of its own text, so
+the English sections of a bilingual document stayed reachable by an
+English query. That was rejected: it means one document lives in two
+corpora at once, and every count, every df table and every "which
+document" answer has to say which half it means. The cost is real and is
+recorded here rather than discovered later -- an English-scoped query
+returns nothing from a bilingual document, including for content written
+in English. Cross-lingual retrieval is what would fix that, and it is out
+of scope by the same decision.
 
 Cost: +2 nodes on 611,814 (0.0003%) and +998 relationships on 978,354
 (0.1%). Attaching Language to *every* node instead would put 611,814
@@ -139,9 +186,10 @@ Work:
   working untouched.
 - `MERGE` the `:Language` node at ingest -- create-if-missing, never a
   precondition. A missing config node must not block an ingest.
-- `language` stored **per node**, not per document. An Arabic document
-  quoting English regulation has English sections, and mislabelling them
-  makes their `search_text` matching wrong.
+- `language` stamped onto **every node of a document**, from the one
+  language the document resolved to. See "How a document gets its
+  language" above for why this is per document rather than per node, and
+  what it costs.
 - `LanguageProfile` registered by code, with English as the default
   profile built from today's behaviour, so the English path is unchanged
   by construction.
@@ -155,6 +203,10 @@ nothing is ingested there yet.
 The part that cannot be fixed later: what the parser fails to store is
 not recoverable at query time.
 
+- Detection calibrated against real bilingual documents: the share
+  threshold above is provisional until there is something to measure it
+  on. The failure to watch for is a scanned English document whose OCR
+  noise crosses the line, not a bilingual document that fails to.
 - Arabic normalization in the profile: alef variants (أ إ آ → ا), teh
   marbuta (ة → ه), diacritics/tashkeel, tatweel (ـ). This is also where
   dialect spelling variation collapses, which is the concern that

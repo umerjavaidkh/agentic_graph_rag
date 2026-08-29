@@ -18,6 +18,7 @@ from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from ..unstructured.graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
 from ..shared.neo4j.driver import close_neo4j_driver, get_neo4j_driver
+from ..shared.language import get_profile
 from ..shared.unicode_text import fold
 from ..shared.neo4j.tenancy import tenant_filter
 from ..unstructured.document.graph_snapshot import (
@@ -147,6 +148,33 @@ class QueryRequest(BaseModel):
             "fall back to 'unstructured'."
         ),
     )
+
+    language: Optional[str] = Field(
+        default=None,
+        # Pydantic skips validators on defaults unless asked, and an absent
+        # `language` has to resolve to the deployment default the same way a
+        # supplied one does -- otherwise the omitted case is the one path
+        # that reaches retrieval unnormalised.
+        validate_default=True,
+        description=(
+            "Language to scope document retrieval to. Omitted means the "
+            "deployment default. Unstructured retrieval only — the "
+            "structured business graph has no language dimension."
+        ),
+    )
+
+    @field_validator("language")
+    @classmethod
+    def _known_language(cls, value: Optional[str]) -> Optional[str]:
+        """Resolve to a language this deployment actually has.
+
+        Falls back rather than rejecting. An unrecognised code is a request
+        that should be answered in the default language, not a 400: a user
+        whose locale is `ar` asking an English question should widen, not
+        fail, and a client sending a code from a future build must not be
+        able to break querying.
+        """
+        return get_profile(value).code
 
     @field_validator("question")
     @classmethod
