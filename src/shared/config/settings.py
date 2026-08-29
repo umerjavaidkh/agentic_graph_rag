@@ -481,11 +481,19 @@ DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "en")
 # 300-page English filing into the Arabic corpus on one stray glyph, and
 # scanned pages produce stray glyphs routinely.
 #
-# 0.05 is a starting point, not a measured value -- there is nothing to
-# measure it against until real bilingual documents are ingested, and
-# `scripts/audit_language.py` exists to do that. The failure to watch for
-# is a scanned English document whose OCR noise crosses the line, not a
-# bilingual document that fails to.
+# Measured by `scripts/audit_language.py` over the 561-document English
+# corpus: 5 documents contain SOME Arabic script -- arXiv NLP papers
+# quoting Arabic examples -- at shares of 0.0001 to 0.0012. So the noise
+# floor is 0.0012 and 0.05 sits ~40x above it, which is the safe side.
+#
+# That measurement also settles the design argument. Under a naive "any
+# Arabic makes it Arabic" presence test, those 5 English papers would
+# leave the English corpus and no English query would reach them again.
+# The failure mode is real, not hypothetical.
+#
+# What is NOT yet measured is the other side: the lowest share of a
+# genuinely bilingual document. Until one is audited, 0.05 is bounded
+# from below by evidence and from above by nothing.
 LANGUAGE_SHARE_THRESHOLD = float(os.environ.get("LANGUAGE_SHARE_THRESHOLD", "0.05"))
 
 # Languages live in THIS deployment, comma-separated. Registering a profile
