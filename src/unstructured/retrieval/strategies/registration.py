@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from ....shared.neo4j.driver import get_neo4j_driver
 from ....shared.registries.strategy_registry import register_unstructured
-from ..executor import DocumentQueryExecutor
 from ..services.chapter_summary import ChapterSummaryService
 from ..services.document_resolver import DocumentResolver
 from ..services.formatter import ResponseFormatter
@@ -23,12 +22,7 @@ from ..services.graph_seeds import GraphSeedService
 from ..services.lexical import LexicalService
 from ..services.ranking import RankingService
 from ..services.reranker import RerankerService
-from .box import BoxStrategy
-from .filing_date import FilingDateStrategy
 from .full_hybrid import FullHybridStrategy
-from .page import PageStrategy
-from .subsection import SubsectionStrategy
-from .toc import TocStrategy
 from .vector_first_hybrid import VectorFirstHybridStrategy
 
 ranking = RankingService()
@@ -38,13 +32,7 @@ lexical = LexicalService(ranking, document_resolver)
 chapter_summaries = ChapterSummaryService()
 formatter = ResponseFormatter()
 reranker = RerankerService()
-exec_ = DocumentQueryExecutor()
 
-register_unstructured("subsection_tree", lambda: SubsectionStrategy(document_resolver, formatter, exec_))
-register_unstructured("structural_box_list", lambda: BoxStrategy(document_resolver, formatter, exec_))
-register_unstructured("structural_page", lambda: PageStrategy(document_resolver, formatter))
-register_unstructured("structural_toc", lambda: TocStrategy(document_resolver, formatter, exec_))
-register_unstructured("structural_filing_date", lambda: FilingDateStrategy(document_resolver, formatter))
 register_unstructured(
     "graph_rag_hybrid",
     lambda: FullHybridStrategy(
