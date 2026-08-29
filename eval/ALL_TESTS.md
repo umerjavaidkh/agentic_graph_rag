@@ -36,6 +36,53 @@ Choosing cleanly-parsed documents was worth 14 points on its own (73% ->
 
 Detail: `shapes_second_last5_qa_log.md`. Harness: `scripts/eval_shapes.py`.
 
+### Arabic, same harness, same shape count
+
+37-document Arabic corpus (BilArabi teacher's guide + 36 Arabic Wikipedia
+articles). Run as `eval_shapes.py --docs 5 --language ar`.
+
+| Scope | Docs | Qs | Right document | Precision@k | Deterministic | Median |
+|---|---|---|---|---|---|---|
+| English baseline, 5 cleanly-parsed | 5 | 102 | 92/92 (100%) | 0.95 | 30/30 (100%) | 2.5s |
+| **Arabic, 5 documents** | 5 | 94 | **84/84 (100%)** | **0.29** | **17/24 (71%)** | 0.4s |
+
+Per shape (Arabic): fact 4/4, numeric 3/4, ambiguous 5/5,
+unanswerable 5/5, enumerative 0/3, aggregation 0/3.
+
+**Right-document is the number the language work was for, and it is
+100%.** Every question resolved to the document it was generated from,
+across a shared database holding 998 English documents alongside the 37
+Arabic ones. Scoping, detection and normalization all hold at corpus
+scale.
+
+**The unanswerable score was 0/5 until the harness was fixed, and the
+system was never wrong.** `REFUSAL` here was a tuple of English phrases.
+Once the system began refusing in the language it was asked in, a correct
+Arabic refusal matched none of them and scored zero -- an exam graded
+against the wrong key, and indistinguishable in the summary from a system
+that had started fabricating. Checked directly: 5/5 refusals, every one
+of the form "هذا المستند لا يغطي ..." ("this document does not cover
+..."). Refusal phrases now live in the language profiles.
+
+**Precision 0.29 against English's 0.95 is real, and it is not
+retrieval.** A precision of 0.00 here means no chunks came back at all,
+and those rows return in 0.4s -- too fast for a model call. The document
+picker is firing: with 37 topically-spread Arabic documents, a question
+generated from one document's prose and not naming it is genuinely
+ambiguous more often in Arabic than in English, because Arabic keyword
+extraction is weaker. Two-letter function words are dropped by a token
+floor written for English, there is no stemmer (correctly -- Arabic
+morphology is templatic), and `_KEYWORD_STOP` is an English list, so an
+Arabic question offers fewer usable anchors and looks underspecified.
+
+That is the half of Phase 3 deliberately not done: document frequency is
+wired to the underspecified GATE, not yet to keyword extraction. The
+number above is what quantifies the cost of leaving it, and enumerative
+0/3 and aggregation 0/3 are the same shortage seen from another angle --
+both shapes need several anchors to hit a set.
+
+Detail: `shapes_arabic_qa_log.md`.
+
 ## 2. Deterministic cloze eval — 500-document corpus
 
 | Scope | Answer accuracy | Right document | Median |

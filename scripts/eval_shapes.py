@@ -19,19 +19,45 @@ Metrics per question:
 """
 from __future__ import annotations
 
-import argparse, json, re, statistics as st, time, urllib.request
+import argparse, json, re, statistics as st, sys, time, urllib.request
+from pathlib import Path
+
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from collections import defaultdict
 from neo4j import GraphDatabase
 
 NEO4J_URI = "bolt://localhost:17687"
 API = "http://127.0.0.1:8000/query"
-REFUSAL = ("does not cover", "not cover", "no specific", "does not provide", "cannot",
-           "not available", "does not mention", "not specified", "unable to", "no information")
+# Refusal phrases now come from the language profiles rather than living
+# here as English. The list below was English-only, so once the system
+# started refusing in the language it was asked in, a CORRECT Arabic
+# refusal matched nothing and the unanswerable shape scored 0/5 -- an
+# exam graded against the wrong key, and indistinguishable in the summary
+# from a system that had started fabricating.
+#
+# Rebound in main() once --language is known; the module-level default
+# keeps the English behaviour for anything importing this directly.
+from src.shared.language import refusal_markers as _refusal_markers  # noqa: E402
+
+REFUSAL = _refusal_markers("en")
+
+
+# Set from --language. Omitted from the payload entirely when empty, so an
+# English run sends the identical request it always did and stays
+# comparable to the recorded baseline.
+LANGUAGE = ""
 
 
 def ask(q, thread, timeout=240):
-    b = json.dumps({"question": q, "user_id": "admin_001", "role": "admin",
-                    "tenant_id": "", "thread_id": thread}).encode()
+    body = {"question": q, "user_id": "admin_001", "role": "admin",
+            "tenant_id": "", "thread_id": thread}
+    if LANGUAGE:
+        # Without this the request takes the deployment default and the
+        # scoped corpus is unreachable -- the eval would report 0% for a
+        # reason that has nothing to do with retrieval.
+        body["language"] = LANGUAGE
+    b = json.dumps(body).encode()
     r = urllib.request.Request(API, b, {"Content-Type": "application/json"})
     t0 = time.perf_counter()
     try:
@@ -127,6 +153,9 @@ def build(session, doc, title):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--docs", type=int, default=5)
+    ap.add_argument("--language", default="",
+                    help="Scope every question to one language (e.g. ar). "
+                         "Omitted from the request when unset.")
     # How many of the most-recent documents to step over first. --skip 5
     # with --docs 5 measures the second-last five, so a rerun is a fresh
     # sample rather than the batch already reported on.
@@ -137,6 +166,9 @@ def main():
     # retrieval rather than how badly the headings came out.
     ap.add_argument("--ids", default="")
     args = ap.parse_args()
+    global LANGUAGE, REFUSAL
+    LANGUAGE = (args.language or "").strip().lower()
+    REFUSAL = _refusal_markers(LANGUAGE or None)
     drv = GraphDatabase.driver(NEO4J_URI, auth=("neo4j", "password123"))
     with drv.session() as s:
         if args.ids:
