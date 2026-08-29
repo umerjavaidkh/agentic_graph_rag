@@ -26,9 +26,15 @@ from ..routing import (
 )
 from ..context import _MODE_LOCKED
 from .rbac import _rbac_check
+from ...shared.config.settings import DEFAULT_LANGUAGE
 
 
-def query_data(question: str, user_context: Optional[UserContext] = None, thread_id: str = "default") -> dict:
+def query_data(
+    question: str,
+    user_context: Optional[UserContext] = None,
+    thread_id: str = "default",
+    language: str = DEFAULT_LANGUAGE,
+) -> dict:
     start_telemetry()
     prior = get_turn(thread_id)
     resolved = resolve_follow_up(question, prior)
@@ -53,7 +59,9 @@ def query_data(question: str, user_context: Optional[UserContext] = None, thread
     # be better served by documents, so that case still falls back.
     denied = result.get("strategy") == "access_denied"
     if result.get("low_confidence") and not denied and not _MODE_LOCKED.get():
-        fallback = try_document_fallback(resolved["question"], user_context)
+        # Forwarded, not used by the structured graph itself: this retry
+        # answers from documents, so it is scoped like any document query.
+        fallback = try_document_fallback(resolved["question"], user_context, language)
         if fallback is not None:
             fallback_used = True
             result = {

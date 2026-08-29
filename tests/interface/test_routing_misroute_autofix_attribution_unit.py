@@ -51,7 +51,13 @@ def test_run_via_mcp_tool_reattributes_document_agent_structured_autofix(routing
         "agent": "structured",
         "_autofix_agent": "structured",
     }
-    handlers = {"search_documents": lambda question, user_context=None, thread_id="default": fake_result}
+    # Takes `language` because every document handler now does: run_via_mcp_tool
+    # passes it to the language-aware tools, and a double that cannot accept it
+    # is not standing in for the real contract.
+    handlers = {
+        "search_documents": lambda question, user_context=None, thread_id="default",
+        language="en": fake_result
+    }
 
     out = routing_mod.run_via_mcp_tool(
         "Which supplier provides Chai?", "search_documents", handlers
@@ -68,7 +74,13 @@ def test_run_via_mcp_tool_leaves_plain_document_answer_unattributed(routing_mod,
         "answer": "The compliance policy requires reporting concerns.",
         "agent": "unstructured",
     }
-    handlers = {"search_documents": lambda question, user_context=None, thread_id="default": fake_result}
+    # Takes `language` because every document handler now does: run_via_mcp_tool
+    # passes it to the language-aware tools, and a double that cannot accept it
+    # is not standing in for the real contract.
+    handlers = {
+        "search_documents": lambda question, user_context=None, thread_id="default",
+        language="en": fake_result
+    }
 
     out = routing_mod.run_via_mcp_tool(
         "What does the compliance policy say?", "search_documents", handlers
