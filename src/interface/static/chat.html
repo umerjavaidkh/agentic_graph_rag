@@ -2169,6 +2169,17 @@
       state.inner.appendChild(metaRow);
       appendFeedbackBar(state.inner, event.request_id);
 
+      // Streaming answers never offered the picker, so a declined question
+      // arrived as a list of document ids the reader could not click --
+      // the same dead end as guessing, one step slower. Before the sources,
+      // for the reason given at the non-streaming call site: it corrects the
+      // answer rather than annotating it.
+      appendDocumentPicker(
+        state.bubble,
+        event.document_candidates,
+        event.question || lastAskedQuestion
+      );
+
       if (sources && sources.length) {
         const details = document.createElement('details');
         details.className = 'sources-panel';
