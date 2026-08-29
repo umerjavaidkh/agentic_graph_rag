@@ -50,6 +50,7 @@ import threading
 from dataclasses import replace
 from typing import Any, Optional
 
+from ....shared.language import configured_languages
 from ....shared.unicode_text import letters as letter_tokens
 from ..cypher_scope import as_doc_id_list
 
@@ -173,13 +174,23 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
     def last_candidates(self) -> list:
         return getattr(self._local, "candidates", []) or []
 
-    def _named_document(self, tenant_id: str, query: str) -> Optional[str]:
-        """The document this query names outright, however it is written."""
+    def _named_document(self, tenant_id: str, query: str, language: str) -> Optional[str]:
+        """The document this query names outright, however it is written.
+
+        Language-scoped like every other way of reaching a document. Naming
+        is the one path that does not go through a scoped Cypher query --
+        it matches against an in-process index -- so without this it stays
+        open after the others have closed, and a question in one language
+        resolves a document in the other by title alone.
+        """
         q = _squash(query)
         q_alpha, q_nums = _tokens(query)
+        scoped = len(configured_languages()) > 1
 
         best, best_score = None, 0
-        for doc_id, key, raw in self._name_index(tenant_id):
+        for doc_id, key, raw, doc_language in self._name_index(tenant_id):
+            if scoped and doc_language != language:
+                continue
             # Exact-ish: the whole name appears verbatim once punctuation is
             # gone. Strongest evidence, so it outranks token agreement.
             if len(key) >= MIN_NAME_MATCH and key in q:
@@ -219,7 +230,9 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             rows = self._neo4j_session_call(
                 lambda sess: list(sess.run(
                     "MATCH (dl:DocumentLogical) "
-                    "RETURN dl.logical_id AS id, coalesce(dl.title, '') AS title"
+                    "RETURN dl.logical_id AS id, coalesce(dl.title, '') AS title, "
+                    "coalesce(dl.language, $default) AS language",
+                    default=DEFAULT_LANGUAGE,
                 ))
             )
             idx = []
@@ -230,9 +243,10 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                 # The "doc_" prefix is ours, not part of the name the user
                 # would type.
                 raw = lid[4:] if lid.startswith("doc_") else lid
-                idx.append((lid, _squash(raw), raw))
+                lang = r["language"]
+                idx.append((lid, _squash(raw), raw, lang))
                 if r["title"]:
-                    idx.append((lid, _squash(r["title"]), r["title"]))
+                    idx.append((lid, _squash(r["title"]), r["title"], lang))
             self._names = idx
         return self._names
 
@@ -269,7 +283,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         # and answered "this document does not cover it" about a document
         # that was never asked for.
         named = self._neo4j_session_call(
-            self._document_resolver.exact_document_reference, query, tenant_id
+            self._document_resolver.exact_document_reference, query, tenant_id, language
         )
         if named and named[0]:
             self._local.scope_source = "exact_reference"
@@ -278,7 +292,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         # The same question asked without punctuation, so a name is not lost
         # to a hyphen -- that is how a question about SP 800-161r1 came back
         # answered from a different NIST report.
-        squashed = self._named_document(tenant_id, query)
+        squashed = self._named_document(tenant_id, query, language)
         if squashed:
             self._local.scope_source = "named"
             return squashed, None, [squashed]
@@ -287,13 +301,22 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         # page 7?") should stay on the document under discussion.
         if document_id_hint:
             validated = self._neo4j_session_call(
-                self._document_resolver._validate_document_id, document_id_hint, tenant_id
+                self._document_resolver._validate_document_id,
+                document_id_hint,
+                tenant_id,
+                language,
             )
             if validated:
                 self._local.scope_source = "hint"
                 return document_id_hint, None, [document_id_hint]
 
-        cache_key = (tenant_id or "", (query or "").strip().lower())
+        # Language is part of the key, not an attribute of the answer.
+        # Without it the first caller's language wins for every later
+        # caller asking the same words: an Arabic question cached its
+        # document, and the identical question scoped to English was then
+        # answered with that Arabic document's id and zero chunks --
+        # scoped correctly everywhere except in the memo in front of it.
+        cache_key = (tenant_id or "", language or "", (query or "").strip().lower())
         with self._scope_lock:
             cached = self._scope_cache.get(cache_key)
         if cached:
@@ -309,7 +332,9 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
 
         candidates = []
         try:
-            candidates = self._candidate_docs.candidates(query, tenant_id, embedding=embedding)
+            candidates = self._candidate_docs.candidates(
+                query, tenant_id, embedding=embedding, language=language
+            )
         except Exception:
             # A vector store that is down must not fail the query; fall
             # through to the resolver, which is what the parent would do.
@@ -518,10 +543,10 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             not document_id_hint
             and plan.shape is not Shape.STRUCTURAL
             and self._cannot_be_placed(query)
-            and not self._named_document(tenant_id, query)
+            and not self._named_document(tenant_id, query, language)
         ):
             try:
-                cands = self._candidate_docs.candidates(query, tenant_id)
+                cands = self._candidate_docs.candidates(query, tenant_id, language=language)
             except Exception:
                 cands = []
             return self._underspecified_response(

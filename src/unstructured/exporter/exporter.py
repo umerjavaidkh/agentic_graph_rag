@@ -459,6 +459,15 @@ class Neo4jExporter:
                             "logical_doc_id": plan.logical_id,
                             "revision_id": plan.revision_id,
                             "tenant_id": plan.tenant_id,
+                            # Filtered on at ANN time rather than after.
+                            # candidate_docs probes a fixed 200 nearest
+                            # chunks; if the probe is language-blind, an
+                            # English query spends that budget on Arabic
+                            # chunks as the Arabic corpus grows and the
+                            # scoped caller silently gets fewer candidates
+                            # than it asked for. Post-filtering cannot fix
+                            # that -- the chunks were never fetched.
+                            "language": plan.language,
                         },
                     )
                 )

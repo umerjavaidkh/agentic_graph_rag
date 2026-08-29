@@ -124,5 +124,30 @@ class QdrantVectorStore(VectorStore):
             points_selector=FilterSelector(filter=query_filter),
         )
 
+    def set_payload_by_filter(self, filters: dict, payload: dict) -> int:
+        from qdrant_client.models import (
+            FieldCondition,
+            Filter,
+            MatchAny,
+            MatchValue,
+        )
+
+        conditions = [
+            FieldCondition(
+                key=k,
+                match=MatchAny(any=list(v)) if isinstance(v, (list, tuple, set)) else MatchValue(value=v),
+            )
+            for k, v in filters.items()
+        ]
+        self._client.set_payload(
+            collection_name=self.collection_name,
+            payload=payload,
+            points=Filter(must=conditions),
+            wait=True,
+        )
+        # Qdrant reports an operation status, not a row count; the caller
+        # verifies by counting matches, which is the only honest number.
+        return 0
+
     def point_id_for(self, node_id: str) -> str:
         return _point_id(node_id)
