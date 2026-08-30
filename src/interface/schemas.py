@@ -18,7 +18,7 @@ from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from ..unstructured.graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
 from ..shared.neo4j.driver import close_neo4j_driver, get_neo4j_driver
-from ..shared.language import get_profile
+from ..shared.language import detect_language, get_profile
 from ..shared.unicode_text import fold
 from ..shared.neo4j.tenancy import tenant_filter
 from ..unstructured.document.graph_snapshot import (
@@ -31,7 +31,7 @@ from ..unstructured.document.graph_snapshot import (
 from ..unstructured.document.purge import delete_document
 from ..unstructured.document.versioning import source_file_blob_key
 from ..shared.storage.blob.factory import get_blob_store
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from ..shared.audit import AuditEventType, get_audit_store, record_audit_event
 from .bridge import ask
 from ..shared.conversation import clear_turn
@@ -151,14 +151,12 @@ class QueryRequest(BaseModel):
 
     language: Optional[str] = Field(
         default=None,
-        # Pydantic skips validators on defaults unless asked, and an absent
-        # `language` has to resolve to the deployment default the same way a
-        # supplied one does -- otherwise the omitted case is the one path
-        # that reaches retrieval unnormalised.
-        validate_default=True,
+        # Deliberately NOT validate_default: a None here has to stay None
+        # long enough for _resolve_language below to tell "the client did
+        # not say" from "the client said en".
         description=(
-            "Language to scope document retrieval to. Omitted means the "
-            "deployment default. Unstructured retrieval only — the "
+            "Language to scope document retrieval to. Omitted means: detect "
+            "it from the question. Unstructured retrieval only — the "
             "structured business graph has no language dimension."
         ),
     )
@@ -166,15 +164,38 @@ class QueryRequest(BaseModel):
     @field_validator("language")
     @classmethod
     def _known_language(cls, value: Optional[str]) -> Optional[str]:
-        """Resolve to a language this deployment actually has.
+        """Resolve a SUPPLIED code to a language this deployment has.
 
         Falls back rather than rejecting. An unrecognised code is a request
         that should be answered in the default language, not a 400: a user
         whose locale is `ar` asking an English question should widen, not
         fail, and a client sending a code from a future build must not be
         able to break querying.
+
+        `None` passes through untouched -- that case is not a bad code, it
+        is the absence of one, and _resolve_language handles it.
         """
-        return get_profile(value).code
+        return None if value is None else get_profile(value).code
+
+    @model_validator(mode="after")
+    def _resolve_language(self):
+        """Detect the language from the question when the client sent none.
+
+        Found the hard way: `src/static/chat.html` never sends `language`,
+        so every question typed into the product UI was scoped to the
+        deployment default. Ten Arabic questions that answered correctly
+        over curl with `language=ar` all came back "I could not find
+        relevant information" through the browser, and a question naming an
+        Arabic article was answered from an English NIST publication --
+        the only structural content inside the English scope.
+
+        Detection is the same share-of-letters test used at ingest, so a
+        query and a document are classified by one rule rather than two.
+        An explicit parameter still wins outright; this only fills a gap.
+        """
+        if self.language is None:
+            self.language = detect_language(self.question or "")
+        return self
 
     @field_validator("question")
     @classmethod

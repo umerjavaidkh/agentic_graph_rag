@@ -69,6 +69,20 @@ def test_the_language_is_validated_rather_than_trusted():
     assert "language" in _validated_fields(_query_request())
 
 
+def test_an_absent_language_is_detected_from_the_question():
+    """The gap that made the product UI unusable in Arabic.
+
+    src/static/chat.html sends no `language`, so every question typed into
+    the browser was scoped to the deployment default. Ten Arabic questions
+    that answered correctly over curl with `language=ar` all returned "I
+    could not find relevant information", and one naming an Arabic article
+    was answered from an English NIST publication.
+    """
+    src = _SCHEMAS.read_text()
+    assert "detect_language" in src, "the request must fall back to detection"
+    assert "model_validator" in src, "field validators cannot see `question`"
+
+
 def test_the_language_default_is_validated_too():
     """Pydantic skips validators on defaults unless asked.
 
@@ -79,7 +93,10 @@ def test_the_language_default_is_validated_too():
     for item in _query_request().body:
         if isinstance(item, ast.AnnAssign) and getattr(item.target, "id", "") == "language":
             source = ast.unparse(item)
-            assert "validate_default=True" in source
+            assert "validate_default" not in source, (
+                "a None must survive to the model validator, or 'not sent' "
+                "cannot be told apart from 'sent as en'"
+            )
             return
     raise AssertionError("language field not found")
 
