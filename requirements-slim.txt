@@ -4,7 +4,7 @@
 # ── Lightweight PDF ────────
 pymupdf>=1.24.0
 pdfplumber>=0.11.0
-pdf-rtldoc==1.1.0
+pdf-rtldoc==1.2.1
 
 # ── OCR fallback (low-confidence pages; requires the tesseract-ocr system
 # package too — see Dockerfile) ─────────
