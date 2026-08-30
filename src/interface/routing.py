@@ -23,6 +23,7 @@ from ..shared.config.settings import (
 from ..unstructured.graph.constants import NON_BUSINESS_LABELS
 from ..shared.model_providers.factory import get_chat_provider
 from ..shared.telemetry import get_telemetry, pipeline_step
+from ..shared.config.settings import DEFAULT_LANGUAGE
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +313,9 @@ def document_agent_structured_guard(
 
 
 def try_document_fallback(
-    question: str, user_context: Optional[UserContext]
+    question: str,
+    user_context: Optional[UserContext],
+    language: str = DEFAULT_LANGUAGE,
 ) -> Optional[dict]:
     """
     When the structured path answered with low confidence, retry via
@@ -328,7 +331,11 @@ def try_document_fallback(
     """
     from ..unstructured.retrieval.graph import esg_agent
 
-    state: dict[str, Any] = {"question": question, "skip_structured_guard": True}
+    state: dict[str, Any] = {
+        "question": question,
+        "skip_structured_guard": True,
+        "language": language,
+    }
     if user_context is not None:
         state["user_context"] = user_context
     result = esg_agent.invoke(state)
@@ -450,17 +457,43 @@ def select_mcp_tool(
     return "search_documents"
 
 
+# Every handler takes a language; they do not all use it the same way. The
+# structured business graph has no language dimension -- its labels and
+# properties are schema, not prose, and an Arabic question about orders is
+# still answered by MATCH (o:Order). `query_data` takes one purely to
+# forward to try_document_fallback: when structured answers with low
+# confidence the question is retried against DOCUMENTS, and that retry is a
+# document query like any other. Dropping the language there would send an
+# Arabic user to the English corpus at exactly the moment nobody is
+# watching, which is the shape of bug this project keeps paying for.
+_LANGUAGE_AWARE_TOOLS = frozenset({"search_documents", "query_hybrid", "query_data"})
+
+
+def _handler_kwargs(
+    tool_name: str,
+    user_context: Optional[UserContext],
+    thread_id: str,
+    language: str,
+) -> dict[str, Any]:
+    """Arguments for one MCP handler, language only where it means something."""
+    kwargs: dict[str, Any] = {"user_context": user_context, "thread_id": thread_id}
+    if tool_name in _LANGUAGE_AWARE_TOOLS:
+        kwargs["language"] = language
+    return kwargs
+
+
 def run_via_mcp_tool(
     question: str,
     tool_name: str,
     handlers: dict[str, Callable[..., dict]],
     user_context: Optional[UserContext] = None,
     thread_id: str = "default",
+    language: str = DEFAULT_LANGUAGE,
 ) -> dict:
     """Execute the chosen MCP tool handler."""
     fn = handlers.get(tool_name) or handlers["search_documents"]
     with pipeline_step("agent.invoke", tool=tool_name):
-        result = fn(question, user_context=user_context, thread_id=thread_id)
+        result = fn(question, **_handler_kwargs(tool_name, user_context, thread_id, language))
     route_method = "fast" if _fast_route_tool(question) else "llm_mcp"
 
     if tool_name == "query_data" and _result_has_structured_access_denied(result):
@@ -474,7 +507,10 @@ def run_via_mcp_tool(
             logger.info("Routing fallback: query_data access denied → search_documents")
             with pipeline_step("agent.fallback", from_tool="query_data", to_tool="search_documents"):
                 doc_fn = handlers.get("search_documents") or fn
-                result = doc_fn(question, user_context=user_context, thread_id=thread_id)
+                result = doc_fn(
+                    question,
+                    **_handler_kwargs("search_documents", user_context, thread_id, language),
+                )
             tool_name = "search_documents"
             route_method = "fallback_structured_denied"
     elif tool_name == "search_documents" and result.get("_autofix_agent") == "structured":

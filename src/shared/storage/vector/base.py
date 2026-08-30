@@ -64,6 +64,22 @@ class VectorStore(ABC):
     def delete_by_filter(self, filters: dict) -> None:
         """Used for revision-expiry purge (parallel to Neo4j's DETACH DELETE on supersede)."""
 
+    @abstractmethod
+    def set_payload_by_filter(self, filters: dict, payload: dict) -> int:
+        """Add or overwrite payload fields on every point matching `filters`.
+
+        For migrations that add a scoping field to points already written.
+        A vector is expensive to recompute and none of this needs to: the
+        embedding is unchanged, only what the store knows about it.
+
+        A filter value that is a list matches any of its members, so a
+        migration can name every document of one language in one call
+        instead of one call per document.
+
+        Returns the number of points updated where the backend reports it,
+        and 0 where it does not.
+        """
+
     def point_id_for(self, node_id: str) -> str:
         """The id this store actually keys a node's vector under -- may
         differ from `node_id` itself (e.g. Qdrant requires an unsigned int

@@ -17,6 +17,8 @@ unused here.
 """
 from __future__ import annotations
 
+from ....shared.config.settings import DEFAULT_LANGUAGE
+
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional, TypeVar
 
@@ -97,6 +99,7 @@ class FullHybridStrategy:
         self,
         query: str,
         tenant_id: str,
+        language: str,
         document_id_hint: str,
         embed_future,
     ) -> tuple[Optional[str], Optional[str], list[str]]:
@@ -120,6 +123,7 @@ class FullHybridStrategy:
             self._document_resolver.resolve_document_for_query,
             query,
             tenant_id=tenant_id,
+            language=language,
             document_id_hint=document_id_hint,
         )
         return document_id, document_title, as_doc_id_list(document_id) or []
@@ -130,6 +134,7 @@ class FullHybridStrategy:
         query: str,
         *,
         tenant_id: str,
+        language: str = DEFAULT_LANGUAGE,
         limit: int,
         ctx: UserContext,
         document_id_hint: str = "",
@@ -185,9 +190,7 @@ class FullHybridStrategy:
         # vector/fulltext fetches once both are in hand.
         pool = self._pool
         embed_future = None if skip_vector else pool.submit(self._graph_seeds.get_embedding, query)
-        document_id, document_title, document_ids = self._scope_for_query(
-            query, tenant_id, document_id_hint, embed_future
-        )
+        document_id, document_title, document_ids = self._scope_for_query(query, tenant_id, language, document_id_hint, embed_future)
         document_id = document_id or ""
         embedding = None if embed_future is None else embed_future.result()
 
@@ -200,6 +203,7 @@ class FullHybridStrategy:
             self._lexical.structural_phrase_retrieve,
             query,
             tenant_id=tenant_id,
+            language=language,
             document_id=document_ids,
             row_limit=row_limit,
         )
@@ -208,6 +212,7 @@ class FullHybridStrategy:
             self._lexical.structural_keyword_retrieve,
             query,
             tenant_id=tenant_id,
+            language=language,
             document_id=document_ids,
             row_limit=row_limit,
         )
@@ -221,6 +226,7 @@ class FullHybridStrategy:
                 embedding,
                 vector_limit,
                 tenant_id=tenant_id,
+                language=language,
                 document_id=document_id,
             )
         fulltext_future = pool.submit(
@@ -229,6 +235,7 @@ class FullHybridStrategy:
             query,
             _FULLTEXT_LIMIT,
             tenant_id=tenant_id,
+            language=language,
             document_id=document_id,
         )
         # Scope-phrase retrieval: finds the chunk belonging to the SEGMENT the
@@ -241,6 +248,7 @@ class FullHybridStrategy:
             self._lexical.scope_phrase_retrieve,
             query,
             tenant_id=tenant_id,
+            language=language,
             document_id=document_id,
         )
         # A counting question is answered by a numeral next to the counted
@@ -252,6 +260,7 @@ class FullHybridStrategy:
             self._lexical.quantity_evidence_retrieve,
             query,
             tenant_id=tenant_id,
+            language=language,
             document_id=document_id,
         )
         # Only fetched for overview-shaped questions ("what does this
@@ -265,6 +274,7 @@ class FullHybridStrategy:
                 self._chapter_summaries.fetch_for_document,
                 document_id,
                 tenant_id=tenant_id,
+                language=language,
             )
             if wants_overview
             else None
@@ -279,6 +289,7 @@ class FullHybridStrategy:
                 self._financial_summaries.fetch_for_document,
                 document_id,
                 tenant_id=tenant_id,
+                language=language,
             )
             if wants_firmwide and document_id
             else None
@@ -293,6 +304,7 @@ class FullHybridStrategy:
                 self._financial_summaries.fetch_quarterly_for_document,
                 document_id,
                 tenant_id=tenant_id,
+                language=language,
             )
             if wants_quarterly and document_id
             else None
@@ -331,6 +343,7 @@ class FullHybridStrategy:
                 hops=1,
                 limit=graph_1hop,
                 tenant_id=tenant_id,
+                language=language,
                 document_id=document_id,
             )
             hop2_future = pool.submit(
@@ -341,6 +354,7 @@ class FullHybridStrategy:
                 limit=graph_2hop,
                 document_id=document_id,
                 tenant_id=tenant_id,
+                language=language,
             )
             graph_hits = hop1_future.result() + hop2_future.result()
 
@@ -420,6 +434,7 @@ class FullHybridStrategy:
             self._lexical.expand_unit_siblings,
             [i.get("id") for i in items if i.get("id")],
             tenant_id=tenant_id,
+            language=language,
         )
         if siblings:
             items = self._ranking._merge_retrieval_chunks(items, siblings)[

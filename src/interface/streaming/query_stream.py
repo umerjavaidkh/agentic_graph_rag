@@ -45,6 +45,7 @@ from ...unstructured.retrieval.graph import retrieve_node as doc_retrieve_node
 from ...structured.retrieval.graph import retrieve_node as struct_retrieve_node
 from .events import stream_event
 from ...structured.streaming import _viz_blocks_only, iter_structured_stream
+from ...shared.config.settings import DEFAULT_LANGUAGE
 
 
 def _resolve_tool(
@@ -112,8 +113,9 @@ def iter_hybrid_stream(
     question: str,
     *,
     user_context: Optional[UserContext],
+    language: str = DEFAULT_LANGUAGE,
 ) -> Iterator[str]:
-    state = {"question": question}
+    state = {"question": question, "language": language}
     if user_context is not None:
         state["user_context"] = user_context
 
@@ -241,6 +243,7 @@ def iter_query_stream(
     thread_id: str = "default",
     request_id: Optional[str] = None,
     retrieval_mode: Optional[str] = None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> Iterator[str]:
     """Yield NDJSON lines: status → presentation (optional) → token* → done."""
     start_telemetry()
@@ -268,7 +271,7 @@ def iter_query_stream(
             # graph — it may only be in ingested documents. No tokens have
             # streamed yet at this point, so it's safe to try the (non-
             # streaming) document fallback here before committing to denial.
-            doc_fallback = try_document_fallback(question, ctx)
+            doc_fallback = try_document_fallback(question, ctx, language)
             if doc_fallback is not None:
                 final = _enrich_and_persist(
                     tool_name="query_data",
@@ -320,6 +323,7 @@ def iter_query_stream(
                 parent_section_id=resolved.get("parent_section_id"),
                 document_id=resolved.get("document_id"),
                 prior_context=get_turn(thread_id) if resolved.get("use_prior") else None,
+                language=language,
             )
         elif tool_name == "query_data":
             stream = iter_structured_stream(
@@ -329,12 +333,13 @@ def iter_query_stream(
                 mode_locked=forced_tool is not None,
             )
         elif tool_name == "query_hybrid":
-            stream = iter_hybrid_stream(question, user_context=user_context)
+            stream = iter_hybrid_stream(question, user_context=user_context, language=language)
         else:
             stream = iter_document_stream(
                 question,
                 user_context=user_context,
                 resolved_question=question,
+                language=language,
             )
 
         final_payload: Optional[dict] = None

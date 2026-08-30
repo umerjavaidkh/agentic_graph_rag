@@ -9,6 +9,11 @@ class ESGState(TypedDict, total=False):
     sources: List[Dict]
     query_type: str
     user_context: Optional[UserContext]
+    # Which language corpus to search. Declared here for the same reason
+    # `claims` below is: LangGraph drops any key the schema does not name,
+    # so an undeclared `language` would be discarded on the way in and every
+    # query would silently search the default corpus.
+    language: Optional[str]
     focus_section_id: Optional[str]
     parent_section_id: Optional[str]
     document_id: Optional[str]

@@ -3,21 +3,61 @@ from __future__ import annotations
 
 import re
 
+from ...shared.language import intent_alternations, normalize_arabic
+
 from ..document.page_numbers import parse_page_number_from_query
 from .text_utils import query_anchor_terms
 from .visual_retrieval import parse_visual_intent
 
+def _with_profiles(shape: str, english: str) -> str:
+    """The English pattern, plus every registered profile's for this shape.
+
+    Unioned rather than selected between, and therefore needing no
+    language argument. A pattern written in Arabic script cannot match
+    ASCII and an English one cannot match Arabic, so the alternation is
+    free of cross-language false positives -- and English's own accurate
+    set is untouched, which is what the design asks for.
+
+    Threading a language into all 77 shape checks would have been the
+    branch the design forbids, wearing a parameter as a disguise.
+    """
+    extra = intent_alternations(shape)
+    if not extra:
+        return english
+    # Each side gets its own non-capturing group. The English patterns end
+    # in `\b(...)\b` and the profile ones do not; without grouping the
+    # trailing boundary would bind to the first Arabic alternative and
+    # quietly change what English matches.
+    return "|".join(f"(?:{part})" for part in (english, *extra))
+
+
+def _shape_query(query: str) -> str:
+    """The query in the space the profile patterns are written in.
+
+    Safe to apply unconditionally: the Arabic normalizer only rewrites
+    Arabic code points, so it is the identity on English -- asserted in
+    tests/shared/test_arabic_normalization_unit.py rather than assumed.
+    """
+    return normalize_arabic(query or "")
+
+
 _SYNTHESIS_RE = re.compile(
+    _with_profiles(
+        "synthesis",
     r"\b(synthesi[sz]|structural map|escalat|pathway|flowchart|flow chart|"
     r"compare|contrast|relationship between|trace how|build a .{0,20}map|"
     r"how .{0,40} connect|map showing)\b",
+    ),
     re.I,
 )
 
 _ENUMERATION_RE = re.compile(
+    _with_profiles(
+        "enumeration",
     r"\b(list\s+all|enumerate|name\s+all|distinct|what\s+are\s+all|"
     r"which\s+(?:\w+\s+){0,3}?(?:examples|sections|pages|items|cases|instances)\b|"
     r"all\s+(?:the\s+)?(?:examples|sections|instances|cases))\b",
+    ),
     re.I,
 )
 # "Which worked examples apply the standard-error formula" reads exactly
@@ -38,12 +78,15 @@ _ENUMERATION_RE = re.compile(
 # ranking.py) so this narrower detector can gate the chapter-summary
 # rollup feature without changing behavior for any existing question shape.
 _OVERVIEW_RE = re.compile(
+    _with_profiles(
+        "overview",
     r"\bwhat\s+(?:does|is|are)\s+(?:this|the)\b.{0,30}\b"
     r"(?:document|filing|report|chapter|section|10-?k|10-?q|annual\s+report)\b"
     r".{0,40}\b(?:discuss|about|cover|contain|address)\b|"
     r"\bwhat\s+is\s+this\s+(?:document|filing|report)\s+about\b|"
     r"\bsummar(?:y|ize|ise)\s+(?:this|the)\s+(?:document|filing|report|chapter)\b|"
     r"\b(?:overview|gist|summary)\s+of\s+(?:this|the)\s+(?:document|filing|report|chapter)\b",
+    ),
     re.I,
 )
 
@@ -164,6 +207,8 @@ _KEYWORD_STOP = frozenset({
 })
 
 _TOC_RE = re.compile(
+    _with_profiles(
+        "toc",
     r"\b(table\s+of\s+contents?|\btoc\b|list\s+(?:all\s+)?(?:the\s+)?contents?|"
     r"show\s+(?:me\s+)?(?:the\s+)?contents?|provide\s+(?:me\s+)?(?:all\s+)?(?:the\s+)?toc|"
     # Structural-outline phrasing that doesn't say "contents"/"toc" but
@@ -174,14 +219,18 @@ _TOC_RE = re.compile(
     r"(?:list|show)\s+(?:me\s+)?(?:all\s+|every\s+)?(?:the\s+)?(?:sections?|headings?)\b|"
     r"what\s+(?:sections?|headings?)\s+(?:does|do|is|are)\b|"
     r"what\s+(?:are\s+the|is\s+the)\s+(?:sections?|headings?))\b",
+    ),
     re.I,
 )
 
 _PAGE_QUERY_RE = re.compile(
+    _with_profiles(
+        "page",
     r"\b(?:fetch|get|show|retrieve|read|content|text|everything|all)\b.{0,50}\bpage\b|"
     r"\bpage\s+[\wivxlcdm\-]+\s+(?:of|from|in)\b|"
     r"\bcontent\s+(?:from|on|of)\s+(?:pdf\s+)?page\b|"
     r"\bwhat\s+(?:is|does)\s+(?:pdf\s+)?page\s+",
+    ),
     re.I,
 )
 
@@ -226,11 +275,11 @@ _MONTH_YEAR_RE = re.compile(
 
 
 def is_synthesis_question(query: str) -> bool:
-    return bool(_SYNTHESIS_RE.search(query or ""))
+    return bool(_SYNTHESIS_RE.search(_shape_query(query)))
 
 
 def is_overview_question(query: str) -> bool:
-    return bool(_OVERVIEW_RE.search(query or ""))
+    return bool(_OVERVIEW_RE.search(_shape_query(query)))
 
 
 def is_filing_date_question(query: str) -> bool:
@@ -250,18 +299,18 @@ def is_quarterly_breakdown_question(query: str) -> bool:
 
 
 def is_enumeration_question(query: str) -> bool:
-    return bool(_ENUMERATION_RE.search(query or ""))
+    return bool(_ENUMERATION_RE.search(_shape_query(query)))
 
 
 def is_toc_question(query: str) -> bool:
-    return bool(_TOC_RE.search(query or ""))
+    return bool(_TOC_RE.search(_shape_query(query)))
 
 
 def is_page_question(query: str) -> bool:
     pdf_page, doc_page = parse_page_number_from_query(query)
     if pdf_page is not None or doc_page:
         return True
-    return bool(_PAGE_QUERY_RE.search(query or ""))
+    return bool(_PAGE_QUERY_RE.search(_shape_query(query)))
 
 
 def is_fact_lookup_question(query: str) -> bool:

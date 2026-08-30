@@ -16,7 +16,8 @@ question shape these sections are noise.
 """
 from __future__ import annotations
 
-from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.config.settings import DEFAULT_LANGUAGE
+from ....shared.neo4j.tenancy import language_filter, tenant_filter
 from ..cypher_scope import content_scope_where
 
 # Case-insensitive title fragments that mark an authoritative firmwide summary
@@ -35,7 +36,7 @@ _SUMMARY_TITLE_FRAGMENTS = [
 
 class FinancialSummaryService:
     def fetch_for_document(
-        self, session, document_id: str, tenant_id: str = ""
+        self, session, document_id: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> list[dict]:
         if not document_id:
             return []
@@ -47,7 +48,7 @@ class FinancialSummaryService:
             f"""
             MATCH (n:Section|Chapter)
             WHERE {content_scope_where("n")}
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
               AND coalesce(n.text, '') <> ''
               // A genuine Executive Overview/Financial Highlights section
               // runs to thousands of characters; a Table of Contents entry
@@ -72,6 +73,7 @@ class FinancialSummaryService:
             """,
             doc_id=document_id,
             tenant_id=tenant_id,
+            language=language,
         )
         items: list[dict] = []
         for r in rows:
@@ -89,7 +91,7 @@ class FinancialSummaryService:
         return items
 
     def fetch_quarterly_for_document(
-        self, session, document_id: str, tenant_id: str = ""
+        self, session, document_id: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> list[dict]:
         """Fetch the "Selected Quarterly Financial Data (Unaudited)" table.
 
@@ -107,7 +109,7 @@ class FinancialSummaryService:
             f"""
             MATCH (n:Section|Chapter)
             WHERE {content_scope_where("n")}
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
               AND coalesce(n.text, '') <> ''
               AND size(n.text) > 200
               AND toLower(n.text) CONTAINS 'quarterly financial data'
@@ -123,6 +125,7 @@ class FinancialSummaryService:
             """,
             doc_id=document_id,
             tenant_id=tenant_id,
+            language=language,
         )
         items: list[dict] = []
         for r in rows:

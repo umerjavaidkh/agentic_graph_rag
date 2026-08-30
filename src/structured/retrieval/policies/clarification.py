@@ -5,6 +5,7 @@ import re
 from typing import Any, Iterable, Optional
 
 from ....shared.conversation.clarification import format_clarification_answer
+from ....shared.unicode_text import words as word_tokens
 
 # Words that mean "aggregate something" rather than naming the something.
 _AGGREGATE_WORDS = frozenset({
@@ -26,20 +27,19 @@ _NON_METRIC_WORDS = frozenset({
     "me", "give", "show", "tell", "database", "data", "graph", "dataset",
 }) | _AGGREGATE_WORDS
 
-_WORD_RE = re.compile(r"[a-z][a-z0-9]*")
 # One option per candidate is unhelpful past a handful; asking someone to
 # choose between ten near-identical columns is worse than picking one.
 _MAX_OPTIONS = 4
 
 
 def _tokens(text: str) -> list[str]:
-    return _WORD_RE.findall((text or "").lower())
+    return word_tokens(text)
 
 
 def _property_tokens(prop: str) -> set[str]:
     """`unit_price` / `unitPrice` / `UnitPrice` -> {"unit", "price"}."""
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", prop or "")
-    return set(_WORD_RE.findall(spaced.lower().replace("_", " ")))
+    return set(word_tokens(spaced.replace("_", " ")))
 
 
 def _singular(word: str) -> str:

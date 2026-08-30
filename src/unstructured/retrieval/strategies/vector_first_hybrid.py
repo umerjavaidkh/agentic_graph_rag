@@ -43,11 +43,15 @@ re-phrasings that arrive without a hint.
 """
 from __future__ import annotations
 
+from ....shared.config.settings import DEFAULT_LANGUAGE
+
 import re
 import threading
 from dataclasses import replace
 from typing import Any, Optional
 
+from ....shared.language import configured_languages, message
+from ....shared.unicode_text import letters as letter_tokens
 from ..cypher_scope import as_doc_id_list
 
 # Above this share of the winner's score, the runner-up is not meaningfully
@@ -95,7 +99,7 @@ def _tokens(text: str) -> tuple[set, set]:
     publication, because the corpus holds dozens of near-identical ones.
     """
     low = (text or "").lower()
-    alpha = {w for w in re.findall(r"[a-z]+", low) if len(w) > 1}
+    alpha = set(letter_tokens(low, min_length=2))
     nums = {w for w in re.findall(r"\d+", low) if len(w) > 1}
     return alpha, nums
 
@@ -137,7 +141,11 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         # the exact query, so a genuinely new question misses it and pays for
         # a fresh lookup, which is the correct behaviour for one "outside the
         # scope".
-        self._scope_cache: dict[tuple[str, str], list] = {}
+        # (tenant_id, language, query) -> doc_ids. Language is part of the
+        # key, not an attribute of the answer: without it the first
+        # caller's language won for every later caller asking the same
+        # words.
+        self._scope_cache: dict[tuple[str, str, str], list] = {}
         self._scope_lock = threading.Lock()
         # Set on each retrieve() so a caller reading the response can see
         # which path actually decided the scope, rather than inferring it.
@@ -170,13 +178,23 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
     def last_candidates(self) -> list:
         return getattr(self._local, "candidates", []) or []
 
-    def _named_document(self, tenant_id: str, query: str) -> Optional[str]:
-        """The document this query names outright, however it is written."""
+    def _named_document(self, tenant_id: str, query: str, language: str) -> Optional[str]:
+        """The document this query names outright, however it is written.
+
+        Language-scoped like every other way of reaching a document. Naming
+        is the one path that does not go through a scoped Cypher query --
+        it matches against an in-process index -- so without this it stays
+        open after the others have closed, and a question in one language
+        resolves a document in the other by title alone.
+        """
         q = _squash(query)
         q_alpha, q_nums = _tokens(query)
+        scoped = len(configured_languages()) > 1
 
         best, best_score = None, 0
-        for doc_id, key, raw in self._name_index(tenant_id):
+        for doc_id, key, raw, doc_language in self._name_index(tenant_id):
+            if scoped and doc_language != language:
+                continue
             # Exact-ish: the whole name appears verbatim once punctuation is
             # gone. Strongest evidence, so it outranks token agreement.
             if len(key) >= MIN_NAME_MATCH and key in q:
@@ -207,16 +225,19 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         return cache[key]
 
     def _name_index(self, tenant_id: str) -> list:
-        """(logical_id, squashed name) for every document, built once.
+        """(logical_id, squashed name, raw name, language) per document.
 
-        998 rows, and the corpus only changes on ingest, so this is read
-        once per process rather than per query.
+        Built once per process -- the corpus only changes on ingest -- and
+        filtered by language at match time rather than cached per language,
+        so adding a language does not multiply the index.
         """
         if self._names is None:
             rows = self._neo4j_session_call(
                 lambda sess: list(sess.run(
                     "MATCH (dl:DocumentLogical) "
-                    "RETURN dl.logical_id AS id, coalesce(dl.title, '') AS title"
+                    "RETURN dl.logical_id AS id, coalesce(dl.title, '') AS title, "
+                    "coalesce(dl.language, $default) AS language",
+                    default=DEFAULT_LANGUAGE,
                 ))
             )
             idx = []
@@ -227,9 +248,10 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                 # The "doc_" prefix is ours, not part of the name the user
                 # would type.
                 raw = lid[4:] if lid.startswith("doc_") else lid
-                idx.append((lid, _squash(raw), raw))
+                lang = r["language"]
+                idx.append((lid, _squash(raw), raw, lang))
                 if r["title"]:
-                    idx.append((lid, _squash(r["title"]), r["title"]))
+                    idx.append((lid, _squash(r["title"]), r["title"], lang))
             self._names = idx
         return self._names
 
@@ -237,6 +259,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         self,
         query: str,
         tenant_id: str,
+        language: str,
         document_id_hint: str,
         embed_future,
     ) -> tuple[Optional[str], Optional[str], list[str]]:
@@ -265,7 +288,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         # and answered "this document does not cover it" about a document
         # that was never asked for.
         named = self._neo4j_session_call(
-            self._document_resolver.exact_document_reference, query, tenant_id
+            self._document_resolver.exact_document_reference, query, tenant_id, language
         )
         if named and named[0]:
             self._local.scope_source = "exact_reference"
@@ -274,7 +297,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         # The same question asked without punctuation, so a name is not lost
         # to a hyphen -- that is how a question about SP 800-161r1 came back
         # answered from a different NIST report.
-        squashed = self._named_document(tenant_id, query)
+        squashed = self._named_document(tenant_id, query, language)
         if squashed:
             self._local.scope_source = "named"
             return squashed, None, [squashed]
@@ -283,13 +306,22 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         # page 7?") should stay on the document under discussion.
         if document_id_hint:
             validated = self._neo4j_session_call(
-                self._document_resolver._validate_document_id, document_id_hint, tenant_id
+                self._document_resolver._validate_document_id,
+                document_id_hint,
+                tenant_id,
+                language,
             )
             if validated:
                 self._local.scope_source = "hint"
                 return document_id_hint, None, [document_id_hint]
 
-        cache_key = (tenant_id or "", (query or "").strip().lower())
+        # Language is part of the key, not an attribute of the answer.
+        # Without it the first caller's language wins for every later
+        # caller asking the same words: an Arabic question cached its
+        # document, and the identical question scoped to English was then
+        # answered with that Arabic document's id and zero chunks --
+        # scoped correctly everywhere except in the memo in front of it.
+        cache_key = (tenant_id or "", language or "", (query or "").strip().lower())
         with self._scope_lock:
             cached = self._scope_cache.get(cache_key)
         if cached:
@@ -305,7 +337,9 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
 
         candidates = []
         try:
-            candidates = self._candidate_docs.candidates(query, tenant_id, embedding=embedding)
+            candidates = self._candidate_docs.candidates(
+                query, tenant_id, embedding=embedding, language=language
+            )
         except Exception:
             # A vector store that is down must not fail the query; fall
             # through to the resolver, which is what the parent would do.
@@ -349,12 +383,13 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             self._document_resolver.resolve_document_for_query,
             query,
             tenant_id=tenant_id,
+            language=language,
             document_id_hint=document_id_hint,
         )
         self._local.scope_source = "resolver_fallback"
         return document_id, document_title, as_doc_id_list(document_id) or []
 
-    def _cannot_be_placed(self, query: str) -> bool:
+    def _cannot_be_placed(self, query: str, language: str = DEFAULT_LANGUAGE) -> bool:
         """Whether the question's own words can single out a document.
 
         Two ways to fail, and both are about the question rather than about
@@ -388,7 +423,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             # question back into a confident answer -- silently, which is
             # how it survived a full round of end-to-end checks.
             rarest = self._neo4j_session_call(
-                self._term_stats.min_term_frequency, keywords
+                self._term_stats.min_term_frequency, keywords, language
             )
         except Exception:
             # A statistic this gate cannot compute must not turn into a
@@ -460,7 +495,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             out[doc] = label or stem
         return out
 
-    def _underspecified_response(self, query, ctx, candidates):
+    def _underspecified_response(self, query, ctx, candidates, language=DEFAULT_LANGUAGE):
         """Ask which document, instead of answering from whichever one ranked first.
 
         "What is the value?" names no document, carries no topic, and matches
@@ -475,16 +510,22 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         candidates = self._with_titles(candidates)
         names = [c.get("title") or c["document_id"] for c in (candidates or [])][:5]
         listed = "\n".join(f"- {n}" for n in names)
+        # In the reader's language. This text is the system speaking for
+        # itself rather than through the model, so the answer-language
+        # prompt directive cannot reach it -- an Arabic user asking an
+        # ambiguous question was handed an English refusal that then
+        # listed Arabic document titles.
+        #
+        # The listed titles are NOT translated. They are the documents'
+        # own names, and a translated name cannot be typed back into the
+        # next question, which is the entire point of offering them.
         text = (
-            "That question does not say which document to look in, and it "
-            "matches several. Ask again naming one of these, or add enough "
-            "detail to identify it:\n\n" + listed
+            message("underspecified_listed", language) + "\n\n" + listed
             if names else
-            "That question does not say which document to look in. Ask again "
-            "naming the document, or add enough detail to identify it."
+            message("underspecified_bare", language)
         )
         response = self._formatter.format(query, [{
-            "id": "underspecified", "title": "Which document?",
+            "id": "underspecified", "title": message("which_document", language),
             "text": text, "score": 0.0, "related": [],
         }], ctx=ctx)
         response["strategy"] = self.name
@@ -494,7 +535,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         response["document_id"] = None
         return response
 
-    def retrieve(self, session, query, *, tenant_id, limit, ctx, document_id_hint=""):
+    def retrieve(self, session, query, *, tenant_id, language=DEFAULT_LANGUAGE, limit, ctx, document_id_hint=""):
         """Structural questions are answered from the hierarchy; everything
         else falls through to the inherited hybrid path.
 
@@ -512,17 +553,18 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         if (
             not document_id_hint
             and plan.shape is not Shape.STRUCTURAL
-            and self._cannot_be_placed(query)
-            and not self._named_document(tenant_id, query)
+            and self._cannot_be_placed(query, language)
+            and not self._named_document(tenant_id, query, language)
         ):
             try:
-                cands = self._candidate_docs.candidates(query, tenant_id)
+                cands = self._candidate_docs.candidates(query, tenant_id, language=language)
             except Exception:
                 cands = []
             return self._underspecified_response(
                 query, ctx,
                 [{"document_id": c.document_id, "relative": round(c.relative, 3)}
                  for c in cands[:5]],
+                language,
             )
 
         if plan.shape is Shape.AGGREGATION:
@@ -532,7 +574,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
             # the document says so -- the structure is the evidence, and
             # without it the honest answer is "no count is given".
             response = super().retrieve(
-                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                session, query, tenant_id=tenant_id, language=language, limit=limit, ctx=ctx,
                 document_id_hint=document_id_hint,
             )
             doc = (response or {}).get("document_id")
@@ -571,19 +613,17 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
 
         if plan.shape is not Shape.STRUCTURAL:
             return super().retrieve(
-                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                session, query, tenant_id=tenant_id, language=language, limit=limit, ctx=ctx,
                 document_id_hint=document_id_hint,
             )
 
         embed_future = self._pool.submit(self._graph_seeds.get_embedding, query)
-        document_id, document_title, doc_ids = self._scope_for_query(
-            query, tenant_id, document_id_hint, embed_future
-        )
+        document_id, document_title, doc_ids = self._scope_for_query(query, tenant_id, language, document_id_hint, embed_future)
         if not doc_ids:
             # No document to read a hierarchy from; the hybrid path at
             # least searches, which beats answering nothing.
             return super().retrieve(
-                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                session, query, tenant_id=tenant_id, language=language, limit=limit, ctx=ctx,
                 document_id_hint=document_id_hint,
             )
 
@@ -600,7 +640,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         )
         if not items:
             return super().retrieve(
-                session, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+                session, query, tenant_id=tenant_id, language=language, limit=limit, ctx=ctx,
                 document_id_hint=document_id_hint,
             )
 

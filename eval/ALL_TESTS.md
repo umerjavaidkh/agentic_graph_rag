@@ -36,6 +36,66 @@ Choosing cleanly-parsed documents was worth 14 points on its own (73% ->
 
 Detail: `shapes_second_last5_qa_log.md`. Harness: `scripts/eval_shapes.py`.
 
+### Arabic
+
+37-document Arabic corpus (BilArabi teacher's guide + 36 Arabic Wikipedia
+articles).
+
+| Run | Qs | Right document | Precision@k |
+|---|---|---|---|
+| English baseline, 5 arXiv papers | 102 | 92/92 (100%) | 0.95 |
+| Arabic, `eval_shapes.py --docs 5 --language ar` | 94 | 84/84 (100%) | **0.29** |
+| Arabic, same shapes asked as Arabic questions | 15 | 15/15 (100%) | **0.89** |
+
+**The 0.29 measures the harness, not the system.** `eval_shapes.py`
+builds every question from a hardcoded English template:
+
+    f'In "{title}", define the central technical term the paper introduces.'
+    f'In "{title}", how does the proposed approach differ from prior work?'
+    f'What does "{title}" say is required to reproduce its results?'
+
+Two things are wrong with running those against this corpus. They are in
+English, so an Arabic question was never actually asked -- the title is
+the only Arabic in them. And they assume the document is a research
+paper: the Arabic corpus is encyclopedia articles and a school teacher's
+guide, which have no authors section, no prior work, no dataset and no
+reproducibility statement. The English 0.95 was measured on arXiv
+papers, where the templates fit exactly.
+
+Asked as questions a reader would actually put to an encyclopedia
+article -- the same five shapes, in Arabic -- the same corpus scores
+**0.89 precision and 15/15 right document**. An earlier version of this
+section attributed the 0.29 to weak Arabic keyword extraction and called
+it the measured cost of leaving half of Phase 3 undone. That was wrong.
+The keyword-extraction gap is real, but it is not what this number was
+showing.
+
+**The unanswerable shape scored 0/5 for the same kind of reason, and the
+system was never wrong.** `REFUSAL` was a tuple of English phrases, so a
+correct Arabic refusal matched none of them -- an exam graded against the
+wrong key, and indistinguishable in the summary from a system that had
+started fabricating. Checked directly: 5/5 refusals, every one of the
+form "هذا المستند لا يغطي ...". Refusal phrases now live in the language
+profiles, and `eval_shapes.py` takes `--language`.
+
+**The 0.89 depends on the corpus being below the frequency table's
+abstention bar.** At 37 documents it is, so the underspecified gate
+stands down and questions are answered. Between measuring 0.89 and
+re-checking it, the bar was briefly low enough (30) for the Arabic table
+to have an opinion, and the same questions came back as the document
+picker instead: 0.07 of 37 documents is 2.6, so "الكيمياء" in 4
+documents and "النقل" in 8 were both called generic vocabulary rather
+than the subjects of the articles. The bar is now derived from that
+share -- see `_MIN_DOCS_FOR_DF` -- and Arabic abstains until the corpus
+is large enough for "generic" to mean something.
+
+**Still to fix in the harness:** the question templates themselves. Until
+they are generated in the corpus's own language and shaped to the
+document type, `--language ar` measures a translation mismatch rather
+than retrieval.
+
+Detail: `shapes_arabic_qa_log.md`.
+
 ## 2. Deterministic cloze eval — 500-document corpus
 
 | Scope | Answer accuracy | Right document | Median |

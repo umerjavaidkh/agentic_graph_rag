@@ -6,6 +6,8 @@ satisfies it).
 """
 from __future__ import annotations
 
+from ....shared.config.settings import DEFAULT_LANGUAGE
+
 from typing import Any, Optional, Protocol
 
 from ....shared.auth.roles import UserContext
@@ -30,6 +32,7 @@ class UnstructuredStrategy(Protocol):
         query: str,
         *,
         tenant_id: str,
+        language: str = DEFAULT_LANGUAGE,
         limit: int,
         ctx: UserContext,
         document_id_hint: str = "",

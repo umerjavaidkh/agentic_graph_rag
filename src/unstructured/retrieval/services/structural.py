@@ -22,9 +22,10 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.config.settings import DEFAULT_LANGUAGE
+from ....shared.neo4j.tenancy import language_filter, tenant_filter
 from ....shared.storage.hydrator import get_hydrator
-from ..cypher_scope import content_scope_where_multi
+from ..cypher_scope import content_scope_where_multi, match_key_cypher
 
 # "Box 9" / "Figure 1" / "Table 3.2" / "page 12" / "section 4.2" -> (kind, number)
 _ADDRESS_PARTS = re.compile(
@@ -75,7 +76,11 @@ class StructuralService:
     """Reads of the document hierarchy, by address."""
 
     def outline(
-        self, session: Any, doc_ids: list[str], tenant_id: str = ""
+        self,
+        session: Any,
+        doc_ids: list[str],
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
     ) -> list[dict]:
         """The document's full heading hierarchy, in reading order.
 
@@ -89,7 +94,7 @@ class StructuralService:
             MATCH (n)
             WHERE (n:Chapter OR n:Section)
               AND {content_scope_where_multi("n", scoped=bool(doc_ids))}
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
               AND trim(coalesce(n.title, '')) <> ''
             RETURN trim(n.title) AS title,
                    coalesce(n.order, 0) AS ord,
@@ -100,6 +105,7 @@ class StructuralService:
             """,
             doc_ids=doc_ids or None,
             tenant_id=tenant_id,
+            language=language,
         )
         seen: set[str] = set()
         lines: list[str] = []
@@ -124,7 +130,12 @@ class StructuralService:
         }]
 
     def count_units(
-        self, session: Any, query: str, doc_ids: list[str], tenant_id: str = ""
+        self,
+        session: Any,
+        query: str,
+        doc_ids: list[str],
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
     ) -> list[dict]:
         """How many chapters/tables/figures/pages a document has, by counting them.
 
@@ -161,11 +172,12 @@ class StructuralService:
             f"""
             MATCH (n:{label})
             WHERE {content_scope_where_multi("n", scoped=True)}
-              AND {tenant_filter("n")}{title_clause}{region_clause}
+              AND {tenant_filter("n")} AND {language_filter("n")}{title_clause}{region_clause}
             RETURN {counted} AS total
             """,
             doc_ids=doc_ids,
             tenant_id=tenant_id,
+            language=language,
             region_kind=region_kind,
         ).single()
         total = int((row or {}).get("total") or 0)
@@ -189,7 +201,12 @@ class StructuralService:
         }]
 
     def by_address(
-        self, session: Any, address: str, doc_ids: list[str], tenant_id: str = ""
+        self,
+        session: Any,
+        address: str,
+        doc_ids: list[str],
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
     ) -> list[dict]:
         """The node a query addressed by number, e.g. "Box 9" or "section 4.2"."""
         m = _ADDRESS_PARTS.search(address or "")
@@ -217,14 +234,14 @@ class StructuralService:
             # that form is kept alongside.
             where = ("(toLower(coalesce(n.title, '')) =~ $numpat "
                      "OR toLower(coalesce(n.title, '')) =~ $pat "
-                     "OR toLower(coalesce(n.search_text, '')) =~ $pat)")
+                     f"OR {match_key_cypher('n')} =~ $pat)")
 
         region_clause = " AND n.region_kind = $region_kind" if region_kind else ""
         rows = session.run(
             f"""
             MATCH (n:{label})
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
               AND {where}{region_clause}
             RETURN coalesce(n.id, '') AS id,
                    coalesce(n.title, '') AS title,
@@ -240,6 +257,7 @@ class StructuralService:
             """,
             doc_ids=doc_ids or None,
             tenant_id=tenant_id,
+            language=language,
             number=number,
             pat=rf"(?s).*\b{re.escape(kind)}\s*{re.escape(number)}\b.*",
             # Anchored, and requiring a separator after the number, so "1.1"

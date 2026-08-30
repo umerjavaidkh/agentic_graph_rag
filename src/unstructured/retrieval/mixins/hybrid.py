@@ -12,7 +12,7 @@ from ....shared.config.settings import (
     RETRIEVAL_FINAL_LIMIT,
 )
 from ....shared.neo4j.driver import get_neo4j_driver
-from ....shared.config.settings import HYBRID_STRATEGY
+from ....shared.config.settings import DEFAULT_LANGUAGE, HYBRID_STRATEGY
 from ....shared.registries.strategy_registry import get_unstructured, list_unstructured
 from ..services.formatter import access_denied_response
 from ..strategies import registration as _strategy_registration  # noqa: F401  (side-effect: registers strategies)
@@ -25,9 +25,11 @@ class HybridRetrieveMixin:
         limit: int = RETRIEVAL_FINAL_LIMIT,
         user_context: Optional[UserContext] = None,
         document_id_hint: str = "",
+        language: str = DEFAULT_LANGUAGE,
     ) -> dict[str, Any]:
         return self.hybrid_retrieve(
-            query, limit=limit, user_context=user_context, document_id_hint=document_id_hint
+            query, limit=limit, user_context=user_context,
+            document_id_hint=document_id_hint, language=language,
         )
 
     def document_candidates(self, query: str, user_context=None, limit: int = 10) -> list:
@@ -54,6 +56,7 @@ class HybridRetrieveMixin:
         limit: int = RETRIEVAL_FINAL_LIMIT,
         user_context: Optional[UserContext] = None,
         document_id_hint: str = "",
+        language: str = DEFAULT_LANGUAGE,
     ) -> dict[str, Any]:
         """
         Neo4j Graph RAG (all run together for normal queries):
@@ -71,6 +74,12 @@ class HybridRetrieveMixin:
         """
         ctx = user_context or self.user_context
         tenant_id = ctx.tenant_id
+        # `language` is a parameter, not a field on UserContext. tenant_id
+        # lives there because it is a security boundary -- a missing one is
+        # a bug and nothing may widen it. Language scopes which corpus is
+        # searched, never what the user is allowed to see, and putting it
+        # beside tenant_id would blur a distinction that matters more than
+        # the convenience of having one object to pass.
         denied = access_denied_response(self.rbac, query, ctx)
         if denied:
             return denied
@@ -96,7 +105,7 @@ class HybridRetrieveMixin:
         if key not in list_unstructured():
             key = "graph_rag_hybrid"
         return get_unstructured(key).retrieve(
-            None, query, tenant_id=tenant_id, limit=limit, ctx=ctx,
+            None, query, tenant_id=tenant_id, language=language, limit=limit, ctx=ctx,
             document_id_hint=document_id_hint,
         )
 

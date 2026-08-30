@@ -16,13 +16,14 @@ side only runs when OPENAI_API_KEY is set.
 """
 from __future__ import annotations
 
-from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.config.settings import DEFAULT_LANGUAGE
+from ....shared.neo4j.tenancy import language_filter, tenant_filter
 from ..cypher_scope import content_scope_where
 
 
 class ChapterSummaryService:
     def fetch_for_document(
-        self, session, document_id: str, tenant_id: str = ""
+        self, session, document_id: str, tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> list[dict]:
         if not document_id:
             return []
@@ -30,7 +31,7 @@ class ChapterSummaryService:
             f"""
             MATCH (n:Chapter)
             WHERE {content_scope_where("n")}
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
               AND coalesce(n.summary, '') <> ''
             RETURN
               coalesce(n.id, '') AS id,
@@ -42,6 +43,7 @@ class ChapterSummaryService:
             """,
             doc_id=document_id,
             tenant_id=tenant_id,
+            language=language,
         )
         items: list[dict] = []
         for r in rows:

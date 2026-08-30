@@ -18,6 +18,8 @@ from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from ..unstructured.graph.constants import DOC_REVISION_LABEL, DOCUMENT_LOGICAL_LABEL
 from ..shared.neo4j.driver import close_neo4j_driver, get_neo4j_driver
+from ..shared.language import get_profile
+from ..shared.unicode_text import fold
 from ..shared.neo4j.tenancy import tenant_filter
 from ..unstructured.document.graph_snapshot import (
     X1_STAGE,
@@ -29,7 +31,7 @@ from ..unstructured.document.graph_snapshot import (
 from ..unstructured.document.purge import delete_document
 from ..unstructured.document.versioning import source_file_blob_key
 from ..shared.storage.blob.factory import get_blob_store
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from ..shared.audit import AuditEventType, get_audit_store, record_audit_event
 from .bridge import ask
 from ..shared.conversation import clear_turn
@@ -146,6 +148,53 @@ class QueryRequest(BaseModel):
             "fall back to 'unstructured'."
         ),
     )
+
+    language: Optional[str] = Field(
+        default=None,
+        # Pydantic skips validators on defaults unless asked, and an absent
+        # `language` has to resolve to the deployment default the same way a
+        # supplied one does -- otherwise the omitted case is the one path
+        # that reaches retrieval unnormalised.
+        validate_default=True,
+        description=(
+            "Language to scope document retrieval to. Omitted means the "
+            "deployment default. Unstructured retrieval only — the "
+            "structured business graph has no language dimension."
+        ),
+    )
+
+    @field_validator("language")
+    @classmethod
+    def _known_language(cls, value: Optional[str]) -> Optional[str]:
+        """Resolve to a language this deployment actually has.
+
+        Falls back rather than rejecting. An unrecognised code is a request
+        that should be answered in the default language, not a 400: a user
+        whose locale is `ar` asking an English question should widen, not
+        fail, and a client sending a code from a future build must not be
+        able to break querying.
+        """
+        return get_profile(value).code
+
+    @field_validator("question")
+    @classmethod
+    def _normalize_question(cls, value: str) -> str:
+        """NFKC-normalize the question before anything reads it.
+
+        The same word can arrive in several encodings -- Arabic presentation
+        forms, full-width Latin from a CJK keyboard, a `ﬁ` ligature pasted
+        out of a PDF -- and each one tokenizes to something the corpus does
+        not contain. Normalizing once here means no downstream matcher has
+        to know that, and both `/query` and `/query/stream` are covered by
+        the one rule because both take this model.
+
+        Queries only, deliberately. Running the same normalization over
+        STORED text would rewrite English content, so it needs a re-ingest
+        and a re-measurement -- Phase 2, when the corpus is rebuilt anyway.
+        Until then a query is normalized and a document is not, which
+        matches strictly more than the reverse would.
+        """
+        return fold(value)
 
 
 class ClearThreadRequest(BaseModel):

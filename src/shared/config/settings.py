@@ -470,6 +470,54 @@ MULTI_TENANCY_ENABLED = os.environ.get("MULTI_TENANCY_ENABLED", "false").lower()
 )
 DEFAULT_TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "default")
 
+# ── Language scoping ──────────────────────────────────────────────────────
+# The language a document is in when no other profile claims it, and the
+# language a request means when it does not say. Every document ingested
+# before language scoping existed is backfilled to this.
+DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "en")
+
+# Share of a document's LETTERS that must belong to a non-default language
+# before the document is filed under it. A presence test would move a
+# 300-page English filing into the Arabic corpus on one stray glyph, and
+# scanned pages produce stray glyphs routinely.
+#
+# Measured by `scripts/audit_language.py` over the 561-document English
+# corpus: 5 documents contain SOME Arabic script -- arXiv NLP papers
+# quoting Arabic examples -- at shares of 0.0001 to 0.0012. So the noise
+# floor is 0.0012 and 0.05 sits ~40x above it, which is the safe side.
+#
+# That measurement also settles the design argument. Under a naive "any
+# Arabic makes it Arabic" presence test, those 5 English papers would
+# leave the English corpus and no English query would reach them again.
+# The failure mode is real, not hypothetical.
+#
+# What is NOT yet measured is the other side: the lowest share of a
+# genuinely bilingual document. Until one is audited, 0.05 is bounded
+# from below by evidence and from above by nothing.
+LANGUAGE_SHARE_THRESHOLD = float(os.environ.get("LANGUAGE_SHARE_THRESHOLD", "0.05"))
+
+# Languages live in THIS deployment, comma-separated. Registering a profile
+# in src/shared/language.py adds it to the catalogue; naming it here turns
+# it on. The two stay separate because they answer different questions --
+# what the code supports, and what this deployment serves.
+#
+# Defaults to "en,ar" because that is what this system IS. The separation
+# was built so that shipping Arabic support and enabling it could be
+# different events; that mattered while the scoping was unproven, and the
+# proving is done.
+#
+# One consequence, stated because it is the kind of thing that is found the
+# hard way: with two languages live, `language_filter()` no longer compiles
+# to "true", so a document node with NO `language` property is invisible to
+# every query. Restoring an older Neo4j dump therefore means running
+# scripts/backfill_language.py before the corpus answers anything. Set this
+# to "en" to get the old compile-away behaviour back.
+ENABLED_LANGUAGES = tuple(
+    code.strip().lower()
+    for code in os.environ.get("ENABLED_LANGUAGES", "en,ar").split(",")
+    if code.strip()
+) or (DEFAULT_LANGUAGE,)
+
 # KnowledgeArea id that gates document-RAG access in the seeded RBAC schema
 # (src/auth/rbac_schema.cypher). Defaults to "esg" to match this repo's demo
 # seed data — deployments with their own KnowledgeArea taxonomy should set

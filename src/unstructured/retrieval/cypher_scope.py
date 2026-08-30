@@ -120,6 +120,29 @@ def content_match_cypher(alias: str = "n", labels: "tuple[str, ...]" = ()) -> st
     return f"({alias}:" + "|".join(names) + ")"
 
 
+def match_key_cypher(alias: str = "n") -> str:
+    """The text lexical matching compares against, lowercased.
+
+    `match_text` is `search_text` with the document language's normalizer
+    applied, and it is written ONLY when normalization changed something.
+    So for English it is absent, the coalesce falls through to
+    `search_text`, and matching is byte-identical to what it always was --
+    the guarantee is structural, not a claim about tests.
+
+    Deliberately not `search_text` itself. That field is the hydration
+    fallback when a blob is missing, and citations have to stay
+    byte-identical to the PDF; normalizing it in place would make the
+    quoted span differ from the page it cites. Matching and reading are
+    different jobs, so they read different properties.
+
+    Measured before this existed: the query "الهويات" matched 0 nodes
+    while the stored "الهويّات" matched 38 -- one shadda apart, the same
+    word, and no amount of query rewriting could bridge it while the
+    stored side kept its diacritics.
+    """
+    return f"toLower(coalesce({alias}.match_text, {alias}.search_text, ''))"
+
+
 def content_scope_where(alias: str = "n", param: str = "$doc_id") -> str:
     """Indexed document scope for a text-bearing content node.
 

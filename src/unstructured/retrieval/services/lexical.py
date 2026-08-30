@@ -11,7 +11,9 @@ import re
 from typing import Optional
 
 from ...graph.constants import DOCUMENT_ROOT_CYPHER, INDEXED_NODE_CYPHER
-from ....shared.neo4j.tenancy import tenant_filter
+from ....shared.config.settings import DEFAULT_LANGUAGE
+from ....shared.language import get_profile
+from ....shared.neo4j.tenancy import language_filter, tenant_filter
 from ....shared.storage.hydrator import get_hydrator
 from ..constants import _TEXT_NODE_LABELS
 from ..cypher_scope import (
@@ -19,6 +21,7 @@ from ..cypher_scope import (
     as_doc_id_list,
     content_match_cypher,
     content_scope_where_multi,
+    match_key_cypher,
 )
 from ..text_utils import _extract_urls
 from .document_resolver import DocumentResolver
@@ -55,7 +58,12 @@ class LexicalService:
         self._document_resolver = document_resolver
 
     def structural_keyword_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None,
+        self,
+        session,
+        query: str,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        document_id: Optional[str] = None,
         row_limit: int = 6,
     ) -> list[dict]:
         """
@@ -80,6 +88,16 @@ class LexicalService:
         call before this parameter existed. Leave unset (None) to resolve
         internally, e.g. when called standalone.
         """
+        # Both sides of a lexical comparison have to live in the same
+        # space. `match_key_cypher` reads `match_text`, which is the stored
+        # text with this language's normalizer applied, so the query gets
+        # the same treatment before any keyword or phrase is derived from
+        # it. English's normalizer is the identity, so this is a no-op
+        # there -- the same word, unchanged, byte for byte.
+        #
+        # The ORIGINAL question is untouched: it is what reaches the model
+        # and what gets echoed back. Only the matching key is normalized.
+        query = get_profile(language).normalize(query or "")
         keywords = self._ranking._content_keywords_from_query(query)
         if len(keywords) < 2:
             return []
@@ -114,15 +132,16 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
             UNWIND $keywords AS k
-            WITH k, n WHERE toLower(n.search_text) CONTAINS k
+            WITH k, n WHERE {match_key_cypher("n")} CONTAINS k
             RETURN k AS keyword, count(DISTINCT n) AS df
             """,
             doc_ids=doc_ids,
             keywords=keywords,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
         )
         doc_freq = {r["keyword"]: int(r["df"]) for r in freq_rows}
         if not doc_freq:
@@ -141,9 +160,9 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
+              AND {tenant_filter("n")} AND {language_filter("n")}
             WITH n,
-              [k IN $keywords WHERE toLower(n.search_text) CONTAINS k] AS matched
+              [k IN $keywords WHERE {match_key_cypher("n")} CONTAINS k] AS matched
             WHERE size(matched) >= $min_hits
             WITH n, matched,
               reduce(s = 0.0, k IN matched | s + coalesce($weight[k], 0.0)) AS w
@@ -164,6 +183,7 @@ class LexicalService:
             min_hits=min_hits,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
             weight=weight,
             row_limit=int(row_limit),
         )
@@ -197,7 +217,12 @@ class LexicalService:
         return f"{body}\n\n[Extracted URLs]\n{url_block}".strip()
 
     def structural_phrase_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None,
+        self,
+        session,
+        query: str,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        document_id: Optional[str] = None,
         row_limit: int = 6,
     ) -> list[dict]:
         """
@@ -222,13 +247,13 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
-              AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
+              AND {tenant_filter("n")} AND {language_filter("n")}
+              AND any(phrase IN $phrases WHERE {match_key_cypher("n")} CONTAINS phrase)
             OPTIONAL MATCH (d:Document)
               WHERE d.logical_doc_id = n.logical_doc_id
-                AND d.lifecycle_status = '""" + "ACTIVE" + """'
+                AND d.lifecycle_status = '""" + "ACTIVE" + f"""'
             WITH n, d,
-              size([p IN $phrases WHERE toLower(n.search_text) CONTAINS p]) AS phrase_hits
+              size([p IN $phrases WHERE {match_key_cypher("n")} CONTAINS p]) AS phrase_hits
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
@@ -246,6 +271,7 @@ class LexicalService:
             row_limit=int(row_limit),
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
         )
 
         hydrator = get_hydrator()
@@ -274,7 +300,7 @@ class LexicalService:
         return items
 
     def expand_unit_siblings(
-        self, session, item_ids: list[str], tenant_id: str = ""
+        self, session, item_ids: list[str], tenant_id: str = "", language: str = DEFAULT_LANGUAGE
     ) -> list[dict]:
         """The other parts of any multi-chunk unit the hits belong to.
 
@@ -311,7 +337,7 @@ class LexicalService:
             WHERE part.unit_id = hit.unit_id
               AND part.revision_id = hit.revision_id
               AND part.id <> hit.id
-              AND {tenant_filter("part")}
+              AND {tenant_filter("part")} AND {language_filter("part")}
             RETURN DISTINCT
               coalesce(part.id, '') AS id,
               coalesce(part.title, '') AS title,
@@ -325,6 +351,7 @@ class LexicalService:
             """,
             ids=ids,
             tenant_id=tenant_id,
+            language=language,
         )
         hydrator = get_hydrator()
         return [
@@ -344,7 +371,12 @@ class LexicalService:
         ]
 
     def quantity_evidence_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
+        self,
+        session,
+        query: str,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        document_id: Optional[str] = None,
     ) -> list[dict]:
         """
         For a counting question ("how many X"), retrieve chunks that actually
@@ -366,6 +398,16 @@ class LexicalService:
         this document or this domain, so the pattern generalizes: "12
         patients", "40 municipalities", "7 exhibits".
         """
+        # Both sides of a lexical comparison have to live in the same
+        # space. `match_key_cypher` reads `match_text`, which is the stored
+        # text with this language's normalizer applied, so the query gets
+        # the same treatment before any keyword or phrase is derived from
+        # it. English's normalizer is the identity, so this is a no-op
+        # there -- the same word, unchanged, byte for byte.
+        #
+        # The ORIGINAL question is untouched: it is what reaches the model
+        # and what gets echoed back. Only the matching key is normalized.
+        query = get_profile(language).normalize(query or "")
         if not _QUANTITY_QUESTION_RE.search(query or ""):
             return []
         nouns = [
@@ -391,13 +433,13 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
-              AND any(p IN $patterns WHERE toLower(n.search_text) =~ p)
+              AND {tenant_filter("n")} AND {language_filter("n")}
+              AND any(p IN $patterns WHERE {match_key_cypher("n")} =~ p)
             OPTIONAL MATCH (d:Document)
               WHERE d.logical_doc_id = n.logical_doc_id
                 AND d.lifecycle_status = 'ACTIVE'
             WITH n, d,
-              size([p IN $patterns WHERE toLower(n.search_text) =~ p]) AS matched
+              size([p IN $patterns WHERE {match_key_cypher("n")} =~ p]) AS matched
             RETURN
               coalesce(n.id, '') AS id,
               coalesce(n.title, '') AS title,
@@ -414,6 +456,7 @@ class LexicalService:
             patterns=patterns,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
             limit=_QUANTITY_LIMIT,
         )
 
@@ -440,7 +483,12 @@ class LexicalService:
         return items
 
     def scope_phrase_retrieve(
-        self, session, query: str, tenant_id: str = "", document_id: Optional[str] = None
+        self,
+        session,
+        query: str,
+        tenant_id: str = "",
+        language: str = DEFAULT_LANGUAGE,
+        document_id: Optional[str] = None,
     ) -> list[dict]:
         """
         Retrieve chunks by a SHORT, discriminating scope phrase from the query
@@ -470,6 +518,16 @@ class LexicalService:
         `document_id`: see structural_keyword_retrieve — same
         skip-re-resolution contract.
         """
+        # Both sides of a lexical comparison have to live in the same
+        # space. `match_key_cypher` reads `match_text`, which is the stored
+        # text with this language's normalizer applied, so the query gets
+        # the same treatment before any keyword or phrase is derived from
+        # it. English's normalizer is the identity, so this is a no-op
+        # there -- the same word, unchanged, byte for byte.
+        #
+        # The ORIGINAL question is untouched: it is what reaches the model
+        # and what gets echoed back. Only the matching key is normalized.
+        query = get_profile(language).normalize(query or "")
         phrases = self._ranking.scope_phrases_from_query(query)
         if not phrases:
             return []
@@ -490,8 +548,8 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
-            WITH collect(toLower(n.search_text)) AS texts
+              AND {tenant_filter("n")} AND {language_filter("n")}
+            WITH collect({match_key_cypher("n")}) AS texts
             UNWIND $phrases AS phrase
             RETURN phrase,
                    size([t IN texts WHERE t CONTAINS phrase]) AS df,
@@ -501,6 +559,7 @@ class LexicalService:
             phrases=lowered,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
         )
         # Weight each surviving phrase by RARITY, don't treat them as equal.
         # A frequency CUTOFF alone is not enough: verified live, a question
@@ -528,14 +587,14 @@ class LexicalService:
             MATCH {content_match_cypher("n")}
             WHERE {content_scope_where_multi("n", scoped=bool(doc_ids))}
               AND n.search_text IS NOT NULL AND n.search_text <> ''
-              AND {tenant_filter("n")}
-              AND any(phrase IN $phrases WHERE toLower(n.search_text) CONTAINS phrase)
+              AND {tenant_filter("n")} AND {language_filter("n")}
+              AND any(phrase IN $phrases WHERE {match_key_cypher("n")} CONTAINS phrase)
             OPTIONAL MATCH (d:Document)
               WHERE d.logical_doc_id = n.logical_doc_id
                 AND d.lifecycle_status = 'ACTIVE'
             WITH n, d,
               reduce(w = 0.0, i IN range(0, size($phrases) - 1) |
-                w + CASE WHEN toLower(n.search_text) CONTAINS $phrases[i]
+                w + CASE WHEN {match_key_cypher("n")} CONTAINS $phrases[i]
                          THEN $weights[i] ELSE 0.0 END) AS phrase_weight
             RETURN
               coalesce(n.id, '') AS id,
@@ -554,6 +613,7 @@ class LexicalService:
             weights=weights,
             labels=list(_TEXT_NODE_LABELS),
             tenant_id=tenant_id,
+            language=language,
             limit=_SCOPE_PHRASE_LIMIT,
         )
 

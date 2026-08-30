@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..models import DKGEdge, DKGNode, NodeType, RelType
+from ...shared.config.settings import DEFAULT_LANGUAGE
+from ...shared.language import derive_match_text
 
 
 def file_content_sha256(path: str | Path, chunk_size: int = 1024 * 1024) -> str:
@@ -85,6 +87,10 @@ class DocumentRevisionPlan:
     title: str
     source_filename: str
     tenant_id: str
+    # Defaulted so every existing construction of this plan keeps working
+    # and lands in the default language, which is exactly the backfill rule
+    # applied going forward.
+    language: str = DEFAULT_LANGUAGE
 
 
 def source_file_blob_key(
@@ -112,6 +118,7 @@ def build_revision_plan(
     version_number: int = 1,
     content_root_id: str | None = None,
     logical_id: str | None = None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> DocumentRevisionPlan:
     # An explicit logical_id wins over one derived from doc_key/filename: the
     # caller may have found that this exact content already belongs to a
@@ -132,6 +139,7 @@ def build_revision_plan(
         title=clean_stem,
         source_filename=file_path.name,
         tenant_id=tenant_id,
+        language=language,
     )
 
 
@@ -165,6 +173,8 @@ def apply_revision_to_graph(
         node.lifecycle_status = "ACTIVE"
         node.content_hash = plan.content_hash
         node.tenant_id = plan.tenant_id
+        node.language = plan.language
+        node.match_text = derive_match_text(node.search_text, plan.language)
         out_nodes.append(node)
 
     out_edges: list[DKGEdge] = []
@@ -177,6 +187,7 @@ def apply_revision_to_graph(
             "logical_doc_id": plan.logical_id,
         }
         edge.tenant_id = plan.tenant_id
+        edge.language = plan.language
         out_edges.append(edge)
 
     return out_nodes, out_edges
@@ -197,6 +208,7 @@ def revision_metadata_nodes(plan: DocumentRevisionPlan) -> tuple[list[DKGNode], 
         lifecycle_status="ACTIVE",
         content_hash=plan.content_hash,
         tenant_id=plan.tenant_id,
+        language=plan.language,
     )
     revision = DKGNode(
         id=plan.revision_id,
@@ -213,6 +225,7 @@ def revision_metadata_nodes(plan: DocumentRevisionPlan) -> tuple[list[DKGNode], 
         ingested_at=now,
         source_filename=plan.source_filename,
         tenant_id=plan.tenant_id,
+        language=plan.language,
     )
     edges = [
         DKGEdge(plan.logical_id, plan.revision_id, RelType.HAS_REVISION, axis=1),

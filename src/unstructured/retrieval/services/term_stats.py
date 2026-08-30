@@ -31,12 +31,14 @@ that gap.
 """
 from __future__ import annotations
 
-import re
+import math
 import threading
 import time
 from typing import Any, Optional
 
-_WORD = re.compile(r"[a-z][a-z0-9-]{2,}")
+from ....shared.config.settings import DEFAULT_LANGUAGE
+from ....shared.neo4j.tenancy import language_filter, tenant_filter
+from ....shared.unicode_text import words as word_tokens
 
 # Terms rarer than this are dropped from the table and answer 0.0 on
 # lookup. Only terms near the decision threshold need an accurate figure,
@@ -52,6 +54,42 @@ _PRUNE_BELOW = 0.02
 _SAMPLE_NODES = 40_000
 _SAMPLE_CHARS = 1_200
 
+# The share at which the underspecified gate calls a term generic. Kept
+# here as a number rather than imported: strategies/vector_first_hybrid.py
+# owns MAX_GENERIC_DOC_FREQUENCY and imports THIS module, so importing it
+# back would be a cycle. A test asserts the two stay equal.
+_GENERIC_SHARE = 0.07
+
+# How many documents a term must actually appear in before "generic" is a
+# defensible word for it. Twenty is a judgement, but a modest one: a term
+# in twenty separate documents is plausibly vocabulary rather than subject
+# matter.
+_MIN_GENERIC_DOCUMENTS = 20
+
+# Fewest documents a language needs before its frequency table is allowed
+# an opinion.
+#
+# The binding constraint is NOT resolution. An earlier version of this
+# reasoned that real questions top out at 0.042 and generic ones bottom
+# out at 0.093, so the table must resolve a gap of about 0.05, and since
+# document frequency over n documents resolves 1/n, twenty documents
+# would do. That set the bar at 30 and it was wrong, because the gate
+# compares against an ABSOLUTE share calibrated on a large corpus.
+#
+# Measured on the 37-document Arabic corpus that bar admitted: 0.07 x 37
+# is 2.6 documents, so a term appearing in three of thirty-seven was
+# called generic. "الكيمياء" appeared in four and "النقل" in eight, and
+# both were flagged -- those are the subjects of the articles, not
+# vocabulary. Every such question was answered with the document picker
+# instead of an answer.
+#
+# So the requirement is that the share correspond to a real count:
+# _GENERIC_SHARE x N must be at least _MIN_GENERIC_DOCUMENTS. Below that
+# the table abstains, min_term_frequency returns None, and the gate
+# answers normally -- which is the behaviour a corpus too small to have
+# generic vocabulary should get.
+_MIN_DOCS_FOR_DF = math.ceil(_MIN_GENERIC_DOCUMENTS / _GENERIC_SHARE)
+
 
 class CorpusTermStats:
     """Share of corpus documents containing each common term.
@@ -61,36 +99,57 @@ class CorpusTermStats:
     verdict gently instead of failing it.
     """
 
-    def __init__(self, ttl_seconds: int = 3600) -> None:
+    def __init__(
+        self, ttl_seconds: int = 3600, min_docs: int = _MIN_DOCS_FOR_DF
+    ) -> None:
         self._ttl = ttl_seconds
+        # Injectable so a test can say which of the two things it is
+        # testing: the frequency arithmetic, or the policy about when
+        # that arithmetic is trustworthy. A fixture of ten documents is
+        # exercising the first and should not have to satisfy the second.
+        self._min_docs = min_docs
         self._lock = threading.Lock()
-        self._df: dict[str, float] = {}
-        self._built_at = 0.0
-        self._doc_count = 0
+        # One table per language. A single shared table cannot work once a
+        # second language exists: with 998 English documents and one
+        # Arabic one, every Arabic term sits at df = 0.001 and is pruned
+        # below the floor, so the whole Arabic vocabulary reads as
+        # maximally rare. Measured before this existed -- 0 Arabic terms
+        # survived in a 6,919-term table.
+        self._tables: dict[str, dict[str, float]] = {}
+        self._built_at: dict[str, float] = {}
+        self._doc_counts: dict[str, int] = {}
 
-    def _build(self, session: Any) -> None:
+    def _build(self, session: Any, language: str, tenant_id: str) -> None:
         docsets: dict[str, set[str]] = {}
         rows = session.run(
-            """
+            f"""
             MATCH (n:Section|Page|Chapter)
             WHERE n.lifecycle_status = 'ACTIVE'
               AND size(coalesce(n.search_text, '')) > 200
+              AND {tenant_filter("n")} AND {language_filter("n")}
             RETURN n.logical_doc_id AS d,
                    substring(n.search_text, 0, $chars) AS t
             LIMIT $limit
             """,
             chars=_SAMPLE_CHARS,
             limit=_SAMPLE_NODES,
+            language=language,
+            tenant_id=tenant_id,
         )
         for r in rows:
             doc = r.get("d")
             if not doc:
                 continue
-            docsets.setdefault(doc, set()).update(_WORD.findall((r.get("t") or "").lower()))
+            docsets.setdefault(doc, set()).update(
+                word_tokens(r.get("t") or "", min_length=3, hyphens=True)
+            )
 
+        key = (tenant_id, language)
         total = len(docsets)
+        self._doc_counts[key] = total
+        self._built_at[key] = time.time()
         if not total:
-            self._df, self._doc_count, self._built_at = {}, 0, time.time()
+            self._tables[key] = {}
             return
 
         counts: dict[str, int] = {}
@@ -98,23 +157,47 @@ class CorpusTermStats:
             for w in words:
                 counts[w] = counts.get(w, 0) + 1
         floor = _PRUNE_BELOW * total
-        self._df = {w: c / total for w, c in counts.items() if c >= floor}
-        self._doc_count = total
-        self._built_at = time.time()
+        self._tables[key] = {w: c / total for w, c in counts.items() if c >= floor}
 
-    def _ensure(self, session: Any) -> None:
-        if self._df and (time.time() - self._built_at) < self._ttl:
+    def _ensure(self, session: Any, language: str, tenant_id: str) -> None:
+        key = (tenant_id, language)
+        built = self._built_at.get(key, 0.0)
+        if key in self._tables and (time.time() - built) < self._ttl:
             return
         with self._lock:
-            if self._df and (time.time() - self._built_at) < self._ttl:
+            built = self._built_at.get(key, 0.0)
+            if key in self._tables and (time.time() - built) < self._ttl:
                 return
-            self._build(session)
+            self._build(session, language, tenant_id)
 
-    def document_frequency(self, session: Any, term: str) -> float:
-        self._ensure(session)
-        return self._df.get((term or "").lower(), 0.0)
+    def _has_opinion(self, key: tuple) -> bool:
+        """Whether this language has enough documents to judge rarity.
 
-    def min_term_frequency(self, session: Any, keywords: list[str]) -> Optional[float]:
+        A table built from too few documents is not a weak measurement, it
+        is a different one: with a single document every term in it has
+        df = 1.0, which reads exactly like "this word is generic" and is
+        nothing of the sort.
+        """
+        return self._doc_counts.get(key, 0) >= self._min_docs
+
+    def document_frequency(
+        self,
+        session: Any,
+        term: str,
+        language: str = DEFAULT_LANGUAGE,
+        tenant_id: str = "",
+    ) -> float:
+        self._ensure(session, language, tenant_id)
+        table = self._tables.get((tenant_id, language), {})
+        return table.get((term or "").lower(), 0.0)
+
+    def min_term_frequency(
+        self,
+        session: Any,
+        keywords: list[str],
+        language: str = DEFAULT_LANGUAGE,
+        tenant_id: str = "",
+    ) -> Optional[float]:
         """Document frequency of the query's RAREST term.
 
         Morphological variants are collapsed first and scored by the form
@@ -127,8 +210,15 @@ class CorpusTermStats:
         words = [k for k in (keywords or []) if k and k.isalpha()]
         if not words:
             return None
-        self._ensure(session)
-        if not self._df:
+        key = (tenant_id, language)
+        self._ensure(session, language, tenant_id)
+        table = self._tables.get(key) or {}
+        if not table:
+            return None
+        # None means "cannot judge", and the caller answers normally on it.
+        # That is the right answer for a corpus too small to have generic
+        # vocabulary yet -- see _MIN_DOCS_FOR_DF.
+        if not self._has_opinion(key):
             return None
 
         groups: list[list[str]] = []
@@ -139,4 +229,4 @@ class CorpusTermStats:
                     break
             else:
                 groups.append([k])
-        return min(max(self._df.get(w, 0.0) for w in g) for g in groups)
+        return min(max(table.get(w, 0.0) for w in g) for g in groups)
