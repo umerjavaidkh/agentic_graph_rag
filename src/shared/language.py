@@ -296,7 +296,8 @@ def derive_match_text(search_text: Optional[str], language: Optional[str]) -> Op
 def intent_alternations(shape: str) -> list[str]:
     """Every registered profile's extra patterns for one question shape.
 
-    Every profile, not the request's language. A shape regex is asking
+    Every CONFIGURED profile, not the request's language. A shape regex
+    is asking
     "what kind of question is this", and the scripts do not overlap: an
     Arabic alternation cannot match ASCII and an English one cannot match
     Arabic. Unioning them is therefore free of cross-language false
@@ -305,7 +306,7 @@ def intent_alternations(shape: str) -> list[str]:
     spelled as a parameter.
     """
     out = []
-    for profile in _PROFILES.values():
+    for profile in _configured_profiles():
         pattern = (profile.intent_patterns or {}).get(shape)
         if pattern:
             out.append(pattern)
@@ -338,8 +339,26 @@ def message(key: str, language: Optional[str] = None) -> str:
     return (_PROFILES[DEFAULT_LANGUAGE].messages or {}).get(key, "")
 
 
+def _configured_profiles() -> list[LanguageProfile]:
+    """The profiles this deployment actually serves, default first.
+
+    Everything that inspects profiles goes through this rather than
+    `_PROFILES`, because `_PROFILES` is the CATALOGUE -- what the code can
+    do -- and that is a different question from what this deployment does.
+    Reading the catalogue instead made ENABLED_LANGUAGES a setting that
+    documented itself and controlled nothing: with `ENABLED_LANGUAGES=en`,
+    `detect_language` still returned "ar" and filed documents under a
+    language the deployment had no retrieval for.
+    """
+    return [_PROFILES[code] for code in configured_languages() if code in _PROFILES]
+
+
 def script_shares(text: str) -> dict[str, float]:
     """Share of the text's letters belonging to each non-default language.
+
+    Only languages this deployment serves are counted, so a corpus cannot
+    be filed under a language that has not been enabled -- see
+    `_configured_profiles`.
 
     Letters only. Digits, punctuation and whitespace are script-neutral --
     counting them would dilute a genuinely Arabic document in proportion
@@ -352,7 +371,7 @@ def script_shares(text: str) -> dict[str, float]:
         for ch in word:
             counted += 1
             point = ord(ch)
-            for profile in _PROFILES.values():
+            for profile in _configured_profiles():
                 if any(lo <= point <= hi for lo, hi in profile.scripts):
                     hits[profile.code] = hits.get(profile.code, 0) + 1
                     break

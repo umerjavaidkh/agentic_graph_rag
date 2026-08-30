@@ -183,3 +183,42 @@ def test_an_enabled_language_with_no_profile_is_ignored(monkeypatch):
     monkeypatch.setattr(language_mod, "ENABLED_LANGUAGES", ("en", "xx"))
     assert configured_languages() == ["en"]
     assert language_filter() == "true"
+
+
+# ── The catalogue/configuration split, actually enforced ─────────────────
+
+
+def test_detection_ignores_a_language_this_deployment_has_not_enabled(monkeypatch):
+    """ENABLED_LANGUAGES has to control something.
+
+    `settings.py` says registering a profile adds it to the catalogue and
+    naming it here turns it on. Detection read the CATALOGUE, so with
+    `ENABLED_LANGUAGES=en` a document was still filed as `ar` -- a
+    language the deployment has no retrieval for, no profile in play at
+    query time, and no way to ask questions in.
+    """
+    monkeypatch.setattr(language_mod, "ENABLED_LANGUAGES", ("en",))
+    assert detect_language(_ARABIC_TEXT) == "en"
+
+
+def test_detection_uses_it_once_it_is_enabled(two_languages):
+    assert detect_language(_ARABIC_TEXT) == "ar"
+
+
+def test_shape_patterns_follow_the_same_rule(monkeypatch):
+    """Otherwise a disabled language still steers question routing."""
+    from src.shared.language import intent_alternations
+
+    monkeypatch.setattr(language_mod, "ENABLED_LANGUAGES", ("en",))
+    assert intent_alternations("toc") == []
+
+    monkeypatch.setattr(language_mod, "ENABLED_LANGUAGES", ("en", "ar"))
+    assert len(intent_alternations("toc")) == 1
+
+
+def test_script_shares_reports_only_configured_languages(monkeypatch):
+    monkeypatch.setattr(language_mod, "ENABLED_LANGUAGES", ("en",))
+    assert script_shares(_ARABIC_TEXT) == {}
+
+    monkeypatch.setattr(language_mod, "ENABLED_LANGUAGES", ("en", "ar"))
+    assert script_shares(_ARABIC_TEXT).get("ar", 0) > 0.9

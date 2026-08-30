@@ -184,44 +184,86 @@ def _backfill_match_text(session, language: str, batch_size: int) -> int:
     a pure function of the stored text, so this needs no re-parse, no
     re-embed and no original file. That is the point of keeping matching
     and reading in separate properties.
+
+    Writes the property ONLY where normalization changed something, which
+    is exactly what apply_revision_to_graph does at ingest. An earlier
+    version wrote `derived or search_text`, so a node whose text was
+    already normalized ended up carrying a duplicate copy of its own
+    text -- the same property meaning two different things depending on
+    whether the node arrived by ingest or by migration. Both read
+    identically through `coalesce`, which is precisely why the divergence
+    could have sat there unnoticed.
+
+    Paged by an id cursor rather than by `match_text IS NULL`. The null
+    check cannot be the progress marker once "no change needed" is itself
+    recorded as null, and SKIP-based paging re-walks the prefix on every
+    batch, which is quadratic on a corpus large enough to need batching.
     """
     if get_profile(language).normalize is _identity:
         return 0
 
     updated = 0
+    cursor = ""
     while True:
         rows = list(session.run(
             f"""
             MATCH (n{DOCUMENT_LABELS})
             WHERE n.language = $language
               AND n.search_text IS NOT NULL
-              AND n.match_text IS NULL
+              AND n.id > $cursor
             RETURN n.id AS id, n.search_text AS search_text
+            ORDER BY n.id
             LIMIT $batch_size
             """,
             language=language,
+            cursor=cursor,
             batch_size=batch_size,
         ))
         if not rows:
             break
-        pairs = []
-        for r in rows:
-            derived = derive_match_text(r["search_text"], language)
-            # A node whose text is already normalized gets its own text
-            # back, so the property is present and the next pass does not
-            # re-read it. `coalesce` makes the two cases identical to read.
-            pairs.append({"id": r["id"], "match_text": derived or r["search_text"]})
-        session.run(
-            """
-            UNWIND $pairs AS p
-            MATCH (n {id: p.id})
-            SET n.match_text = p.match_text
-            """,
-            pairs=pairs,
-        )
-        updated += len(pairs)
-        print(f"  match_text {updated} ({language})", flush=True)
+        cursor = rows[-1]["id"]
+        pairs = [
+            {"id": r["id"], "match_text": derived}
+            for r in rows
+            if (derived := derive_match_text(r["search_text"], language)) is not None
+        ]
+        if pairs:
+            session.run(
+                f"""
+                UNWIND $pairs AS p
+                MATCH (n{DOCUMENT_LABELS} {{id: p.id}})
+                SET n.match_text = p.match_text
+                """,
+                pairs=pairs,
+            )
+            updated += len(pairs)
+        print(f"  match_text {updated} written ({language})", flush=True)
     return updated
+
+
+def _clear_redundant_match_text(session, language: str) -> int:
+    """Drop `match_text` where it merely duplicates `search_text`.
+
+    Reconciles rows written by the earlier convention, which stored a copy
+    of the text when normalization changed nothing. `coalesce` reads both
+    forms identically, so nothing behaves differently -- but the property
+    now means one thing everywhere: present exactly when normalization
+    changed something.
+
+    Safe to run repeatedly, and safe even if a future normalizer returns
+    text unchanged for some input: absent and equal are the same answer to
+    `coalesce`.
+    """
+    row = session.run(
+        f"""
+        MATCH (n{DOCUMENT_LABELS})
+        WHERE n.language = $language AND n.match_text = n.search_text
+        REMOVE n.match_text
+        RETURN count(n) AS cleared
+        """,
+        language=language,
+    ).single()
+    return (row or {}).get("cleared", 0)
 
 
 def main() -> int:
@@ -265,6 +307,8 @@ def main() -> int:
         for code in sorted({args.language} | _language_codes_on_documents(session)):
             n = _backfill_match_text(session, code, args.batch_size)
             print(f"match_text: derived for {n} nodes '{code}'")
+            cleared = _clear_redundant_match_text(session, code)
+            print(f"match_text: cleared {cleared} redundant copies '{code}'")
     return 0
 
 

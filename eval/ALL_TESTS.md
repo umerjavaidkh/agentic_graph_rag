@@ -78,6 +78,17 @@ started fabricating. Checked directly: 5/5 refusals, every one of the
 form "هذا المستند لا يغطي ...". Refusal phrases now live in the language
 profiles, and `eval_shapes.py` takes `--language`.
 
+**The 0.89 depends on the corpus being below the frequency table's
+abstention bar.** At 37 documents it is, so the underspecified gate
+stands down and questions are answered. Between measuring 0.89 and
+re-checking it, the bar was briefly low enough (30) for the Arabic table
+to have an opinion, and the same questions came back as the document
+picker instead: 0.07 of 37 documents is 2.6, so "الكيمياء" in 4
+documents and "النقل" in 8 were both called generic vocabulary rather
+than the subjects of the articles. The bar is now derived from that
+share -- see `_MIN_DOCS_FOR_DF` -- and Arabic abstains until the corpus
+is large enough for "generic" to mean something.
+
 **Still to fix in the harness:** the question templates themselves. Until
 they are generated in the corpus's own language and shaped to the
 document type, `--language ar` measures a translation mismatch rather

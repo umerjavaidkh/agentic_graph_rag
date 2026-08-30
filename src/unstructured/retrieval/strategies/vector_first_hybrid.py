@@ -141,7 +141,11 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         # the exact query, so a genuinely new question misses it and pays for
         # a fresh lookup, which is the correct behaviour for one "outside the
         # scope".
-        self._scope_cache: dict[tuple[str, str], list] = {}
+        # (tenant_id, language, query) -> doc_ids. Language is part of the
+        # key, not an attribute of the answer: without it the first
+        # caller's language won for every later caller asking the same
+        # words.
+        self._scope_cache: dict[tuple[str, str, str], list] = {}
         self._scope_lock = threading.Lock()
         # Set on each retrieve() so a caller reading the response can see
         # which path actually decided the scope, rather than inferring it.
@@ -221,10 +225,11 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         return cache[key]
 
     def _name_index(self, tenant_id: str) -> list:
-        """(logical_id, squashed name) for every document, built once.
+        """(logical_id, squashed name, raw name, language) per document.
 
-        998 rows, and the corpus only changes on ingest, so this is read
-        once per process rather than per query.
+        Built once per process -- the corpus only changes on ingest -- and
+        filtered by language at match time rather than cached per language,
+        so adding a language does not multiply the index.
         """
         if self._names is None:
             rows = self._neo4j_session_call(
