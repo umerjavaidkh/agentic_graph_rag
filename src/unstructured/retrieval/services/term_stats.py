@@ -31,6 +31,7 @@ that gap.
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
 from typing import Any, Optional
@@ -53,25 +54,41 @@ _PRUNE_BELOW = 0.02
 _SAMPLE_NODES = 40_000
 _SAMPLE_CHARS = 1_200
 
+# The share at which the underspecified gate calls a term generic. Kept
+# here as a number rather than imported: strategies/vector_first_hybrid.py
+# owns MAX_GENERIC_DOC_FREQUENCY and imports THIS module, so importing it
+# back would be a cycle. A test asserts the two stay equal.
+_GENERIC_SHARE = 0.07
+
+# How many documents a term must actually appear in before "generic" is a
+# defensible word for it. Twenty is a judgement, but a modest one: a term
+# in twenty separate documents is plausibly vocabulary rather than subject
+# matter.
+_MIN_GENERIC_DOCUMENTS = 20
+
 # Fewest documents a language needs before its frequency table is allowed
-# an opinion. Derived from the separation this file already measures, not
-# picked: real questions top out at 0.042 and generic ones bottom out at
-# 0.093, so the table has to resolve a gap of about 0.05. Document
-# frequency is a proportion over n documents, so its finest possible
-# distinction is 1/n -- at 20 documents that is 0.05, exactly the width of
-# the gap, and every value lands on one side or the other by accident. 30
-# gives the measurement room to be a measurement.
+# an opinion.
 #
-# Below this the table returns no opinion rather than a wrong one, which
-# the caller already handles: `min_term_frequency` returning None means
-# "cannot judge", and the gate answers normally instead of declining.
+# The binding constraint is NOT resolution. An earlier version of this
+# reasoned that real questions top out at 0.042 and generic ones bottom
+# out at 0.093, so the table must resolve a gap of about 0.05, and since
+# document frequency over n documents resolves 1/n, twenty documents
+# would do. That set the bar at 30 and it was wrong, because the gate
+# compares against an ABSOLUTE share calibrated on a large corpus.
 #
-# This is what stops per-language partitioning from breaking a young
-# corpus. With one Arabic document every term in it has df = 1.0 -- not
-# because those words are generic, but because there is nothing to be
-# generic against -- and a table that reported that would decline every
-# Arabic question as underspecified.
-_MIN_DOCS_FOR_DF = 30
+# Measured on the 37-document Arabic corpus that bar admitted: 0.07 x 37
+# is 2.6 documents, so a term appearing in three of thirty-seven was
+# called generic. "الكيمياء" appeared in four and "النقل" in eight, and
+# both were flagged -- those are the subjects of the articles, not
+# vocabulary. Every such question was answered with the document picker
+# instead of an answer.
+#
+# So the requirement is that the share correspond to a real count:
+# _GENERIC_SHARE x N must be at least _MIN_GENERIC_DOCUMENTS. Below that
+# the table abstains, min_term_frequency returns None, and the gate
+# answers normally -- which is the behaviour a corpus too small to have
+# generic vocabulary should get.
+_MIN_DOCS_FOR_DF = math.ceil(_MIN_GENERIC_DOCUMENTS / _GENERIC_SHARE)
 
 
 class CorpusTermStats:

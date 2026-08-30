@@ -119,3 +119,16 @@ def test_the_english_stemmer_never_fires_on_arabic():
     stem = RankingService.__new__(RankingService)._morphological_stem
     for word in ("الهويات", "المعلم", "النتائج", "المدرسة", "الكلمات", "كتب"):
         assert stem(word) is None, f"a stemmer fired on Arabic: {word}"
+
+
+def test_match_text_is_absent_exactly_when_normalization_changed_nothing():
+    """One meaning for the property, whichever writer produced it.
+
+    Ingest has always written None here. The backfill used to write a
+    duplicate copy of `search_text` instead, so the same property meant
+    two different things depending on how the node arrived. `coalesce`
+    reads both identically, which is exactly why it could sit unnoticed.
+    """
+    assert derive_match_text("الهويات", "ar") is None        # already normal
+    assert derive_match_text("الهويّات", "ar") == "الهويات"   # changed
+    assert derive_match_text("Revenue grew", "en") is None    # identity normalizer

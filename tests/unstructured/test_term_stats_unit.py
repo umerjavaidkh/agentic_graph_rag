@@ -131,9 +131,49 @@ def test_a_corpus_too_small_to_judge_says_so_instead_of_guessing():
 
 def test_a_corpus_large_enough_does_have_an_opinion():
     """And the guard must not be so cautious that it never lifts."""
+    from src.unstructured.retrieval.services.term_stats import _MIN_DOCS_FOR_DF
+
     stats = CorpusTermStats()
-    rows = [{"d": f"doc{i}", "t": "the key findings and conclusion here"} for i in range(40)]
+    rows = [
+        {"d": f"doc{i}", "t": "the key findings and conclusion here"}
+        for i in range(_MIN_DOCS_FOR_DF + 5)
+    ]
     assert stats.min_term_frequency(_Session(rows), ["findings"]) == 1.0
+
+
+def test_the_abstention_bar_is_tied_to_the_gate_it_protects():
+    """The two numbers cannot drift apart silently.
+
+    term_stats cannot import MAX_GENERIC_DOC_FREQUENCY -- the module that
+    owns it imports term_stats -- so the share is written down twice.
+    This is what stops the copy going stale.
+    """
+    from src.unstructured.retrieval.services.term_stats import _GENERIC_SHARE
+    from src.unstructured.retrieval.strategies.vector_first_hybrid import (
+        MAX_GENERIC_DOC_FREQUENCY,
+    )
+
+    assert _GENERIC_SHARE == MAX_GENERIC_DOC_FREQUENCY
+
+
+def test_the_bar_makes_the_generic_share_mean_a_real_document_count():
+    """Why 30 was wrong.
+
+    The gate compares against an absolute share. On 37 documents, 0.07 is
+    2.6 documents -- so a term in three of thirty-seven was "generic".
+    Measured on the Arabic corpus: الكيمياء appeared in 4 documents and
+    النقل in 8, and both were flagged, which turned every question about
+    those subjects into the document picker.
+    """
+    from src.unstructured.retrieval.services.term_stats import (
+        _GENERIC_SHARE,
+        _MIN_DOCS_FOR_DF,
+        _MIN_GENERIC_DOCUMENTS,
+    )
+
+    assert _GENERIC_SHARE * _MIN_DOCS_FOR_DF >= _MIN_GENERIC_DOCUMENTS
+    # and the corpus that exposed the bug must fall below it
+    assert 37 < _MIN_DOCS_FOR_DF
 
 
 def test_tables_are_keyed_by_tenant_as_well_as_language():
