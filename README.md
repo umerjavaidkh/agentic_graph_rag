@@ -278,6 +278,51 @@ known without an LLM being asked to invent one. **271 questions across five runs
 
 </details>
 
+## Arabic and English on one deployment
+
+One codebase, one deployment, shared Neo4j/Qdrant/MinIO. A `(:Language)-[:HAS_DOCUMENT]->(:DocumentLogical)`
+parent plus a `language` property denormalised onto every node — the property is what
+retrieval filters on, so scoping is an indexed equality rather than a traversal.
+
+**English cannot move under it.** `language_filter()` compiles to the literal `"true"`
+while one language is configured, exactly as `tenant_filter()` does, so a
+single-language deployment gets a predicate Neo4j folds away. There is no filter to
+get wrong.
+
+What works today, measured on a 37-document Arabic corpus sharing a database with 998
+English ones:
+
+| | |
+| --- | --- |
+| Language detection | share of a document's letters, not a presence test. Noise floor **0.0012** (5 of 561 English papers quote some Arabic); signal floor **0.78**. Threshold 0.05 sits between them |
+| Scoping | 38 query sites, every one carrying `tenant_filter` and `language_filter` on the same alias — held by an invariant test over the source, not by review |
+| Matching | Arabic normalization (alef variants, teh marbuta, tashkeel, tatweel) applied to a separate `match_text` key. **Citations stay byte-identical**; English writes no `match_text` at all |
+| Answering | replies in the language of the question, quoting the document verbatim |
+| Isolation | an Arabic-scoped query returns nothing from the English corpus, and the reverse |
+
+**The open work, stated plainly:**
+
+- **The eval harness needs widening.** `scripts/eval_shapes.py` builds every question
+  from a hardcoded English template shaped for an arXiv paper — *"how does the proposed
+  approach differ from prior work"*. Run against Arabic encyclopedia articles it scores
+  **0.29** precision, and that number measures the template mismatch, not retrieval: the
+  same corpus asked the same shapes as real Arabic questions scores **0.89**. Until the
+  harness generates questions in the corpus's own language and document type,
+  `--language ar` cannot produce a meaningful number.
+- **The Arabic parser path.** Lam-alef ligatures arrive from the PDF with two characters
+  transposed — roughly 2,100 words in one 239-page document, enough to send a query to
+  the wrong document. Diagnosed and specified in
+  [docs/ISSUE_rtldoc_arabic_lam_alef.md](docs/ISSUE_rtldoc_arabic_lam_alef.md); it has to
+  be repaired at extraction, not downstream.
+- **Document-frequency stopwords.** The corpus frequency table abstains below ~286
+  documents, because the generic-term threshold is an absolute share calibrated on a
+  large corpus. At 37 Arabic documents it correctly declines to have an opinion, so the
+  underspecified gate stands down for Arabic until the corpus grows.
+
+Design and the decisions deliberately not taken (no corpus translation, no query
+translation, no multilingual embedding swap):
+[docs/DESIGN_language_independence.md](docs/DESIGN_language_independence.md).
+
 ## Why this is different
 
 Most RAG projects are one chunk index and a similarity search. The difference shows up
@@ -771,10 +816,11 @@ chapter, no extra graph-algorithm dependency.
 | Storage split — lean Neo4j, text in a blob store, embeddings in a vector store, `Hydrator` on the read path | ✅ write-side strip and dual-write tested.<br>🚧 backends default to `local`/`memory`, so MinIO + Qdrant are opt-in |
 | **Query latency at 998 documents** — 34 s → **2.0 s** end to end, all Neo4j work 237 ms, accuracy unchanged | ✅ done |
 | **1000-document corpus validation** — 998 docs / 611,814 nodes ingested, retrieval profiled end to end, two category suites committed ([details](#documents-a-998-document-corpus-profiled-end-to-end)) | ✅ done |
+| **Arabic + English on one deployment** — one codebase, shared Neo4j/Qdrant/MinIO, `language` scoping on every document query ([details](#arabic-and-english-on-one-deployment)) | 🚧 in progress — retrieval, scoping and answering work end to end on a 37-document Arabic corpus; the eval harness and the Arabic parser path are the open work |
 | Shape-stratified testing across document types, then a tagged release | 🚧 in progress |
 | CI (tests on push/PR) | 🚧 in progress |
 
-**Roadmap:** the 1000-document corpus is ingested and measured; two more days of shape-stratified testing across document types, then the first tagged release. After that: per-user short/long memory across threads; multi-language query & answer support; Kubernetes/Terraform deployment reference.
+**Roadmap:** the 1000-document corpus is ingested and measured; two more days of shape-stratified testing across document types, then the first tagged release. After that: per-user short/long memory across threads; Kubernetes/Terraform deployment reference. Multi-language support is no longer future work — Arabic runs today and its remaining gaps are named below.
 
 ## Documentation
 
@@ -783,6 +829,8 @@ chapter, no extra graph-algorithm dependency.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                                         | Query path, ingestion pipeline, multi-tenancy, audit log, project layout                                                                                                                                          |
 | [docs/INGESTION_RETRIEVAL_ARCHITECTURE.md](docs/INGESTION_RETRIEVAL_ARCHITECTURE.md) | Deep dive: how parsing, ingestion enrichment, and retrieval strategies are loosely coupled — diagrams for the parser registry, full ingestion pipeline, retrieval strategy dispatch, and the extension points map |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)                                       | Every environment variable, feedback loop workflow                                                                                                                                                                |
+| [docs/DESIGN_language_independence.md](docs/DESIGN_language_independence.md)          | How Arabic and English share one deployment: the `:Language` parent, per-document scoping, and what was deliberately not built                                                                                     |
+| [docs/ISSUE_rtldoc_arabic_lam_alef.md](docs/ISSUE_rtldoc_arabic_lam_alef.md)          | Open parser defect: Arabic lam-alef ligatures arrive from the PDF with two characters transposed, and why it cannot be repaired downstream                                                                          |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)                                     | Auth branches, RBAC, seeded demo users, identity flow                                                                                                                                                             |
 | [docs/API.md](docs/API.md)                                                           | curl reference for every endpoint                                                                                                                                                                                 |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                                   | Common setup issues, local dev without Docker                                                                                                                                                                     |
