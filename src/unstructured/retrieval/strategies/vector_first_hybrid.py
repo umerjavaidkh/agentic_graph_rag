@@ -48,6 +48,7 @@ import threading
 from dataclasses import replace
 from typing import Any, Optional
 
+from ....shared.neo4j.tenancy import tenant_filter
 from ..cypher_scope import as_doc_id_list
 
 # Above this share of the winner's score, the runner-up is not meaningfully
@@ -141,7 +142,7 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         self._scope_lock = threading.Lock()
         # Set on each retrieve() so a caller reading the response can see
         # which path actually decided the scope, rather than inferring it.
-        self._names = None
+        self._names: dict[str, list] = {}
         # Per-request, not per-instance. The registry hands every request the
         # same strategy object, so a plain attribute is shared across
         # concurrent queries -- one request's "low confidence" verdict
@@ -207,16 +208,23 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
         return cache[key]
 
     def _name_index(self, tenant_id: str) -> list:
-        """(logical_id, squashed name) for every document, built once.
+        """(logical_id, squashed name) for this tenant's documents, built once.
 
         998 rows, and the corpus only changes on ingest, so this is read
-        once per process rather than per query.
+        once per process rather than per query -- but once *per tenant*: the
+        index is what `_named_document` matches a query against, so an
+        unscoped one hands a caller another tenant's document by its title
+        or logical id. Keyed by tenant so the cache cannot serve the first
+        tenant's corpus to the second.
         """
-        if self._names is None:
+        key = tenant_id or ""
+        if key not in self._names:
             rows = self._neo4j_session_call(
                 lambda sess: list(sess.run(
-                    "MATCH (dl:DocumentLogical) "
-                    "RETURN dl.logical_id AS id, coalesce(dl.title, '') AS title"
+                    f"MATCH (dl:DocumentLogical) "
+                    f"WHERE {tenant_filter('dl')} "
+                    f"RETURN dl.logical_id AS id, coalesce(dl.title, '') AS title",
+                    tenant_id=tenant_id,
                 ))
             )
             idx = []
@@ -230,8 +238,8 @@ class VectorFirstHybridStrategy(FullHybridStrategy):
                 idx.append((lid, _squash(raw), raw))
                 if r["title"]:
                     idx.append((lid, _squash(r["title"]), r["title"]))
-            self._names = idx
-        return self._names
+            self._names[key] = idx
+        return self._names[key]
 
     def _scope_for_query(
         self,
