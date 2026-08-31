@@ -1,0 +1,66 @@
+# Automated first-pass review. Everything here runs on GITHUB_TOKEN alone --
+# no API keys, no paid services -- and posts findings as inline PR comments so
+# they land where the code is rather than in a log a reviewer has to open.
+name: Review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  python:
+    name: Python lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: reviewdog/action-setup@v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: ruff
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pip install --quiet ruff
+          # filter_mode `added`, not `nofilter`. This repository has 356 Python
+          # files and no lint history, so commenting on everything a PR touches
+          # would bury the author's own change under pre-existing findings and
+          # teach everyone to ignore the bot. Only new lines are commented; the
+          # backlog is a separate, deliberate cleanup.
+          ruff check --output-format=rdjson . \
+            | reviewdog -f=rdjson -reporter=github-pr-review \
+                        -filter-mode=added -fail-level=error
+
+  actions:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # A broken workflow is the one failure that hides every other failure.
+      - uses: reviewdog/action-actionlint@v1
+        with:
+          reporter: github-pr-review
+          fail_level: error
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    # Reported, never blocking. The suite has nine failures that predate any
+    # of this work, so a gate that starts red gets muted within a week. It
+    # runs so a NEW failure is visible; make it required once the nine are
+    # fixed or explicitly marked expected.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install --quiet -r requirements.txt pytest
+      - name: pytest
+        run: |
+          pytest tests/unstructured tests/interface tests/structured tests/shared \
+            -q -p no:randomly --timeout=600 || true
